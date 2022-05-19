@@ -130,3 +130,5 @@ export COMPOSER_MEMORY_LIMIT=-1
 eval "$(direnv hook zsh)"
 # go
 export PATH=${HOME}/go/bin:${PATH}
+export GOPATH=$HOME/go
+export GOBIN=$HOME/go/bin
