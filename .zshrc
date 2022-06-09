@@ -132,3 +132,5 @@ eval "$(direnv hook zsh)"
 export PATH=${HOME}/go/bin:${PATH}
 export GOPATH=$HOME/go
 export GOBIN=$HOME/go/bin
+# nodenv
+eval "$(nodenv init -)"
