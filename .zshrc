@@ -134,3 +134,4 @@ export GOPATH=$HOME/go
 export GOBIN=$HOME/go/bin
 # nodenv
 eval "$(nodenv init -)"
+export PATH="$PATH:/usr/local/protobuf/bin"
