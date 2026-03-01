@@ -1,50 +1,100 @@
-{ pkgs, ... }: {
-  # Squid HTTP proxy (migrated from brew services)
-  launchd.user.agents.squid = {
-    serviceConfig = {
-      Label = "org.nix-darwin.squid";
-      ProgramArguments = [
-        "${pkgs.squid}/bin/squid"
-        "-N" # No daemon mode (foreground for launchd)
-        "-f" "/etc/squid/squid.conf"
+{ ... }: {
+  # Squid HTTP proxy: kept in Homebrew (squid is Linux-only in nixpkgs)
+  # Managed via `brew services start squid`
+
+  # AeroSpace tiling window manager
+  services.aerospace = {
+    enable = true;
+    settings = {
+      start-at-login = false; # launchd manages startup
+
+      # Automatically switch back to "tiles" when possible
+      default-root-container-layout = "tiles";
+      default-root-container-orientation = "auto";
+
+      # Normalizations
+      enable-normalization-flatten-containers = true;
+      enable-normalization-opposite-orientation-for-nested-containers = true;
+
+      # Gaps
+      gaps = {
+        inner.horizontal = 8;
+        inner.vertical = 8;
+        outer.left = 8;
+        outer.bottom = 8;
+        outer.top = 8;
+        outer.right = 8;
+      };
+
+      # Assign workspaces to monitors
+      workspace-to-monitor-force-assignment = {
+        "1" = "Built-in Retina Display";
+        "2" = "Built-in Retina Display";
+        "E" = "EV3450XC";
+        "F" = "EV3450XC";
+      };
+
+      # Float non-tileable apps
+      on-window-detected = [
+        { "if".app-id = "com.apple.finder"; run = "layout floating"; }
+        { "if".app-id = "com.apple.systempreferences"; run = "layout floating"; }
+        { "if".app-id = "com.apple.SystemPreferences"; run = "layout floating"; }
+        { "if".app-id = "com.apple.calculator"; run = "layout floating"; }
+        { "if".app-id = "com.apple.ActivityMonitor"; run = "layout floating"; }
+        { "if".app-id = "com.apple.Preview"; run = "layout floating"; }
+        { "if".app-id = "com.apple.keychainaccess"; run = "layout floating"; }
+        { "if".app-id = "com.1password.1password"; run = "layout floating"; }
+        { "if".app-id = "jp.naver.line.mac"; run = "layout floating"; }
       ];
-      KeepAlive = true;
-      RunAtLoad = true;
-      WorkingDirectory = "/tmp";
-      StandardOutPath = "/tmp/squid.out.log";
-      StandardErrorPath = "/tmp/squid.err.log";
+
+      # Key bindings
+      mode.main.binding = {
+        # Focus
+        alt-h = "focus left";
+        alt-j = "focus down";
+        alt-k = "focus up";
+        alt-l = "focus right";
+
+        # Move windows
+        alt-shift-h = "move left";
+        alt-shift-j = "move down";
+        alt-shift-k = "move up";
+        alt-shift-l = "move right";
+
+        # Workspaces (built-in)
+        alt-1 = "workspace 1";
+        alt-2 = "workspace 2";
+        # Workspaces (external)
+        alt-e = "workspace E";
+        alt-f = "workspace F";
+
+        # Move to workspace
+        alt-shift-1 = "move-node-to-workspace 1";
+        alt-shift-2 = "move-node-to-workspace 2";
+        alt-shift-e = "move-node-to-workspace E";
+        alt-shift-f = "move-node-to-workspace F";
+
+        # Layout
+        alt-slash = "layout tiles horizontal vertical";
+        alt-comma = "layout accordion horizontal vertical";
+        alt-t = "layout floating tiling";
+        alt-shift-t = "fullscreen";
+
+        # Resize
+        alt-minus = "resize smart -50";
+        alt-equal = "resize smart +50";
+
+        # Service mode
+        alt-shift-semicolon = "mode service";
+      };
+
+      # Service mode for less common operations
+      mode.service.binding = {
+        esc = "mode main";
+        r = [ "flatten-workspace-tree" "mode main" ];
+        f = [ "layout floating tiling" "mode main" ];
+        backspace = [ "close-all-windows-but-current" "mode main" ];
+      };
     };
   };
-
-  # Squid configuration
-  environment.etc."squid/squid.conf".text = ''
-    acl localnet src 0.0.0.1-0.255.255.255
-    acl localnet src 10.0.0.0/8
-    acl localnet src 100.64.0.0/10
-    acl localnet src 169.254.0.0/16
-    acl localnet src 172.16.0.0/12
-    acl localnet src 192.168.0.0/16
-    acl localnet src fc00::/7
-    acl localnet src fe80::/10
-
-    acl SSL_ports port 443
-    acl Safe_ports port 80 21 443 70 210 1025-65535 280 488 591 777
-
-    http_access deny !Safe_ports
-    http_access deny CONNECT !SSL_ports
-    http_access allow localhost manager
-    http_access deny manager
-    http_access allow localhost
-    http_access deny to_localhost
-    http_access deny to_linklocal
-    http_access deny all
-
-    http_port 3128
-    coredump_dir /tmp/squid-cache
-
-    refresh_pattern ^ftp:      1440 20% 10080
-    refresh_pattern ^gopher:   1440 0%  1440
-    refresh_pattern -i (/cgi-bin/|\?) 0 0% 0
-    refresh_pattern .          0    20% 4320
-  '';
 }
