@@ -1,15 +1,10 @@
 { pkgs, ... }: {
-  # Nix settings
-  nix = {
-    settings = {
-      experimental-features = [ "nix-command" "flakes" ];
-    };
-  };
+  # Nix settings (Determinate Nix manages the daemon, so disable nix-darwin's management)
+  nix.enable = false;
 
   # System-level packages (migrated from Homebrew + mise)
   environment.systemPackages = with pkgs; [
     # Core CLI tools
-    bat
     fd
     ripgrep-all
     jq
@@ -19,6 +14,14 @@
     htop
     pv
     nmap
+
+    # Editor
+    neovim
+
+    # Fuzzy finder & TUI tools
+    fzf
+    lazygit
+    eza
 
     # Git ecosystem
     git
@@ -45,7 +48,7 @@
     inetutils # telnet
     tcptraceroute
     wrk
-    squid
+    # squid - not available on aarch64-darwin, kept in Homebrew
 
     # Database
     mysql80
@@ -81,15 +84,17 @@
     LC_ALL = "ja_JP.UTF-8";
   };
 
+  # User
+  system.primaryUser = "kanade0404";
+  users.users.kanade0404 = {
+    name = "kanade0404";
+    home = "/Users/kanade0404";
+  };
+
   # Shell
   programs.zsh.enable = true;
 
-  # Nix GC
-  nix.gc = {
-    automatic = true;
-    interval = { Weekday = 0; Hour = 3; Minute = 15; };
-    options = "--delete-older-than 30d";
-  };
+  # Nix GC is managed by Determinate Nix daemon
 
   # Import sub-modules
   imports = [
