@@ -1,0 +1,103 @@
+#!/bin/bash
+# gw: git worktree management helper
+#
+# Usage:
+#   gw add <branch> [base]  - Create worktree for branch (from base, default HEAD)
+#   gw rm <branch>           - Remove worktree
+#   gw ls                    - List worktrees
+#   gw go <branch>           - Switch to worktree's tmux session
+
+set -euo pipefail
+
+WORKTREE_DIR=".worktrees"
+
+usage() {
+  echo "Usage: gw <command> [args]"
+  echo ""
+  echo "Commands:"
+  echo "  add <branch> [base]  Create worktree (base defaults to HEAD)"
+  echo "  rm  <branch>         Remove worktree and branch"
+  echo "  ls                   List worktrees"
+  echo "  go  <branch>         Switch to worktree tmux session"
+}
+
+# Find git root
+git_root() {
+  git rev-parse --show-toplevel 2>/dev/null || {
+    echo "Error: not in a git repository" >&2
+    exit 1
+  }
+}
+
+cmd_add() {
+  local branch="${1:?Branch name required}"
+  local base="${2:-HEAD}"
+  local root
+  root=$(git_root)
+  local wt_path="$root/$WORKTREE_DIR/$branch"
+
+  mkdir -p "$root/$WORKTREE_DIR"
+  git worktree add -b "$branch" "$wt_path" "$base"
+  echo "Worktree created: $wt_path"
+}
+
+cmd_rm() {
+  local branch="${1:?Branch name required}"
+  local root
+  root=$(git_root)
+  local wt_path="$root/$WORKTREE_DIR/$branch"
+
+  git worktree remove "$wt_path"
+  # Delete branch if it still exists
+  if git rev-parse --verify "$branch" &>/dev/null; then
+    git branch -d "$branch" 2>/dev/null || echo "Branch $branch not deleted (has unmerged changes). Use 'git branch -D $branch' to force."
+  fi
+  echo "Worktree removed: $branch"
+}
+
+cmd_ls() {
+  git worktree list
+}
+
+cmd_go() {
+  local branch="${1:?Branch name required}"
+  local root
+  root=$(git_root)
+  local wt_path="$root/$WORKTREE_DIR/$branch"
+
+  if [ ! -d "$wt_path" ]; then
+    echo "Error: worktree '$branch' not found at $wt_path" >&2
+    exit 1
+  fi
+
+  local session_name
+  session_name="$(basename "$root")-$branch"
+  session_name="${session_name//\./-}"
+
+  if tmux has-session -t "$session_name" 2>/dev/null; then
+    if [ -n "${TMUX:-}" ]; then
+      tmux switch-client -t "$session_name"
+    else
+      tmux attach-session -t "$session_name"
+    fi
+  else
+    # Create a minimal session for the worktree
+    tmux new-session -d -s "$session_name" -c "$wt_path" -n "editor"
+    tmux send-keys -t "$session_name:editor" "nvim" C-m
+    tmux new-window -t "$session_name" -n "terminal" -c "$wt_path"
+
+    if [ -n "${TMUX:-}" ]; then
+      tmux switch-client -t "$session_name"
+    else
+      tmux attach-session -t "$session_name"
+    fi
+  fi
+}
+
+case "${1:-}" in
+  add) shift; cmd_add "$@" ;;
+  rm)  shift; cmd_rm "$@" ;;
+  ls)  cmd_ls ;;
+  go)  shift; cmd_go "$@" ;;
+  *)   usage; exit 1 ;;
+esac

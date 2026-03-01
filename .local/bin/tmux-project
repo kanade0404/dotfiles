@@ -1,0 +1,56 @@
+#!/bin/bash
+# tmux-project: Create a project-oriented tmux session
+#
+# Usage: tmux-project [directory]
+#   If no directory given, uses fzf+ghq to pick a project.
+
+set -euo pipefail
+
+if [ -n "${1:-}" ]; then
+  PROJECT_DIR="$1"
+else
+  if command -v ghq &>/dev/null && command -v fzf &>/dev/null; then
+    PROJECT_DIR=$(ghq list -p | fzf --prompt="Project> " --preview='eza --icons --tree --level=2 {}') || exit 0
+  else
+    echo "Usage: tmux-project <directory>"
+    exit 1
+  fi
+fi
+
+# Resolve to absolute path
+PROJECT_DIR=$(cd "$PROJECT_DIR" && pwd)
+SESSION_NAME=$(basename "$PROJECT_DIR" | tr '.' '-')
+
+# If session already exists, attach
+if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
+  if [ -n "${TMUX:-}" ]; then
+    tmux switch-client -t "$SESSION_NAME"
+  else
+    tmux attach-session -t "$SESSION_NAME"
+  fi
+  exit 0
+fi
+
+# Create new session with windows
+tmux new-session -d -s "$SESSION_NAME" -c "$PROJECT_DIR" -n "editor"
+tmux send-keys -t "$SESSION_NAME:editor" "nvim" C-m
+
+tmux new-window -t "$SESSION_NAME" -n "terminal" -c "$PROJECT_DIR"
+
+tmux new-window -t "$SESSION_NAME" -n "server" -c "$PROJECT_DIR"
+
+tmux new-window -t "$SESSION_NAME" -n "claude" -c "$PROJECT_DIR"
+tmux send-keys -t "$SESSION_NAME:claude" "claude" C-m
+
+tmux new-window -t "$SESSION_NAME" -n "git" -c "$PROJECT_DIR"
+tmux send-keys -t "$SESSION_NAME:git" "lazygit" C-m
+
+# Focus editor window
+tmux select-window -t "$SESSION_NAME:editor"
+
+# Attach
+if [ -n "${TMUX:-}" ]; then
+  tmux switch-client -t "$SESSION_NAME"
+else
+  tmux attach-session -t "$SESSION_NAME"
+fi
