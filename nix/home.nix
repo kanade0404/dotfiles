@@ -1,5 +1,7 @@
 { pkgs, ... }: {
   home.stateVersion = "24.11";
+  home.username = "kanade0404";
+  home.homeDirectory = "/Users/kanade0404";
 
   # Rust toolchain
   home.packages = with pkgs; [
@@ -16,12 +18,13 @@
     # Git (migrated from dotfiles/.gitconfig)
     git = {
       enable = true;
-      userName = "kanade0404";
-      userEmail = "melty0404@gmail.com";
-      delta.enable = true;
-      extraConfig = {
+      settings = {
+        user = {
+          name = "kanade0404";
+          email = "melty0404@gmail.com";
+        };
         core = {
-          editor = "vi";
+          editor = "nvim";
           excludesfile = "~/.gitignore";
           autocrlf = "input";
         };
@@ -35,30 +38,129 @@
         web.browser = "google-chrome";
         credential.helper = "osxkeychain";
         push.default = "simple";
-        merge.tool = "kdiff3";
+        merge = {
+          tool = "kdiff3";
+          conflictstyle = "zdiff3";
+        };
         difftool.prompt = false;
         pull.rebase = true;
         commit.template = "/Users/kanade0404/.gitmessage";
+        alias = {
+          c = "commit";
+          ca = "commit -a";
+          cm = "commit -m";
+          cam = "commit -am";
+          d = "diff";
+          dc = "diff --cached";
+          l = ''log --graph --pretty=format:"%Cred%h%Creset -%C(yellow)%d%Creset %s %Cgreen(%cr) %C(bold blue)<%an>%Creset" --abbrev-commit'';
+          wt = "worktree";
+          wta = "worktree add";
+          wtl = "worktree list";
+          wtr = "worktree remove";
+        };
       };
-      aliases = {
-        c = "commit";
-        ca = "commit -a";
-        cm = "commit -m";
-        cam = "commit -am";
-        d = "diff";
-        dc = "diff --cached";
-        l = ''log --graph --pretty=format:"%Cred%h%Creset -%C(yellow)%d%Creset %s %Cgreen(%cr) %C(bold blue)<%an>%Creset" --abbrev-commit'';
+    };
+
+    # Delta (git diff pager)
+    delta = {
+      enable = true;
+      enableGitIntegration = true;
+      options = {
+        navigate = true;
+        side-by-side = true;
+        line-numbers = true;
+        syntax-theme = "GitHub";
+      };
+    };
+
+    # bat (moved from configuration.nix for unified config)
+    bat = {
+      enable = true;
+      config = {
+        theme = "GitHub";
+        style = "numbers,changes,header";
       };
     };
 
     # Starship prompt
     starship = {
       enable = true;
+      settings = {
+        format = "$directory$git_branch$git_status$git_state$nodejs$golang$python$rust$terraform$nix_shell$cmd_duration$line_break$character";
+        directory.truncation_length = 3;
+        git_branch.symbol = " ";
+        character = {
+          success_symbol = "[>](bold green)";
+          error_symbol = "[>](bold red)";
+        };
+        cmd_duration.min_time = 2000;
+        nix_shell.format = "[$symbol$state]($style) ";
+      };
     };
 
     # tmux
     tmux = {
       enable = true;
+      prefix = "C-a";
+      baseIndex = 1;
+      escapeTime = 0;
+      keyMode = "vi";
+      mouse = true;
+      historyLimit = 50000;
+      terminal = "tmux-256color";
+      sensibleOnTop = true;
+
+      plugins = with pkgs.tmuxPlugins; [
+        resurrect
+        continuum
+        yank
+        tmux-fzf
+        vim-tmux-navigator
+      ];
+
+      extraConfig = ''
+        # True color for Ghostty
+        set -ag terminal-overrides ",xterm-ghostty:Tc"
+        set -g focus-events on
+        set -g set-clipboard on
+        set -g renumber-windows on
+
+        # Pane splitting (intuitive keys)
+        bind | split-window -h -c "#{pane_current_path}"
+        bind - split-window -v -c "#{pane_current_path}"
+        unbind '"'
+        unbind %
+
+        # New window in current path
+        bind c new-window -c "#{pane_current_path}"
+        bind Tab last-window
+
+        # Pane resize
+        bind -r H resize-pane -L 5
+        bind -r J resize-pane -D 5
+        bind -r K resize-pane -U 5
+        bind -r L resize-pane -R 5
+
+        # Copy mode (vi + pbcopy)
+        bind -T copy-mode-vi v send -X begin-selection
+        bind -T copy-mode-vi y send -X copy-pipe-and-cancel "pbcopy"
+
+        # Appearance (GitHub Light)
+        set -g status-style "bg=#f6f8fa,fg=#24292e"
+        set -g status-left-length 40
+        set -g status-left "#[fg=#0366d6,bold] #S #[default]| "
+        set -g status-right "#[fg=#586069]%Y-%m-%d %H:%M "
+        set -g window-status-current-style "fg=#0366d6,bold"
+        set -g window-status-style "fg=#586069"
+        set -g pane-border-style "fg=#e1e4e8"
+        set -g pane-active-border-style "fg=#0366d6"
+
+        # Plugin settings
+        set -g @resurrect-strategy-nvim 'session'
+        set -g @resurrect-capture-pane-contents 'on'
+        set -g @continuum-restore 'on'
+        set -g @continuum-save-interval '15'
+      '';
     };
 
     # zoxide (cd replacement)
@@ -92,6 +194,28 @@
         gl = ''git log --graph --pretty=format:"%Cred%h%Creset -%C(yellow)%d%Creset %s %Cgreen(%cr) %C(bold blue)<%an>%Creset" --abbrev-commit'';
         tenki = "curl wttr.in/Tokyo";
         python3 = "python";
+        # Neovim
+        v = "nvim";
+        vi = "nvim";
+        vim = "nvim";
+
+        # tmux
+        t = "tmux";
+        ta = "tmux attach -t";
+        tn = "tmux new-session -s";
+        tl = "tmux list-sessions";
+
+        # Claude Code
+        cc = "ENABLE_TOOL_SEARCH=true claude";
+
+        # git worktree
+        gwl = "git worktree list";
+        gwa = "git worktree add";
+
+        # eza
+        ls = "eza --icons";
+        ll = "eza --icons -la";
+        lt = "eza --icons --tree --level=2";
       };
 
       plugins = [
@@ -102,7 +226,7 @@
         }
       ];
 
-      initExtra = ''
+      initContent = ''
         # Colors
         unset LSCOLORS
         export CLICOLOR=1
@@ -122,6 +246,18 @@
         # History substring search key bindings
         bindkey "^[[A" history-substring-search-up
         bindkey "^[[B" history-substring-search-down
+
+        # fzf integration
+        source <(fzf --zsh)
+        export FZF_DEFAULT_COMMAND='fd --type f --hidden --follow --exclude .git'
+        export FZF_CTRL_T_COMMAND="$FZF_DEFAULT_COMMAND"
+        export FZF_ALT_C_COMMAND='fd --type d --hidden --follow --exclude .git'
+        export FZF_DEFAULT_OPTS='
+          --color=fg:#24292e,bg:#ffffff,hl:#0366d6
+          --color=fg+:#24292e,bg+:#f1f8ff,hl+:#0366d6
+          --color=info:#6a737d,prompt:#0366d6,pointer:#d73a49
+          --color=marker:#28a745,spinner:#6a737d,header:#6a737d
+          --height=40% --layout=reverse --border'
 
         # Include alias file (if present)
         if [ -f ~/.aliases ]; then
@@ -176,8 +312,10 @@
         # npm global
         export PATH="$HOME/.npm-global/bin:$PATH"
 
+        # Helper scripts
+        export PATH="$HOME/.local/bin:$PATH"
+
         # mise (kept for Node.js multi-version management)
-        export PATH="/Users/kanade0404/.local/bin:$PATH"
         eval "$(mise activate zsh)"
 
         # rbenv
@@ -190,6 +328,11 @@
         [[ "$TERM_PROGRAM" == "kiro" ]] && . "$(kiro --locate-shell-integration-path zsh)"
 
         # Custom functions
+        # cd 後に自動で ls を実行
+        chpwd() {
+          eza --icons
+        }
+
         # Git upstream branch syncer
         function gsync() {
           if [[ ! "$1" ]]; then
