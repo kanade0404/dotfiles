@@ -17,6 +17,7 @@
       "php"
       "rbenv"
       "ruby-build"
+      "squid" # not available on aarch64-darwin in nixpkgs
     ];
 
     # All GUI applications (casks)
