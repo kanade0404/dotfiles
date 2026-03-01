@@ -3,3 +3,5 @@
 Thumbs.db
 .bundle
 .viminfo
+.claude/settings.local.json
+
