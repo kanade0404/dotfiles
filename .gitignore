@@ -2,6 +2,10 @@
 *.LSOverride
 Thumbs.db
 .bundle
-.viminfo
-.claude/settings.local.json
+# Claude Code: ignore auto-generated files, track only settings/hooks/commands
+.claude/*
+!.claude/settings.json
+!.claude/hooks/
+!.claude/commands/
+!.claude/statusline-command.sh
 

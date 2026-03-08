@@ -21,6 +21,23 @@ mkdir -p "$HOME/.local/bin"
 ln -sf "$DOTFILES/.local/bin/tmux-project" "$HOME/.local/bin/tmux-project"
 ln -sf "$DOTFILES/.local/bin/gw" "$HOME/.local/bin/gw"
 
+echo "==> Linking Claude Code user settings"
+mkdir -p "$HOME/.claude"
+ln -sf "$DOTFILES/.claude/settings.json" "$HOME/.claude/settings.json"
+ln -sf "$DOTFILES/.claude/statusline-command.sh" "$HOME/.claude/statusline-command.sh"
+# hooks: symlink each file (directory symlink would hide Claude's own hooks)
+mkdir -p "$HOME/.claude/hooks"
+for f in "$DOTFILES/.claude/hooks/"*; do
+  [ -f "$f" ] && ln -sf "$f" "$HOME/.claude/hooks/$(basename "$f")"
+done
+# commands: symlink directory if it has content
+if [ -d "$DOTFILES/.claude/commands" ] && [ "$(ls -A "$DOTFILES/.claude/commands" 2>/dev/null)" ]; then
+  mkdir -p "$HOME/.claude/commands"
+  for f in "$DOTFILES/.claude/commands/"*; do
+    [ -f "$f" ] && ln -sf "$f" "$HOME/.claude/commands/$(basename "$f")"
+  done
+fi
+
 echo "==> Linking legacy files"
 ln -sf "$DOTFILES/.gitmessage" "$HOME/.gitmessage"
 ln -sf "$DOTFILES/.gitignore" "$HOME/.gitignore"

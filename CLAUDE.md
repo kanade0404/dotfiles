@@ -29,6 +29,9 @@ nix/
 
 .config/nvim/            # Neovim (LazyVim) — install.sh でsymlink
 .config/ghostty/config   # Ghostty — install.sh でsymlink
+.claude/settings.json    # Claude Code user設定 — install.sh でsymlink
+.claude/hooks/           # Claude Code hooks — install.sh でsymlink
+.claude/commands/        # Claude Code commands — install.sh でsymlink
 .local/bin/              # ヘルパースクリプト (tmux-project, gw) — install.sh でsymlink
 install.sh               # 上記のsymlink作成スクリプト
 ```
@@ -43,6 +46,7 @@ install.sh               # 上記のsymlink作成スクリプト
 | Neovimプラグイン/設定 | `.config/nvim/lua/` | `install.sh` + nvim再起動 |
 | Ghostty設定 | `.config/ghostty/config` | `install.sh` + Ghostty再起動 |
 | ヘルパースクリプト追加 | `.local/bin/` に作成 + `install.sh` にsymlink追加 | `install.sh` |
+| Claude Code設定/hooks/commands | `.claude/` 配下を編集 | `install.sh` |
 
 ## Nix-specific Notes
 
@@ -59,6 +63,7 @@ install.sh               # 上記のsymlink作成スクリプト
 | Shell/Git/tmux設定 | `home.nix` (home-manager) | 宣言的管理 + 自動symlink |
 | Neovim設定 | dotfiles直接管理 + install.sh | LazyVim (lazy.nvim) との競合回避 |
 | Ghostty設定 | dotfiles直接管理 + install.sh | home-manager module未対応 |
+| Claude Code設定 | dotfiles直接管理 + install.sh | プロジェクト横断で統一 |
 | Node.js | mise (将来的にNix devShellへ移行) | プロジェクト毎のバージョン管理 |
 
 ## 開発ワークフロー
