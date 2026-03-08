@@ -70,6 +70,9 @@
     gnupg
     oath-toolkit
 
+    # AI
+    claude-code
+
     # Other tools
     ghq
     gifsicle

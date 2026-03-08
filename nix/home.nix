@@ -206,7 +206,7 @@
         tl = "tmux list-sessions";
 
         # Claude Code
-        cc = "ENABLE_TOOL_SEARCH=true claude";
+        c = "ENABLE_TOOL_SEARCH=true claude";
 
         # git worktree
         gwl = "git worktree list";

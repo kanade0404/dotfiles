@@ -155,8 +155,8 @@ taps = [
 
 | 管理ツール | 対象 | 理由 |
 |---|---|---|
-| **Nix** | bat, fd, jq, git, ansible 等の CLI ツール全般 | バージョン固定不要、システム全体で共通 |
-| **mise** | Node.js, Neovim, claude-code, qwen-code | プロジェクト毎のバージョン切替が必要 |
+| **Nix** | bat, fd, jq, git, ansible, claude-code 等の CLI ツール全般 | バージョン固定不要、システム全体で共通 |
+| **mise** | Node.js, Neovim, qwen-code | プロジェクト毎のバージョン切替が必要 |
 | **Homebrew** | GUI アプリ (cask), php, rbenv, atlas, squid | nixpkgs で macOS 非対応 or cask のみ |
 
 mise の設定: `~/.config/mise/config.toml`
@@ -165,7 +165,6 @@ mise の設定: `~/.config/mise/config.toml`
 [tools]
 node = "latest"
 neovim = "latest"
-"npm:@anthropic-ai/claude-code" = "latest"
 "npm:@qwen-code/qwen-code" = "latest"
 ```
 
