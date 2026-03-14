@@ -9,4 +9,4 @@ Thumbs.db
 !.claude/hooks/lib/
 !.claude/commands/
 !.claude/statusline-command.sh
-
+node_modules/
