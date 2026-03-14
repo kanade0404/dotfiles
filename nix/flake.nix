@@ -11,21 +11,12 @@
       url = "github:nix-community/home-manager";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    claude-code-overlay = {
-      url = "github:ryoppippi/claude-code-overlay";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
   };
 
-  outputs = { self, nixpkgs, nix-darwin, home-manager, claude-code-overlay, ... }: {
+  outputs = { self, nixpkgs, nix-darwin, home-manager, ... }: {
     darwinConfigurations."SeiyanoMacBook-Air" = nix-darwin.lib.darwinSystem {
       system = "aarch64-darwin";
       modules = [
-        {
-          nixpkgs.overlays = [ claude-code-overlay.overlays.default ];
-          nixpkgs.config.allowUnfreePredicate = pkg:
-            builtins.elem (nixpkgs.lib.getName pkg) [ "claude-code" ];
-        }
         ./configuration.nix
         home-manager.darwinModules.home-manager
         {

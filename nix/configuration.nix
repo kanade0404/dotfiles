@@ -71,7 +71,7 @@
     oath-toolkit
 
     # AI
-    claude-code
+    bun
 
     # Other tools
     ghq

@@ -30,6 +30,11 @@ mkdir -p "$HOME/.claude/hooks"
 for f in "$DOTFILES/.claude/hooks/"*; do
   [ -f "$f" ] && ln -sf "$f" "$HOME/.claude/hooks/$(basename "$f")"
 done
+# hooks/lib: symlink TypeScript modules
+mkdir -p "$HOME/.claude/hooks/lib"
+for f in "$DOTFILES/.claude/hooks/lib/"*; do
+  [ -f "$f" ] && ln -sf "$f" "$HOME/.claude/hooks/lib/$(basename "$f")"
+done
 # commands: symlink directory if it has content
 if [ -d "$DOTFILES/.claude/commands" ] && [ "$(ls -A "$DOTFILES/.claude/commands" 2>/dev/null)" ]; then
   mkdir -p "$HOME/.claude/commands"

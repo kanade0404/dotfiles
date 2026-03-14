@@ -71,40 +71,55 @@
       "mcp__terraform__searchPolicies",
       "mcp__aws-core-mcp-server__prompt_understanding",
       "WebSearch",
-      "WebFetch(domain:github.com)"
-    ],
-    "ask": [
-      "Bash(pnpm install *)",
-      "mcp__claude_ai_Notion__notion-create-comment",
-      "mcp__claude_ai_Notion__notion-create-database",
-      "mcp__claude_ai_Notion__notion-create-pages",
-      "mcp__claude_ai_Notion__notion-duplicate-page",
-      "mcp__claude_ai_Notion__notion-move-pages",
-      "mcp__claude_ai_Notion__notion-update-data-source",
-      "mcp__claude_ai_Notion__notion-update-page",
-      "mcp__claude_ai_Slack__slack_create_canvas",
-      "mcp__claude_ai_Slack__slack_schedule_message",
-      "mcp__claude_ai_Slack__slack_send_message",
-      "mcp__claude_ai_Slack__slack_send_message_draft",
-      "mcp__claude_ai_Figma__add_code_connect_map",
-      "mcp__claude_ai_Figma__create_design_system_rules",
-      "mcp__claude_ai_Figma__generate_diagram",
-      "mcp__claude_ai_Figma__send_code_connect_mappings",
-      "mcp__figma__add_code_connect_map",
-      "mcp__figma__create_design_system_rules",
-      "mcp__figma__generate_diagram",
-      "mcp__figma__generate_figma_design",
-      "mcp__figma__send_code_connect_mappings",
-      "mcp__claude_ai_Excalidraw__create_view",
-      "mcp__claude_ai_Excalidraw__export_to_excalidraw",
-      "mcp__claude_ai_Excalidraw__save_checkpoint",
-      "mcp__sentry__create_dsn",
-      "mcp__sentry__create_project",
-      "mcp__sentry__create_team",
-      "mcp__sentry__update_issue",
-      "mcp__sentry__update_project"
+      "WebFetch(domain:github.com)",
+      "Bash(git status *)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git branch *)",
+      "Bash(git show *)",
+      "Bash(git stash list *)",
+      "Bash(git rev-parse *)",
+      "Bash(git remote *)",
+      "Bash(git tag *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git push *)",
+      "Bash(git stash *)",
+      "Bash(git switch *)",
+      "Bash(git fetch *)",
+      "Bash(git pull *)",
+      "Bash(git merge *)",
+      "Bash(git worktree *)",
+      "Bash(git cherry-pick *)",
+      "Bash(git revert *)",
+      "Bash(git clean *)",
+      "Bash(git restore *)",
+      "Bash(bun test *)",
+      "Bash(head *)",
+      "Bash(tail *)",
+      "Bash(wc *)",
+      "Bash(sort *)",
+      "Bash(grep *)",
+      "Bash(xargs *)",
+      "Bash(tee *)",
+      "Bash(tr *)",
+      "Bash(cut *)",
+      "Bash(uniq *)",
+      "Bash(mkdir *)",
+      "Bash(chmod *)",
+      "Bash(touch *)",
+
+      "Bash(make *)",
+      "Bash(docker *)",
+      "Bash(nix *)",
+      "Bash(darwin-rebuild *)",
+      "Bash(gh pr *)",
+      "Bash(gh issue *)",
+      "Bash(gh run view *)",
+      "Bash(gh api *)"
     ],
     "deny": [
+      "Read(.env*)",
       "Write(.env*)",
       "Edit(.env*)",
       "MultiEdit(.env*)",
@@ -114,6 +129,8 @@
       "Bash(sudo *)",
       "Bash(rm *)",
       "Bash(rm -rf *)",
+      "Bash(cp *)",
+      "Bash(mv *)",
       "Bash(terraform apply *)",
       "Bash(git reset *)",
       "Bash(git rebase *)",
@@ -190,14 +207,38 @@
       "Bash(* .env *)",
       "Bash(* .env.*)",
       "Bash(* .env.* *)"
+    ],
+    "ask": [
+      "Bash(pnpm install *)",
+      "mcp__claude_ai_Notion__notion-create-comment",
+      "mcp__claude_ai_Notion__notion-create-database",
+      "mcp__claude_ai_Notion__notion-create-pages",
+      "mcp__claude_ai_Notion__notion-duplicate-page",
+      "mcp__claude_ai_Notion__notion-move-pages",
+      "mcp__claude_ai_Notion__notion-update-data-source",
+      "mcp__claude_ai_Notion__notion-update-page",
+      "mcp__claude_ai_Slack__slack_create_canvas",
+      "mcp__claude_ai_Slack__slack_schedule_message",
+      "mcp__claude_ai_Slack__slack_send_message",
+      "mcp__claude_ai_Slack__slack_send_message_draft",
+      "mcp__claude_ai_Figma__add_code_connect_map",
+      "mcp__claude_ai_Figma__create_design_system_rules",
+      "mcp__claude_ai_Figma__generate_diagram",
+      "mcp__claude_ai_Figma__send_code_connect_mappings",
+      "mcp__figma__add_code_connect_map",
+      "mcp__figma__create_design_system_rules",
+      "mcp__figma__generate_diagram",
+      "mcp__figma__generate_figma_design",
+      "mcp__figma__send_code_connect_mappings",
+      "mcp__claude_ai_Excalidraw__create_view",
+      "mcp__claude_ai_Excalidraw__export_to_excalidraw",
+      "mcp__claude_ai_Excalidraw__save_checkpoint",
+      "mcp__sentry__create_dsn",
+      "mcp__sentry__create_project",
+      "mcp__sentry__create_team",
+      "mcp__sentry__update_issue",
+      "mcp__sentry__update_project"
     ]
-  },
-  "enabledPlugins": {
-    "gopls-lsp@claude-plugins-official": true
-  },
-  "statusLine": {
-    "type": "command",
-    "command": "bash /Users/kanade0404/.claude/statusline-command.sh"
   },
   "hooks": {
     "SessionStart": [
@@ -216,18 +257,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "jq -r 'if (.tool_input.command | test(\"git commit.*(--no-verify|\\\\s-n(\\\\s|$))\")) or (.tool_input.command | test(\"git merge.*--no-verify\")) then {\"decision\": \"block\", \"reason\": \"エラー: --no-verifyフラグの使用は禁止されています。git hooksを無効化することはできません。\"} elif (.tool_input.command | test(\"git push.*(--force|\\\\s-f(\\\\s|$)|--force-with-lease|--force-if-includes|--delete|\\\\s-d(\\\\s|$)|\\\\s\\\\+\\\\S)\")) then {\"decision\": \"block\", \"reason\": \"エラー: force push、リモートブランチ削除、+refspec構文は禁止されています。\"} elif (.tool_input.command | test(\"git add \\\\.$|git add \\\\. \")) then {\"decision\": \"block\", \"reason\": \"エラー: git add . は禁止されています。ファイルを個別に指定してください。\"} else empty end'"
-          }
-        ]
-      }
-    ],
-    "PermissionRequest": [
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash $HOME/.claude/hooks/approve-safe-commands.sh"
+            "command": "bun ~/.claude/hooks/pre-tool-use-bash-analyzer.ts"
           }
         ]
       }
@@ -244,6 +274,45 @@
       }
     ]
   },
+  "statusLine": {
+    "type": "command",
+    "command": "bash /Users/kanade0404/.claude/statusline-command.sh"
+  },
+  "enabledPlugins": {
+    "gopls-lsp@claude-plugins-official": true,
+    "zapier@claude-plugins-official": true,
+    "wix@claude-plugins-official": true,
+    "frontend-design@claude-plugins-official": true,
+    "github@claude-plugins-official": true,
+    "superpowers@claude-plugins-official": true,
+    "context7@claude-plugins-official": true,
+    "code-review@claude-plugins-official": true,
+    "code-simplifier@claude-plugins-official": true,
+    "feature-dev@claude-plugins-official": true,
+    "playwright@claude-plugins-official": true,
+    "ralph-loop@claude-plugins-official": true,
+    "typescript-lsp@claude-plugins-official": true,
+    "security-guidance@claude-plugins-official": true,
+    "commit-commands@claude-plugins-official": true,
+    "claude-md-management@claude-plugins-official": true,
+    "serena@claude-plugins-official": true,
+    "pr-review-toolkit@claude-plugins-official": true,
+    "skill-creator@claude-plugins-official": true,
+    "pyright-lsp@claude-plugins-official": true,
+    "claude-code-setup@claude-plugins-official": true,
+    "agent-sdk-dev@claude-plugins-official": true,
+    "rust-analyzer-lsp@claude-plugins-official": true,
+    "plugin-dev@claude-plugins-official": true,
+    "Notion@claude-plugins-official": true,
+    "playground@claude-plugins-official": true,
+    "sentry@claude-plugins-official": true,
+    "huggingface-skills@claude-plugins-official": true,
+    "coderabbit@claude-plugins-official": true,
+    "lua-lsp@claude-plugins-official": true,
+    "chrome-devtools-mcp@claude-plugins-official": true,
+    "deploy-on-aws@claude-plugins-official": true,
+    "aws-serverless@claude-plugins-official": true
+  },
   "mcpServers": {
     "figma": {
       "type": "http",
@@ -251,31 +320,52 @@
     },
     "eslint": {
       "command": "npx",
-      "args": ["@eslint/mcp"]
+      "args": [
+        "@eslint/mcp"
+      ]
     },
     "terraform": {
       "command": "docker",
-      "args": ["run", "-i", "--rm", "hashicorp/terraform-mcp-server"]
+      "args": [
+        "run",
+        "-i",
+        "--rm",
+        "hashicorp/terraform-mcp-server"
+      ]
     },
     "aws-core-mcp-server": {
       "command": "docker",
-      "args": ["run", "-i", "--rm", "mcp/aws-core-mcp-server"]
+      "args": [
+        "run",
+        "-i",
+        "--rm",
+        "mcp/aws-core-mcp-server"
+      ]
     },
     "gemini-cli": {
       "type": "stdio",
       "command": "npx",
-      "args": ["@choplin/mcp-gemini-cli", "--allow-npx"],
+      "args": [
+        "@choplin/mcp-gemini-cli",
+        "--allow-npx"
+      ],
       "env": {}
     },
     "deepwiki": {
       "type": "stdio",
       "command": "npx",
-      "args": ["mcp-remote", "https://mcp.deepwiki.com/sse"],
+      "args": [
+        "mcp-remote",
+        "https://mcp.deepwiki.com/sse"
+      ],
       "env": {}
     },
     "next-devtools": {
       "command": "npx",
-      "args": ["-y", "next-devtools-mcp@latest"]
+      "args": [
+        "-y",
+        "next-devtools-mcp@latest"
+      ]
     },
     "notion": {
       "type": "http",
@@ -287,11 +377,16 @@
     },
     "playwright": {
       "command": "npx",
-      "args": ["@playwright/mcp@latest"]
+      "args": [
+        "@playwright/mcp@latest"
+      ]
     },
     "context7": {
       "command": "npx",
-      "args": ["-y", "@upstash/context7-mcp@latest"]
+      "args": [
+        "-y",
+        "@upstash/context7-mcp@latest"
+      ]
     },
     "excalidraw": {
       "url": "https://excalidraw-mcp-app.vercel.app/mcp"

@@ -6,6 +6,7 @@ Thumbs.db
 .claude/*
 !.claude/settings.json
 !.claude/hooks/
+!.claude/hooks/lib/
 !.claude/commands/
 !.claude/statusline-command.sh
 
