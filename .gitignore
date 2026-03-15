@@ -10,3 +10,6 @@ Thumbs.db
 !.claude/commands/
 !.claude/statusline.py
 node_modules/
+# Claude Code auto-generated plugin files
+.agents/
+skills-lock.json
