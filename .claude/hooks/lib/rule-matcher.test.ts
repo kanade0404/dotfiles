@@ -538,6 +538,76 @@ describe("統合テスト: settings.json ルールでの判定", () => {
     test("A13: tee /etc/important-file → ask", () => {
       expect(judgeCommand("tee /etc/important-file")).toBe("ask");
     });
+
+    test("A14: tr 'a-z' 'A-Z' < /etc/passwd → deny (機密ファイルパス検出)", () => {
+      expect(judgeCommand("tr 'a-z' 'A-Z' < /etc/passwd")).toBe("deny");
+    });
+
+    test("A15: cut -d: -f1 /etc/passwd → deny (機密ファイルパス検出)", () => {
+      expect(judgeCommand("cut -d: -f1 /etc/passwd")).toBe("deny");
+    });
+
+    test("A16: sort /etc/passwd → deny (機密ファイルパス検出)", () => {
+      expect(judgeCommand("sort /etc/passwd")).toBe("deny");
+    });
+  });
+
+  describe("機密ファイルパスの読み取り防止", () => {
+    test("head ~/.ssh/id_rsa → deny", () => {
+      expect(judgeCommand("head ~/.ssh/id_rsa")).toBe("deny");
+    });
+
+    test("head ~/.ssh/config → deny", () => {
+      expect(judgeCommand("head ~/.ssh/config")).toBe("deny");
+    });
+
+    test("sort ~/.aws/credentials → deny", () => {
+      expect(judgeCommand("sort ~/.aws/credentials")).toBe("deny");
+    });
+
+    test("cut -f1 ~/.kube/config → deny", () => {
+      expect(judgeCommand("cut -f1 ~/.kube/config")).toBe("deny");
+    });
+
+    test("sort .env → deny", () => {
+      expect(judgeCommand("sort .env")).toBe("deny");
+    });
+
+    test("cut -d= -f2 .env.local → deny", () => {
+      expect(judgeCommand("cut -d= -f2 .env.local")).toBe("deny");
+    });
+
+    test("sort /etc/shadow → deny", () => {
+      expect(judgeCommand("sort /etc/shadow")).toBe("deny");
+    });
+
+    test("head ~/.gnupg/secring.gpg → deny", () => {
+      expect(judgeCommand("head ~/.gnupg/secring.gpg")).toBe("deny");
+    });
+
+    test("tail ~/.netrc → deny", () => {
+      expect(judgeCommand("tail ~/.netrc")).toBe("deny");
+    });
+
+    test("head authorized_keys → deny", () => {
+      expect(judgeCommand("head authorized_keys")).toBe("deny");
+    });
+
+    test("sort file.txt → allow (非機密ファイル)", () => {
+      expect(judgeCommand("sort file.txt")).toBe("allow");
+    });
+
+    test("cut -f1 data.csv → allow (非機密ファイル)", () => {
+      expect(judgeCommand("cut -f1 data.csv")).toBe("allow");
+    });
+
+    test("tr 'a-z' 'A-Z' → allow (ファイル引数なし)", () => {
+      expect(judgeCommand("tr 'a-z' 'A-Z'")).toBe("allow");
+    });
+
+    test("grep pattern file.ts → allow (非機密ファイル)", () => {
+      expect(judgeCommand("grep pattern file.ts")).toBe("allow");
+    });
   });
 
   describe("セキュリティバイパス: deny回避によるask化", () => {

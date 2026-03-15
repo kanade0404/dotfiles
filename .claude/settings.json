@@ -94,6 +94,7 @@
       "Bash(git revert *)",
       "Bash(git clean *)",
       "Bash(git restore *)",
+      "Bash(git rm *)",
       "Bash(bun test *)",
       "Bash(head *)",
       "Bash(tail *)",

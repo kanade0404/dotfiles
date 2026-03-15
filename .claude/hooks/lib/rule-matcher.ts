@@ -340,6 +340,46 @@ export function checkDangerousGitFlags(command: string): boolean {
 }
 
 /**
+ * 機密ファイルパスのパターン一覧。
+ * コマンド引数やリダイレクト先にこれらのパスが含まれていたらdenyに昇格する。
+ */
+const SENSITIVE_PATH_PATTERNS: readonly RegExp[] = [
+  // SSH鍵・設定
+  /[/~]\.ssh\//,
+  /id_(rsa|ed25519|ecdsa|dsa)/,
+  /authorized_keys/,
+  /known_hosts/,
+  // 秘密鍵・証明書
+  /\.(pem|key|p12|pfx)(\s|$)/,
+  // GPG
+  /\.gnupg\//,
+  // クレデンシャル
+  /\.aws\/(credentials|config)/,
+  /\.kube\/config/,
+  /\.netrc/,
+  /\.docker\/config\.json/,
+  /\.npmrc/,
+  /\.pypirc/,
+  /\.config\/gh\/hosts\.yml/,
+  // 環境変数
+  /(^|\s|\/|<)\.env(\.[a-zA-Z]+)?(\s|$)/,
+  // システム機密ファイル
+  /\/etc\/(passwd|shadow|gshadow|master\.passwd)/,
+  /\/etc\/sudoers/,
+  // macOSキーチェーン
+  /Library\/Keychains\//,
+];
+
+/**
+ * コマンド文字列に機密ファイルパスが含まれているかチェックする。
+ * 引数やリダイレクト先に機密ファイルが指定されている場合 true を返す。
+ */
+export function checkSensitiveFilePaths(command: string): boolean {
+  const stripped = stripShellPrefixes(command);
+  return SENSITIVE_PATH_PATTERNS.some(pattern => pattern.test(stripped));
+}
+
+/**
  * コマンド名からクォート・パスプレフィックス・バックスラッシュを除去して正規化する。
  * 例: "'rm' -rf /tmp" → "rm -rf /tmp"
  *     "/usr/bin/rm -rf /tmp" → "rm -rf /tmp"
@@ -403,6 +443,10 @@ export function matchCommand(
   for (const rule of rules) {
     if (rule.category !== "allow") continue;
     if (candidates.some((cmd) => rule.regex.test(cmd))) {
+      // 機密ファイルパスが含まれている場合はdenyに昇格
+      if (checkSensitiveFilePaths(command)) {
+        return { decision: "deny", command, pattern: "sensitive-file-path" };
+      }
       return { decision: "allow", command, pattern: rule.pattern };
     }
   }
