@@ -108,7 +108,6 @@
       "Bash(mkdir *)",
       "Bash(chmod *)",
       "Bash(touch *)",
-
       "Bash(make *)",
       "Bash(docker *)",
       "Bash(nix *)",
@@ -281,7 +280,6 @@
   "enabledPlugins": {
     "gopls-lsp@claude-plugins-official": true,
     "zapier@claude-plugins-official": true,
-    "wix@claude-plugins-official": true,
     "frontend-design@claude-plugins-official": true,
     "github@claude-plugins-official": true,
     "superpowers@claude-plugins-official": true,
