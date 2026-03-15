@@ -371,11 +371,23 @@ const SENSITIVE_PATH_PATTERNS: readonly RegExp[] = [
 ];
 
 /**
+ * クォートされた文字列リテラルを除去する。
+ * コミットメッセージ等のテキスト引数内の機密パス名を誤検知しないため。
+ */
+function stripQuotedStrings(command: string): string {
+  // ダブルクォート内を除去（エスケープ考慮）
+  let result = command.replace(/"(?:[^"\\]|\\.)*"/g, '""');
+  // シングルクォート内を除去
+  result = result.replace(/'[^']*'/g, "''");
+  return result;
+}
+
+/**
  * コマンド文字列に機密ファイルパスが含まれているかチェックする。
- * 引数やリダイレクト先に機密ファイルが指定されている場合 true を返す。
+ * クォートされた文字列リテラル内のパスは無視する。
  */
 export function checkSensitiveFilePaths(command: string): boolean {
-  const stripped = stripShellPrefixes(command);
+  const stripped = stripQuotedStrings(stripShellPrefixes(command));
   return SENSITIVE_PATH_PATTERNS.some(pattern => pattern.test(stripped));
 }
 
@@ -426,10 +438,14 @@ export function matchCommand(
     }
   }
 
-  // deny を最優先でチェック
+  // クォート内を除去した候補も用意（コミットメッセージ等の文字列リテラル内の
+  // 機密パス名がワイルドカードパターンに誤マッチしないため）
+  const candidatesWithoutQuotes = candidates.map(stripQuotedStrings);
+
+  // deny を最優先でチェック（クォート除去版でマッチ）
   for (const rule of rules) {
     if (rule.category !== "deny") continue;
-    if (candidates.some((cmd) => rule.regex.test(cmd))) {
+    if (candidatesWithoutQuotes.some((cmd) => rule.regex.test(cmd))) {
       return { decision: "deny", command, pattern: rule.pattern };
     }
   }

@@ -608,6 +608,22 @@ describe("統合テスト: settings.json ルールでの判定", () => {
     test("grep pattern file.ts → allow (非機密ファイル)", () => {
       expect(judgeCommand("grep pattern file.ts")).toBe("allow");
     });
+
+    test("git commit -m に機密パス名が含まれてもallow（クォート内は無視）", () => {
+      expect(judgeCommand('git commit -m "fix .env handling"')).toBe("allow");
+    });
+
+    test("git commit -m に /etc/passwd が含まれてもallow（クォート内は無視）", () => {
+      expect(judgeCommand('git commit -m "update /etc/passwd docs"')).toBe("allow");
+    });
+
+    test("git commit -m にSSH鍵パスが含まれてもallow（クォート内は無視）", () => {
+      expect(judgeCommand('git commit -m "add ~/.ssh/config guide"')).toBe("allow");
+    });
+
+    test("シングルクォート内の機密パスも無視する", () => {
+      expect(judgeCommand("git tag -a v1.0 -m 'fix .env loading'")).toBe("allow");
+    });
   });
 
   describe("セキュリティバイパス: deny回避によるask化", () => {
