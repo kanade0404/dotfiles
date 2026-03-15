@@ -97,6 +97,7 @@
       "Bash(git rm *)",
       "Bash(git ls-files *)",
       "Bash(pwd)",
+      "Bash(jq *)",
       "Bash(bun test *)",
       "Bash(head *)",
       "Bash(tail *)",
