@@ -1,23 +1,21 @@
 import { readFileSync } from "node:fs";
-import { resolve, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
+import { extractBashPattern, patternToRegex } from "./rule-matcher.ts";
 import type { Rule, RuleCategory } from "./types.ts";
 
 /**
- * settings.json から Bash ルールを読み込む。
- * Bash(...) パターンのみ抽出する。
+ * 単一の settings.json から Bash ルールを読み込む。
+ * ファイルが存在しない場合は空配列を返す。
+ * regex はロード時にプリコンパイルする。
  */
-export function loadRules(settingsPath?: string): readonly Rule[] {
-  const path =
-    settingsPath ??
-    resolve(
-      dirname(fileURLToPath(import.meta.url)),
-      "..",
-      "..",
-      "settings.json",
-    );
+function loadRulesFromFile(path: string): readonly Rule[] {
+  let content: string;
+  try {
+    content = readFileSync(path, "utf-8");
+  } catch {
+    return [];
+  }
 
-  const content = readFileSync(path, "utf-8");
   const settings = JSON.parse(content) as {
     permissions?: {
       allow?: readonly string[];
@@ -38,11 +36,41 @@ export function loadRules(settingsPath?: string): readonly Rule[] {
 
   for (const [category, patterns] of categories) {
     for (const pattern of patterns) {
-      if (pattern.startsWith("Bash(")) {
-        rules.push({ category, pattern });
+      const bashPattern = extractBashPattern(pattern);
+      if (bashPattern !== null) {
+        rules.push({ category, pattern, regex: patternToRegex(bashPattern) });
       }
     }
   }
 
+  return rules;
+}
+
+/**
+ * ユーザー設定 + プロジェクト設定から Bash ルールを読み込んでマージする。
+ *
+ * 読み込み順（Claude Code 公式の優先順位に準拠）:
+ * 1. ~/.claude/settings.json（ユーザー設定）
+ * 2. {cwd}/.claude/settings.json（プロジェクト共有設定）
+ * 3. {cwd}/.claude/settings.local.json（プロジェクトローカル設定）
+ *
+ * ルールは全てマージされ、deny > allow > ask の順で評価される（matchCommand 側の責務）。
+ */
+export function loadRules(cwd?: string): readonly Rule[] {
+  const home = process.env.HOME ?? "";
+  const paths = [
+    resolve(home, ".claude", "settings.json"),
+    ...(cwd
+      ? [
+          resolve(cwd, ".claude", "settings.json"),
+          resolve(cwd, ".claude", "settings.local.json"),
+        ]
+      : []),
+  ];
+
+  const rules: Rule[] = [];
+  for (const path of paths) {
+    rules.push(...loadRulesFromFile(path));
+  }
   return rules;
 }

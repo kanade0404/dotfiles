@@ -3,6 +3,7 @@ export type HookInput = {
   readonly tool_input: {
     readonly command: string;
   };
+  readonly cwd?: string;
 };
 
 /**
@@ -23,6 +24,7 @@ export type RuleCategory = "allow" | "deny" | "ask";
 export type Rule = {
   readonly category: RuleCategory;
   readonly pattern: string;
+  readonly regex: RegExp;
 };
 
 export type MatchResult = {

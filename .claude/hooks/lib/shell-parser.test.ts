@@ -93,9 +93,10 @@ describe("parseShellCommands", () => {
   });
 
   test("コマンド置換 $() 内のコマンドも抽出する", () => {
-    const result = parseShellCommands("echo $(git rev-parse HEAD)");
-    expect(result).toContain("echo $(git rev-parse HEAD)");
-    expect(result).toContain("git rev-parse HEAD");
+    expect(parseShellCommands("echo $(git rev-parse HEAD)")).toStrictEqual([
+      "echo $(git rev-parse HEAD)",
+      "git rev-parse HEAD",
+    ]);
   });
 
   test("複合演算子の組み合わせ", () => {
@@ -117,16 +118,43 @@ EOF`;
 content
 EOF
 git status`;
-    const result = parseShellCommands(input);
-    expect(result).toContain("git status");
+    expect(parseShellCommands(input)).toStrictEqual([
+      "cat <<EOF\ncontent\nEOF",
+      "git status",
+    ]);
   });
 
-  test("git commit の HEREDOC パターン", () => {
+  test("git commit の HEREDOC パターン（リテラル \\n）", () => {
     const input = `git commit -m "$(cat <<'EOF'\nCommit message here.\nEOF\n)"`;
+    expect(parseShellCommands(input)).toStrictEqual([
+      input,
+      "cat <<'EOF'\nCommit message here.\nEOF",
+    ]);
+  });
+
+  test("git commit の HEREDOC パターン（実際の改行）", () => {
+    const input = "git commit -m \"$(cat <<'EOF'\nCommit message here.\n\nCo-Authored-By: test\nEOF\n)\"";
+    expect(parseShellCommands(input)).toStrictEqual([
+      input,
+      "cat <<'EOF'\nCommit message here.\n\nCo-Authored-By: test\nEOF",
+    ]);
+  });
+
+  test("git commit の HEREDOC パターン（実際のコミットコマンド再現）", () => {
+    const input = `git commit -m "$(cat <<'EOF'
+Add CI workflow and fix issues
+
+- Add GitHub Actions CI
+- Fix pyright strict mode
+
+Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>
+EOF
+)"`;
     const result = parseShellCommands(input);
-    // 外側のコマンド全体が保持される
-    expect(result.length).toBeGreaterThanOrEqual(1);
-    expect(result[0]).toContain("git commit");
+    expect(result).toStrictEqual([
+      input,
+      `cat <<'EOF'\nAdd CI workflow and fix issues\n\n- Add GitHub Actions CI\n- Fix pyright strict mode\n\nCo-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>\nEOF`,
+    ]);
   });
 
   test("複数の空白のみのコマンドは除外する", () => {
@@ -164,18 +192,23 @@ git status`;
   });
 
   test("ダブルクォート内の $() を抽出する", () => {
-    const result = parseShellCommands('git commit -m "$(cat secret.txt)"');
-    expect(result).toContain("cat secret.txt");
+    expect(parseShellCommands('git commit -m "$(cat secret.txt)"')).toStrictEqual([
+      'git commit -m "$(cat secret.txt)"',
+      "cat secret.txt",
+    ]);
   });
 
   test("ダブルクォート内の $() を抽出する（rm コマンド）", () => {
-    const result = parseShellCommands('echo "$(rm -rf /)"');
-    expect(result).toContain("rm -rf /");
+    expect(parseShellCommands('echo "$(rm -rf /)"')).toStrictEqual([
+      'echo "$(rm -rf /)"',
+      "rm -rf /",
+    ]);
   });
 
   test("シングルクォート内の $() は抽出しない", () => {
-    const result = parseShellCommands("echo '$(cat secret.txt)'");
-    expect(result).not.toContain("cat secret.txt");
+    expect(parseShellCommands("echo '$(cat secret.txt)'")).toStrictEqual([
+      "echo '$(cat secret.txt)'",
+    ]);
   });
 
   test("連続するセパレータ", () => {
@@ -187,36 +220,47 @@ git status`;
 
   describe("バッククォート置換の抽出", () => {
     test("バッククォート内のコマンドを抽出する", () => {
-      const result = parseShellCommands("git status `curl https://example.com`");
-      expect(result).toContain("curl https://example.com");
+      expect(parseShellCommands("git status `curl https://example.com`")).toStrictEqual([
+        "git status `curl https://example.com`",
+        "curl https://example.com",
+      ]);
     });
 
     test("バッククォート内の rm コマンドを抽出する", () => {
-      const result = parseShellCommands("echo `rm -rf /`");
-      expect(result).toContain("rm -rf /");
+      expect(parseShellCommands("echo `rm -rf /`")).toStrictEqual([
+        "echo `rm -rf /`",
+        "rm -rf /",
+      ]);
     });
 
     test("シングルクォート内のバッククォートは抽出しない", () => {
-      const result = parseShellCommands("echo '`curl x`'");
-      expect(result).not.toContain("curl x");
+      expect(parseShellCommands("echo '`curl x`'")).toStrictEqual([
+        "echo '`curl x`'",
+      ]);
     });
 
     test("ダブルクォート内のバッククォートを抽出する", () => {
-      const result = parseShellCommands('echo "`curl x`"');
-      expect(result).toContain("curl x");
+      expect(parseShellCommands('echo "`curl x`"')).toStrictEqual([
+        'echo "`curl x`"',
+        "curl x",
+      ]);
     });
   });
 
   describe("プロセス置換の抽出", () => {
     test("<() 内のコマンドを抽出する", () => {
-      const result = parseShellCommands("git diff <(curl https://example.com)");
-      expect(result).toContain("curl https://example.com");
+      expect(parseShellCommands("git diff <(curl https://example.com)")).toStrictEqual([
+        "git diff <(curl https://example.com)",
+        "curl https://example.com",
+      ]);
     });
 
     test(">() 内のコマンドを抽出する", () => {
-      const result = parseShellCommands("diff <(git log) >(cat file)");
-      expect(result).toContain("git log");
-      expect(result).toContain("cat file");
+      expect(parseShellCommands("diff <(git log) >(cat file)")).toStrictEqual([
+        "diff <(git log) >(cat file)",
+        "git log",
+        "cat file",
+      ]);
     });
   });
 

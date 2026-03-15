@@ -4,7 +4,7 @@ import type { Rule, RuleCategory, MatchResult } from "./types.ts";
  * Bash ルールパターンからコマンドパターン文字列を抽出する。
  * 例: "Bash(git status:*)" → "git status:*"
  */
-function extractBashPattern(rule: string): string | null {
+export function extractBashPattern(rule: string): string | null {
   const match = rule.match(/^Bash\((.+)\)$/);
   return match ? match[1] : null;
 }
@@ -17,7 +17,7 @@ function extractBashPattern(rule: string): string | null {
  * - ` *` (スペース+アスタリスク) → 「スペース+任意文字列」→ ` .*`
  * - `*` (単独) → 「任意文字列」→ `.*`
  */
-function patternToRegex(pattern: string): RegExp {
+export function patternToRegex(pattern: string): RegExp {
   // パターンを正規表現文字列に変換
   let regexStr = "";
   let i = 0;
@@ -66,7 +66,7 @@ function patternToRegex(pattern: string): RegExp {
     i++;
   }
 
-  return new RegExp(`^${regexStr}$`);
+  return new RegExp(`^${regexStr}$`, "s");
 }
 
 const SHELL_KEYWORD_PREFIXES = ["then", "else", "elif", "do"] as const;
@@ -100,13 +100,13 @@ export function stripShellPrefixes(command: string): string {
     cmd = cmd.slice(1).trim();
   }
 
-  // ( の除去（サブシェル）
-  if (cmd.startsWith("(")) {
+  // ( の除去（サブシェル / 二重括弧）
+  while (cmd.startsWith("(")) {
     cmd = cmd.slice(1).trim();
   }
 
-  // 末尾の ) の除去（サブシェル）
-  if (cmd.endsWith(")")) {
+  // 末尾の ) の除去（サブシェル / 二重括弧）
+  while (cmd.endsWith(")")) {
     cmd = cmd.slice(0, -1).trim();
   }
 
@@ -120,8 +120,41 @@ export function stripShellPrefixes(command: string): string {
         cmd = cmd.slice(prefix.length).trim();
         changed = true;
 
-        // env の場合: KEY=VALUE を除去
+        // env の場合: フラグと KEY=VALUE を除去
         if (wasEnv) {
+          // envフラグのスキップ
+          let envFlagChanged = true;
+          while (envFlagChanged) {
+            envFlagChanged = false;
+            // 値なしフラグ: -i, -0, --ignore-environment, --null
+            const noArgMatch = cmd.match(/^(-i|--ignore-environment|-0|--null)\s+/);
+            if (noArgMatch) {
+              cmd = cmd.slice(noArgMatch[0].length);
+              envFlagChanged = true;
+              continue;
+            }
+            // --unset=NAME
+            const unsetEqMatch = cmd.match(/^--unset=\S+\s*/);
+            if (unsetEqMatch) {
+              cmd = cmd.slice(unsetEqMatch[0].length);
+              envFlagChanged = true;
+              continue;
+            }
+            // -u NAME, --unset NAME
+            const unsetMatch = cmd.match(/^(-u|--unset)\s+\S+\s*/);
+            if (unsetMatch) {
+              cmd = cmd.slice(unsetMatch[0].length);
+              envFlagChanged = true;
+              continue;
+            }
+            // -- (オプション終了マーカー)
+            if (cmd.startsWith("-- ")) {
+              cmd = cmd.slice(3);
+              envFlagChanged = true;
+              break;
+            }
+          }
+          // KEY=VALUE を除去
           while (/^\w+=\S*/.test(cmd)) {
             cmd = cmd.replace(/^\w+=\S*\s*/, "");
           }
@@ -144,7 +177,7 @@ type DangerousGitFlagRule = {
 const DANGEROUS_GIT_FLAGS: readonly DangerousGitFlagRule[] = [
   {
     gitSubcommands: ["commit"],
-    flags: ["--no-verify", "-n"],
+    flags: ["--no-verify", "-n", "-a", "--all"],
   },
   {
     gitSubcommands: ["merge"],
@@ -198,6 +231,41 @@ function normalizeArg(arg: string): string {
 }
 
 /**
+ * git global optionsをスキップしてsubcommandとその引数を検出する。
+ * 例: ["git", "-c", "key=val", "push", "--force"] → { subcommand: "push", argsStartIndex: 4 }
+ */
+function findGitSubcommand(parts: readonly string[]): {
+  subcommand: string;
+  argsStartIndex: number;
+} | null {
+  // git global options一覧
+  const singleGlobalOpts = [
+    "--no-pager", "--bare", "--no-replace-objects", "--literal-pathspecs",
+    "--glob-pathspecs", "--no-glob-pathspecs", "--no-optional-locks",
+    "--paginate", "-p",
+  ];
+  const twoTokenGlobalOpts = ["-c", "-C", "--git-dir", "--work-tree", "--namespace"];
+
+  let i = 1;
+  while (i < parts.length) {
+    const p = parts[i];
+    // 2トークン消費するglobal options
+    if (twoTokenGlobalOpts.includes(p) && i + 1 < parts.length) { i += 2; continue; }
+    // --key=value 形式のglobal options
+    if (p.startsWith("--") && p.includes("=")) { i++; continue; }
+    // 単独global options
+    if (singleGlobalOpts.includes(p)) { i++; continue; }
+    // subcommandを発見（-で始まらない）
+    if (!p.startsWith("-")) {
+      return { subcommand: p, argsStartIndex: i + 1 };
+    }
+    // 不明な-フラグ → 安全側でスキップ
+    i++;
+  }
+  return null;
+}
+
+/**
  * git コマンドに位置非依存で危険なフラグが含まれているかチェックする。
  * 例: "git commit -m msg --no-verify" → true
  */
@@ -210,9 +278,12 @@ export function checkDangerousGitFlags(command: string): boolean {
 
   const parts = sanitized.split(/\s+/);
   if (parts.length < 2) return false;
-  const subcommand = parts[1];
 
-  const args = parts.slice(2);
+  const gitSub = findGitSubcommand(parts);
+  if (!gitSub) return false;
+  const subcommand = gitSub.subcommand;
+
+  const args = parts.slice(gitSub.argsStartIndex);
 
   for (const rule of DANGEROUS_GIT_FLAGS) {
     if (!rule.gitSubcommands.includes(subcommand)) continue;
@@ -280,6 +351,8 @@ function normalizeCommandName(command: string): string {
   const rest = spaceIndex === -1 ? "" : command.slice(spaceIndex);
 
   let cmdName = normalizeArg(originalName);
+  // mid-word quoteの除去（シェルはクォート除去後に結合する）
+  cmdName = cmdName.replace(/['"]/g, "");
   // フルパスからベース名を抽出
   const lastSlash = cmdName.lastIndexOf("/");
   if (lastSlash >= 0) {
@@ -316,10 +389,7 @@ export function matchCommand(
   // deny を最優先でチェック
   for (const rule of rules) {
     if (rule.category !== "deny") continue;
-    const pattern = extractBashPattern(rule.pattern);
-    if (pattern === null) continue;
-    const regex = patternToRegex(pattern);
-    if (candidates.some((cmd) => regex.test(cmd))) {
+    if (candidates.some((cmd) => rule.regex.test(cmd))) {
       return { decision: "deny", command, pattern: rule.pattern };
     }
   }
@@ -332,10 +402,7 @@ export function matchCommand(
   // allow チェック
   for (const rule of rules) {
     if (rule.category !== "allow") continue;
-    const pattern = extractBashPattern(rule.pattern);
-    if (pattern === null) continue;
-    const regex = patternToRegex(pattern);
-    if (candidates.some((cmd) => regex.test(cmd))) {
+    if (candidates.some((cmd) => rule.regex.test(cmd))) {
       return { decision: "allow", command, pattern: rule.pattern };
     }
   }
@@ -343,10 +410,7 @@ export function matchCommand(
   // ask チェック
   for (const rule of rules) {
     if (rule.category !== "ask") continue;
-    const pattern = extractBashPattern(rule.pattern);
-    if (pattern === null) continue;
-    const regex = patternToRegex(pattern);
-    if (candidates.some((cmd) => regex.test(cmd))) {
+    if (candidates.some((cmd) => rule.regex.test(cmd))) {
       return { decision: "ask", command, pattern: rule.pattern };
     }
   }

@@ -100,17 +100,25 @@
       "Bash(wc *)",
       "Bash(sort *)",
       "Bash(grep *)",
-      "Bash(xargs *)",
-      "Bash(tee *)",
       "Bash(tr *)",
       "Bash(cut *)",
       "Bash(uniq *)",
       "Bash(mkdir *)",
-      "Bash(chmod *)",
-      "Bash(touch *)",
       "Bash(make *)",
-      "Bash(docker *)",
-      "Bash(nix *)",
+      "Bash(docker ps *)",
+      "Bash(docker images *)",
+      "Bash(docker logs *)",
+      "Bash(docker inspect *)",
+      "Bash(docker build *)",
+      "Bash(docker compose *)",
+      "Bash(nix build *)",
+      "Bash(nix eval *)",
+      "Bash(nix flake *)",
+      "Bash(nix search *)",
+      "Bash(nix profile *)",
+      "Bash(nix store *)",
+      "Bash(nix path-info *)",
+      "Bash(nix show-derivation *)",
       "Bash(darwin-rebuild *)",
       "Bash(gh pr *)",
       "Bash(gh issue *)",
@@ -126,6 +134,7 @@
       "Edit(**/migrations/**)",
       "MultiEdit(**/migrations/**)",
       "Bash(sudo *)",
+      "Bash(nix-shell *)",
       "Bash(rm *)",
       "Bash(rm -rf *)",
       "Bash(cp *)",
@@ -267,7 +276,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo \"[$(date)] $USER: $(jq -r '.tool_input.command')\" >> ~/.claude/command_history.log"
+            "command": "jq -r '\"[\" + (now | strftime(\"%Y-%m-%d %H:%M:%S\")) + \"] [\" + (.cwd // \"unknown\") + \"] \" + .tool_input.command' >> ~/.claude/command_history.log"
           }
         ]
       }

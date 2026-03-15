@@ -3,10 +3,19 @@ import {
   matchCommand,
   stripShellPrefixes,
   checkDangerousGitFlags,
+  extractBashPattern,
+  patternToRegex,
 } from "./rule-matcher.ts";
 import { loadRules } from "./rules.ts";
 import { parseShellCommands } from "./shell-parser.ts";
-import type { Rule } from "./types.ts";
+import { evaluateCommand } from "./evaluator.ts";
+import type { Rule, RuleCategory } from "./types.ts";
+
+/** テスト用 Rule 作成ヘルパー（regex をプリコンパイル） */
+function rule(category: RuleCategory, pattern: string): Rule {
+  const bashPattern = extractBashPattern(pattern);
+  return { category, pattern, regex: bashPattern ? patternToRegex(bashPattern) : /(?!)/ };
+}
 
 /** matchCommand の decision だけを取り出すヘルパー */
 function decision(command: string, rules: readonly Rule[]) {
@@ -15,22 +24,22 @@ function decision(command: string, rules: readonly Rule[]) {
 
 describe("matchCommand", () => {
   const rules: readonly Rule[] = [
-    { category: "allow", pattern: "Bash(git status:*)" },
-    { category: "allow", pattern: "Bash(git log:*)" },
-    { category: "allow", pattern: "Bash(git diff:*)" },
-    { category: "allow", pattern: "Bash(head *)" },
-    { category: "allow", pattern: "Bash(tail *)" },
-    { category: "allow", pattern: "Bash(pnpm build)" },
-    { category: "allow", pattern: "Bash(pnpm test)" },
-    { category: "allow", pattern: "Bash(grep *)" },
-    { category: "allow", pattern: "Bash(pnpm vitest *)" },
-    { category: "deny", pattern: "Bash(curl:*)" },
-    { category: "deny", pattern: "Bash(rm:*)" },
-    { category: "deny", pattern: "Bash(echo:*)" },
-    { category: "deny", pattern: "Bash(git commit --no-verify:*)" },
-    { category: "deny", pattern: "Bash(git push --force:*)" },
-    { category: "ask", pattern: "Bash(pnpm install *)" },
-    { category: "ask", pattern: "Bash(node:*)" },
+    rule("allow", "Bash(git status:*)"),
+    rule("allow", "Bash(git log:*)"),
+    rule("allow", "Bash(git diff:*)"),
+    rule("allow", "Bash(head *)"),
+    rule("allow", "Bash(tail *)"),
+    rule("allow", "Bash(pnpm build)"),
+    rule("allow", "Bash(pnpm test)"),
+    rule("allow", "Bash(grep *)"),
+    rule("allow", "Bash(pnpm vitest *)"),
+    rule("deny", "Bash(curl:*)"),
+    rule("deny", "Bash(rm:*)"),
+    rule("deny", "Bash(echo:*)"),
+    rule("deny", "Bash(git commit --no-verify:*)"),
+    rule("deny", "Bash(git push --force:*)"),
+    rule("ask", "Bash(pnpm install *)"),
+    rule("ask", "Bash(node:*)"),
   ];
 
   describe(":* パターン（プレフィックス + 空 or スペース+任意）", () => {
@@ -60,9 +69,14 @@ describe("matchCommand", () => {
       expect(decision("head", rules)).toBe("allow");
     });
 
+    test("改行を含むコマンドにもマッチする（HEREDOC）", () => {
+      const catRules: readonly Rule[] = [rule("deny", "Bash(cat *)")];
+      expect(decision("cat <<'EOF'\nContent here\nEOF", catRules)).toBe("deny");
+    });
+
     test("途中の ` *` は引数を要求する（例: git * main）", () => {
       const midRules: readonly Rule[] = [
-        { category: "allow", pattern: "Bash(git * main)" },
+        rule("allow", "Bash(git * main)"),
       ];
       expect(decision("git checkout main", midRules)).toBe("allow");
       expect(matchCommand("git main", midRules)).toBeNull();
@@ -86,8 +100,8 @@ describe("matchCommand", () => {
 
     test("deny は allow より優先される", () => {
       const mixedRules: readonly Rule[] = [
-        { category: "allow", pattern: "Bash(rm:*)" },
-        { category: "deny", pattern: "Bash(rm:*)" },
+        rule("allow", "Bash(rm:*)"),
+        rule("deny", "Bash(rm:*)"),
       ];
       expect(decision("rm -rf /", mixedRules)).toBe("deny");
     });
@@ -105,7 +119,7 @@ describe("matchCommand", () => {
 
   describe(":* パターンでスペース区切りのコマンドがマッチする", () => {
     const taskRules: readonly Rule[] = [
-      { category: "allow", pattern: "Bash(task :*)" },
+      rule("allow", "Bash(task :*)"),
     ];
 
     test("task init-setup がマッチする", () => {
@@ -153,7 +167,7 @@ describe("matchCommand", () => {
     test("危険 git フラグで deny された場合 pattern は dangerous-git-flags", () => {
       const rulesWithPush: readonly Rule[] = [
         ...rules,
-        { category: "allow", pattern: "Bash(git push:*)" },
+        rule("allow", "Bash(git push:*)"),
       ];
       const result = matchCommand("git push origin main --force", rulesWithPush);
       expect(result).not.toBeNull();
@@ -174,7 +188,7 @@ describe("matchCommand", () => {
     test("git merge feature --no-verify は deny", () => {
       const rulesWithMerge: readonly Rule[] = [
         ...rules,
-        { category: "allow", pattern: "Bash(git merge:*)" },
+        rule("allow", "Bash(git merge:*)"),
       ];
       expect(decision("git merge feature --no-verify", rulesWithMerge)).toBe(
         "deny",
@@ -184,7 +198,7 @@ describe("matchCommand", () => {
     test("git push origin main --force は deny", () => {
       const rulesWithPush: readonly Rule[] = [
         ...rules,
-        { category: "allow", pattern: "Bash(git push:*)" },
+        rule("allow", "Bash(git push:*)"),
       ];
       expect(decision("git push origin main --force", rulesWithPush)).toBe(
         "deny",
@@ -194,7 +208,7 @@ describe("matchCommand", () => {
     test("git push -f origin main は deny", () => {
       const rulesWithPush: readonly Rule[] = [
         ...rules,
-        { category: "allow", pattern: "Bash(git push:*)" },
+        rule("allow", "Bash(git push:*)"),
       ];
       expect(decision("git push -f origin main", rulesWithPush)).toBe("deny");
     });
@@ -202,7 +216,7 @@ describe("matchCommand", () => {
     test("git push origin +main は deny", () => {
       const rulesWithPush: readonly Rule[] = [
         ...rules,
-        { category: "allow", pattern: "Bash(git push:*)" },
+        rule("allow", "Bash(git push:*)"),
       ];
       expect(decision("git push origin +main", rulesWithPush)).toBe("deny");
     });
@@ -210,7 +224,7 @@ describe("matchCommand", () => {
     test("git push origin main は正常（allow ルールがあれば allow）", () => {
       const rulesWithPush: readonly Rule[] = [
         ...rules,
-        { category: "allow", pattern: "Bash(git push:*)" },
+        rule("allow", "Bash(git push:*)"),
       ];
       expect(decision("git push origin main", rulesWithPush)).toBe("allow");
     });
@@ -218,7 +232,7 @@ describe("matchCommand", () => {
     test("git commit -m 'msg' は正常（allow ルールがあれば allow）", () => {
       const rulesWithCommit: readonly Rule[] = [
         ...rules,
-        { category: "allow", pattern: "Bash(git commit:*)" },
+        rule("allow", "Bash(git commit:*)"),
       ];
       expect(decision('git commit -m "msg"', rulesWithCommit)).toBe("allow");
     });
@@ -226,7 +240,7 @@ describe("matchCommand", () => {
     test("git commit -n は deny（-n は --no-verify の短縮形）", () => {
       const rulesWithCommit: readonly Rule[] = [
         ...rules,
-        { category: "allow", pattern: "Bash(git commit:*)" },
+        rule("allow", "Bash(git commit:*)"),
       ];
       expect(decision('git commit -n -m "msg"', rulesWithCommit)).toBe("deny");
     });
@@ -368,14 +382,7 @@ describe("統合テスト: settings.json ルールでの判定", () => {
   /** 複合コマンドの全サブコマンドを判定し、最終結果を返す */
   function judgeCommand(command: string): "allow" | "deny" | "ask" {
     const subs = parseShellCommands(command);
-    let hasAsk = false;
-    for (const sub of subs) {
-      const result = matchCommand(sub, settingsRules);
-      if (result === null) continue; // 未マッチ = allow
-      if (result.decision === "deny") return "deny";
-      if (result.decision === "ask") hasAsk = true;
-    }
-    return hasAsk ? "ask" : "allow";
+    return evaluateCommand(subs, settingsRules).decision;
   }
 
   describe("allow 系: 読み取り git コマンド", () => {
@@ -412,7 +419,7 @@ describe("統合テスト: settings.json ルールでの判定", () => {
     test("bun test", () => expect(judgeCommand("bun test")).toBe("allow"));
     test("bun test lib/rule-matcher.test.ts", () => expect(judgeCommand("bun test lib/rule-matcher.test.ts")).toBe("allow"));
     test("mkdir -p src/lib", () => expect(judgeCommand("mkdir -p src/lib")).toBe("allow"));
-    test("pnpm build", () => expect(judgeCommand("pnpm build")).toBe("allow"));
+    test("pnpm build（未マッチ→ask）", () => expect(judgeCommand("pnpm build")).toBe("ask"));
     test("make build", () => expect(judgeCommand("make build")).toBe("allow"));
     test("docker ps", () => expect(judgeCommand("docker ps")).toBe("allow"));
     test("nix build", () => expect(judgeCommand("nix build")).toBe("allow"));
@@ -444,9 +451,9 @@ describe("統合テスト: settings.json ルールでの判定", () => {
     test("pnpm install lodash", () => expect(judgeCommand("pnpm install lodash")).toBe("ask"));
   });
 
-  describe("未マッチ → allow", () => {
-    test("python script.py", () => expect(judgeCommand("python script.py")).toBe("allow"));
-    test("node index.js", () => expect(judgeCommand("node index.js")).toBe("allow"));
+  describe("未マッチ → ask", () => {
+    test("python script.py", () => expect(judgeCommand("python script.py")).toBe("ask"));
+    test("node index.js", () => expect(judgeCommand("node index.js")).toBe("ask"));
   });
 
   describe("複合コマンド（パイプ / && / リダイレクト）", () => {
@@ -474,8 +481,114 @@ describe("統合テスト: settings.json ルールでの判定", () => {
       expect(judgeCommand("git status && ls")).toBe("deny");
     });
 
-    test("pnpm build 2>&1 | tail -20 → allow (pnpm allow, tail allow)", () => {
-      expect(judgeCommand("pnpm build 2>&1 | tail -20")).toBe("allow");
+    test("pnpm build 2>&1 | tail -20 → ask (pnpm 未マッチ)", () => {
+      expect(judgeCommand("pnpm build 2>&1 | tail -20")).toBe("ask");
+    });
+  });
+
+  describe("セキュリティバイパス: allowルール経由の危険コマンド実行", () => {
+    test("A1: xargs rm -rf / → ask", () => {
+      expect(judgeCommand("xargs rm -rf /")).toBe("ask");
+    });
+
+    test("A2: xargs curl http://evil.com → ask", () => {
+      expect(judgeCommand("xargs curl http://evil.com")).toBe("ask");
+    });
+
+    test("A3: git log | xargs rm → ask (パイプ分解後 xargs rm が ask)", () => {
+      expect(judgeCommand("git log | xargs rm")).toBe("ask");
+    });
+
+    test("A4: docker exec container rm -rf / → ask", () => {
+      expect(judgeCommand("docker exec container rm -rf /")).toBe("ask");
+    });
+
+    test("A5: docker run --rm alpine cat /etc/passwd → ask", () => {
+      expect(judgeCommand("docker run --rm alpine cat /etc/passwd")).toBe("ask");
+    });
+
+    test("A6: nix run nixpkgs#curl → ask", () => {
+      expect(judgeCommand("nix run nixpkgs#curl")).toBe("ask");
+    });
+
+    test('A7: nix-shell -p curl --run "curl evil.com" → deny (nix-shell denyルール)', () => {
+      expect(judgeCommand('nix-shell -p curl --run "curl evil.com"')).toBe("deny");
+    });
+
+    test("A8: xargs bash -c 'rm -rf /' → ask", () => {
+      expect(judgeCommand("xargs bash -c 'rm -rf /'")).toBe("ask");
+    });
+
+    test("A9: xargs git push --force origin main → ask", () => {
+      expect(judgeCommand("xargs git push --force origin main")).toBe("ask");
+    });
+
+    test("A10: xargs sudo rm -rf / → ask", () => {
+      expect(judgeCommand("xargs sudo rm -rf /")).toBe("ask");
+    });
+
+    test("A11: chmod +x malicious.sh → ask", () => {
+      expect(judgeCommand("chmod +x malicious.sh")).toBe("ask");
+    });
+
+    test("A12: touch ~/.ssh/authorized_keys → ask", () => {
+      expect(judgeCommand("touch ~/.ssh/authorized_keys")).toBe("ask");
+    });
+
+    test("A13: tee /etc/important-file → ask", () => {
+      expect(judgeCommand("tee /etc/important-file")).toBe("ask");
+    });
+  });
+
+  describe("セキュリティバイパス: deny回避によるask化", () => {
+    test("B1: r'm' -rf / → deny (mid-word single quote)", () => {
+      expect(judgeCommand("r'm' -rf /")).toBe("deny");
+    });
+
+    test('B2: "r"m -rf / → deny (mid-word double quote)', () => {
+      expect(judgeCommand('"r"m -rf /')).toBe("deny");
+    });
+
+    test("B3: r\\m -rf / → deny (バックスラッシュ正規化、確認用)", () => {
+      expect(judgeCommand("r\\m -rf /")).toBe("deny");
+    });
+
+    test("B4: ((rm -rf /)) → deny (二重括弧)", () => {
+      expect(judgeCommand("((rm -rf /))")).toBe("deny");
+    });
+
+    test("B5: git -c key=val push --force origin main → deny (git global options)", () => {
+      expect(judgeCommand("git -c key=val push --force origin main")).toBe("deny");
+    });
+
+    test("B6: git --no-optional-locks push --force origin main → deny", () => {
+      expect(judgeCommand("git --no-optional-locks push --force origin main")).toBe("deny");
+    });
+
+    test("B7: env -i rm -rf / → deny (envフラグ)", () => {
+      expect(judgeCommand("env -i rm -rf /")).toBe("deny");
+    });
+
+    test("B8: env -u PATH rm -rf / → deny (env -u フラグ)", () => {
+      expect(judgeCommand("env -u PATH rm -rf /")).toBe("deny");
+    });
+  });
+
+  describe("セキュリティバイパス: 境界ケース", () => {
+    test('C1: git commit -am "msg" → deny (-a は広範ステージング)', () => {
+      expect(judgeCommand('git commit -am "msg"')).toBe("deny");
+    });
+
+    test("C2: git push origin :main → deny (refspec削除)", () => {
+      expect(judgeCommand("git push origin :main")).toBe("deny");
+    });
+
+    test("C3: git add ./././. → deny (冗長パス正規化)", () => {
+      expect(judgeCommand("git add ./././.")).toBe("deny");
+    });
+
+    test("C4: git restore . → deny (positionalArgs)", () => {
+      expect(judgeCommand("git restore .")).toBe("deny");
     });
   });
 });
