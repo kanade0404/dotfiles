@@ -29,7 +29,7 @@ def braille_bar(pct, width=8):
             bar += BRAILLE[0]
         else:
             frac = (level - seg_start) / (seg_end - seg_start)
-            bar += BRAILLE[min(int(frac * 7), 7)]
+            bar += BRAILLE[1 + min(int(frac * 7), 6)]
     return bar
 
 def fmt(label, pct):
