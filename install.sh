@@ -24,7 +24,7 @@ ln -sf "$DOTFILES/.local/bin/gw" "$HOME/.local/bin/gw"
 echo "==> Linking Claude Code user settings"
 mkdir -p "$HOME/.claude"
 ln -sf "$DOTFILES/.claude/settings.json" "$HOME/.claude/settings.json"
-ln -sf "$DOTFILES/.claude/statusline-command.sh" "$HOME/.claude/statusline-command.sh"
+ln -sf "$DOTFILES/.claude/statusline.py" "$HOME/.claude/statusline.py"
 # hooks: symlink each file (directory symlink would hide Claude's own hooks)
 mkdir -p "$HOME/.claude/hooks"
 for f in "$DOTFILES/.claude/hooks/"*; do
