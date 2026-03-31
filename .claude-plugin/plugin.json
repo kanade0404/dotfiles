@@ -1,0 +1,24 @@
+{
+  "name": "dotfiles-dev-toolkit",
+  "version": "1.0.0",
+  "description": "Development agents, skills, and commands ported from everything-claude-code",
+  "agents": [
+    "./agents/architect.md",
+    "./agents/build-error-resolver.md",
+    "./agents/code-reviewer.md",
+    "./agents/database-reviewer.md",
+    "./agents/doc-updater.md",
+    "./agents/docs-lookup.md",
+    "./agents/e2e-runner.md",
+    "./agents/go-reviewer.md",
+    "./agents/performance-optimizer.md",
+    "./agents/planner.md",
+    "./agents/python-reviewer.md",
+    "./agents/refactor-cleaner.md",
+    "./agents/security-reviewer.md",
+    "./agents/tdd-guide.md",
+    "./agents/typescript-reviewer.md"
+  ],
+  "skills": ["./skills/"],
+  "commands": ["./commands/"]
+}

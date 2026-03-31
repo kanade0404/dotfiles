@@ -13,3 +13,5 @@ node_modules/
 # Claude Code auto-generated plugin files
 .agents/
 skills-lock.json
+# Track local plugin
+!.claude-plugin/

@@ -1,5 +1,4 @@
 {
-  "plansDirectory": "./.claude/plans",
   "permissions": {
     "allow": [
       "Read(.claude/settings*)",
@@ -331,6 +330,7 @@
     "deploy-on-aws@claude-plugins-official": true,
     "aws-serverless@claude-plugins-official": true
   },
+  "plansDirectory": "./.claude/plans",
   "mcpServers": {
     "figma": {
       "type": "http",
