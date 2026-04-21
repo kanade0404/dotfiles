@@ -14,7 +14,7 @@
   };
 
   outputs = { self, nixpkgs, nix-darwin, home-manager, ... }: {
-    darwinConfigurations."SeiyanoMacBook-Air" = nix-darwin.lib.darwinSystem {
+    darwinConfigurations."kanade0404" = nix-darwin.lib.darwinSystem {
       system = "aarch64-darwin";
       modules = [
         ./configuration.nix

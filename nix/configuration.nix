@@ -1,6 +1,8 @@
 { pkgs, ... }: {
-  # Nix settings (Determinate Nix manages the daemon, so disable nix-darwin's management)
-  nix.enable = false;
+  # Nix settings — nix-darwin に /etc/nix/nix.conf を管理させる
+  # (Determinate Nix を使う場合はこの Mac では `nix.enable = false` に戻すこと)
+  nix.enable = true;
+  nix.settings.experimental-features = [ "nix-command" "flakes" ];
 
   # System-level packages (migrated from Homebrew + mise)
   environment.systemPackages = with pkgs; [
@@ -87,6 +89,11 @@
     LC_ALL = "ja_JP.UTF-8";
   };
 
+  # Hostname (declaratively managed — sets macOS HostName / LocalHostName / ComputerName)
+  networking.hostName = "kanade0404";
+  networking.localHostName = "kanade0404";
+  networking.computerName = "kanade0404";
+
   # User
   system.primaryUser = "kanade0404";
   users.users.kanade0404 = {
@@ -97,7 +104,7 @@
   # Shell
   programs.zsh.enable = true;
 
-  # Nix GC is managed by Determinate Nix daemon
+  # Nix GC は nix-darwin 側で管理 (必要に応じて nix.gc.* を追加)
 
   # Import sub-modules
   imports = [
