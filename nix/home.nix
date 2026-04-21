@@ -321,10 +321,15 @@
         # Helper scripts
         export PATH="$HOME/.local/bin:$PATH"
 
-        # mise (kept for Node.js multi-version management)
+        # Homebrew (Apple Silicon) — casks / formulae (rbenv 等) への PATH を通す
+        if [ -x /opt/homebrew/bin/brew ]; then
+          eval "$(/opt/homebrew/bin/brew shellenv)"
+        fi
+
+        # mise (Node.js 等の multi-version management, nixpkgs 管理)
         eval "$(mise activate zsh)"
 
-        # rbenv
+        # rbenv (Homebrew 管理)
         eval "$(rbenv init - zsh)"
 
         # mactex

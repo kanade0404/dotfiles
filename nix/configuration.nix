@@ -79,6 +79,7 @@
     ghq
     gifsicle
     mas
+    mise # Node.js など複数ランタイムのバージョン管理
     scrcpy
     direnv
   ];
