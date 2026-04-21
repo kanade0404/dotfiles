@@ -8,6 +8,12 @@
     rustup
   ];
 
+  # Session-wide env vars
+  home.sessionVariables = {
+    # Use 1Password SSH agent (keys managed in 1Password app)
+    SSH_AUTH_SOCK = "$HOME/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock";
+  };
+
   programs = {
     # direnv + nix-direnv for per-project flake support
     direnv = {
