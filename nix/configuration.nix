@@ -109,7 +109,6 @@
   # Import sub-modules
   imports = [
     ./modules/homebrew.nix
-    ./modules/services.nix
   ];
 
   # Used for backwards compatibility
