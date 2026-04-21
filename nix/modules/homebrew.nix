@@ -48,7 +48,6 @@
       "spotify"
       "sublime-text"
       "temurin@21"
-      "testcontainers-desktop"
       "the-unarchiver"
       "transmit"
       "tunnelblick"
