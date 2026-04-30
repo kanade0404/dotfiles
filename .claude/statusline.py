@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Pattern 5: Braille dots - dotted progress bar using braille characters"""
-import json, sys
+"""Claude Code statusline with braille progress bars"""
+import json, sys, subprocess, os
 
 data = json.load(sys.stdin)
 
 BRAILLE = ' ⣀⣄⣤⣦⣶⣷⣿'
 R = '\033[0m'
 DIM = '\033[2m'
+
 
 def gradient(pct):
     if pct < 50:
@@ -15,6 +16,7 @@ def gradient(pct):
     else:
         g = int(200 - (pct - 50) * 4)
         return f'\033[38;2;255;{max(g, 0)};60m'
+
 
 def braille_bar(pct, width=8):
     pct = min(max(pct, 0), 100)
@@ -32,17 +34,69 @@ def braille_bar(pct, width=8):
             bar += BRAILLE[1 + min(int(frac * 7), 6)]
     return bar
 
+
 def fmt(label, pct):
     p = round(pct)
     return f'{DIM}{label}{R} {gradient(pct)}{braille_bar(pct)}{R} {p}%'
 
-model = data.get('model', {}).get('display_name', 'Claude')
-parts = [model]
 
+def short_dir(cwd):
+    home = os.path.expanduser('~')
+    path = cwd.replace(home, '~', 1) if cwd.startswith(home) else cwd
+    parts = path.split('/')
+    if len(parts) > 3:
+        return '.../' + '/'.join(parts[-3:])
+    return path
+
+
+def git_info(cwd):
+    try:
+        branch = subprocess.run(
+            ['git', '-C', cwd, 'symbolic-ref', '--short', 'HEAD'],
+            capture_output=True, text=True, timeout=2
+        )
+        if branch.returncode != 0:
+            branch = subprocess.run(
+                ['git', '-C', cwd, 'rev-parse', '--short', 'HEAD'],
+                capture_output=True, text=True, timeout=2
+            )
+        if branch.returncode != 0:
+            return None
+        name = branch.stdout.strip()
+        status = subprocess.run(
+            ['git', '-C', cwd, 'status', '--porcelain'],
+            capture_output=True, text=True, timeout=2
+        )
+        dirty = '*' if status.stdout.strip() else ''
+        return f' {name}{dirty}'
+    except Exception:
+        return None
+
+
+SEP = f' {DIM}|{R} '
+parts = []
+
+# Directory
+cwd = data.get('workspace', {}).get('current_dir') or data.get('cwd', '')
+if cwd:
+    parts.append(short_dir(cwd))
+
+# Git branch
+git = git_info(cwd) if cwd else None
+if git:
+    parts.append(git)
+
+# Context usage (left side for visibility)
 ctx = data.get('context_window', {}).get('used_percentage')
 if ctx is not None:
     parts.append(fmt('ctx', ctx))
 
+# Model name
+model = data.get('model', {}).get('display_name')
+if model:
+    parts.append(model)
+
+# Rate limits (5h / 7d)
 five = data.get('rate_limits', {}).get('five_hour', {}).get('used_percentage')
 if five is not None:
     parts.append(fmt('5h', five))
@@ -51,4 +105,4 @@ week = data.get('rate_limits', {}).get('seven_day', {}).get('used_percentage')
 if week is not None:
     parts.append(fmt('7d', week))
 
-print(f' {DIM}│{R} '.join(parts), end='')
+print(SEP.join(parts), end='')
