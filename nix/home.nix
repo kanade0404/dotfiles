@@ -212,6 +212,7 @@
         tl = "tmux list-sessions";
 
         # Claude Code
+        claude = "caffeinate -dimsu claude";
         c = "ENABLE_TOOL_SEARCH=true claude";
 
         # git worktree

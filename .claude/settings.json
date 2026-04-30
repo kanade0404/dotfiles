@@ -257,7 +257,8 @@
       "mcp__sentry__create_team",
       "mcp__sentry__update_issue",
       "mcp__sentry__update_project"
-    ]
+    ],
+    "defaultMode": "auto"
   },
   "hooks": {
     "SessionStart": [
@@ -330,7 +331,10 @@
     "deploy-on-aws@claude-plugins-official": true,
     "aws-serverless@claude-plugins-official": true
   },
+  "effortLevel": "high",
   "plansDirectory": "./.claude/plans",
+  "autoMemoryEnabled": false,
+  "skipAutoPermissionPrompt": true,
   "mcpServers": {
     "figma": {
       "type": "http",
@@ -409,5 +413,7 @@
     "excalidraw": {
       "url": "https://excalidraw-mcp-app.vercel.app/mcp"
     }
-  }
+  },
+  "theme": "dark-ansi",
+  "remoteControlAtStartup": true
 }
