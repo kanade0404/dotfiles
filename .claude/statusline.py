@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Status line: model | branch | ctx bar | 5h bar | 7d bar | dir"""
-import json, sys, os, re, shutil, subprocess
+import json, sys, os, re, shutil, subprocess, time
 
 ANSI_RE = re.compile(r'\033\[[0-9;]*m')
 
@@ -41,9 +41,25 @@ def hbar(pct, width=8):
         f'{TRACK}{rest}{R}'
     )
 
-def fmt_bar(label, pct):
+def fmt_bar(label, pct, suffix=''):
     p = round(pct)
-    return f'{DIM}{label}{R} {hbar(pct)} {gradient(pct)}{p:>3}%{R}'
+    tail = f' {DIM}{suffix}{R}' if suffix else ''
+    return f'{DIM}{label}{R} {hbar(pct)} {gradient(pct)}{p:>3}%{R}{tail}'
+
+def fmt_reset(ts):
+    if not ts:
+        return ''
+    delta = int(ts) - int(time.time())
+    if delta <= 0:
+        return 'now'
+    d, rem = divmod(delta, 86400)
+    h, rem = divmod(rem, 3600)
+    m, _ = divmod(rem, 60)
+    if d:
+        return f'{d}d{h}h'
+    if h:
+        return f'{h}h{m:02d}m'
+    return f'{m}m'
 
 def short_dir(cwd):
     home = os.path.expanduser('~')
@@ -97,14 +113,20 @@ if ctx is not None:
     parts.append(fmt_bar('ctx', ctx))
 
 # 4. Hourly (5h) limit
-five = data.get('rate_limits', {}).get('five_hour', {}).get('used_percentage')
+five_obj = data.get('rate_limits', {}).get('five_hour', {})
+five = five_obj.get('used_percentage')
 if five is not None:
-    parts.append(fmt_bar('5h ', five))
+    reset = fmt_reset(five_obj.get('resets_at'))
+    suffix = f'↻{reset}' if reset else ''
+    parts.append(fmt_bar('5h ', five, suffix))
 
 # 5. Weekly (7d) limit
-week = data.get('rate_limits', {}).get('seven_day', {}).get('used_percentage')
+week_obj = data.get('rate_limits', {}).get('seven_day', {})
+week = week_obj.get('used_percentage')
 if week is not None:
-    parts.append(fmt_bar('7d ', week))
+    reset = fmt_reset(week_obj.get('resets_at'))
+    suffix = f'↻{reset}' if reset else ''
+    parts.append(fmt_bar('7d ', week, suffix))
 
 # 6. Directory (shortened)
 if cwd:
