@@ -99,6 +99,7 @@
       "Bash(git rm *)",
       "Bash(git ls-files *)",
       "Bash(pwd)",
+      "Bash(printf *)",
       "Bash(jq *)",
       "Bash(bun test *)",
       "Bash(head *)",
@@ -325,7 +326,6 @@
     "playground@claude-plugins-official": true,
     "sentry@claude-plugins-official": true,
     "huggingface-skills@claude-plugins-official": true,
-    "coderabbit@claude-plugins-official": true,
     "lua-lsp@claude-plugins-official": true,
     "chrome-devtools-mcp@claude-plugins-official": true,
     "deploy-on-aws@claude-plugins-official": true,
@@ -413,7 +413,5 @@
     "excalidraw": {
       "url": "https://excalidraw-mcp-app.vercel.app/mcp"
     }
-  },
-  "theme": "dark-ansi",
-  "remoteControlAtStartup": true
+  }
 }
