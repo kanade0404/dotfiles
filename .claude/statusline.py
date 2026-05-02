@@ -52,6 +52,8 @@ def fmt_reset(ts):
     delta = int(ts) - int(time.time())
     if delta <= 0:
         return 'now'
+    if delta < 60:
+        return '1m'
     d, rem = divmod(delta, 86400)
     h, rem = divmod(rem, 3600)
     m, _ = divmod(rem, 60)
