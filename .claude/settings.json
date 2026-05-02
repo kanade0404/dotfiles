@@ -135,7 +135,11 @@
       "Bash(gh issue *)",
       "Bash(gh run view *)",
       "Bash(gh api *)",
-      "Bash(gh repo view *)"
+      "Bash(gh repo view *)",
+      "Bash(sleep *)",
+      "Bash(sleep)",
+      "Bash(shellcheck *)",
+      "Bash(shellcheck)"
     ],
     "deny": [
       "Read(.env*)",
