@@ -53,7 +53,7 @@
     # squid - not available on aarch64-darwin, kept in Homebrew
 
     # Database
-    mysql80
+    mysql84
     postgresql_14
 
     # Python ecosystem
