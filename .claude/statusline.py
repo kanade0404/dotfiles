@@ -133,8 +133,9 @@ def detect_width():
     except ValueError:
         pass
     try:
-        out = subprocess.run(['stty', 'size'], stdin=open('/dev/tty'),
-                             capture_output=True, text=True, timeout=1)
+        with open('/dev/tty') as tty:
+            out = subprocess.run(['stty', 'size'], stdin=tty,
+                                 capture_output=True, text=True, timeout=1)
         if out.returncode == 0:
             return int(out.stdout.split()[1])
     except Exception:

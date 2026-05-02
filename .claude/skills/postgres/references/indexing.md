@@ -26,8 +26,9 @@ A composite index on `(a, b)` supports queries on `a` + `b` and `a` alone, but n
 
 ## Partial Indexes
 
-Reduce index size by filtering to common query patterns.
-Only use if index size is problematic but the index is needed for performance.
+Index a subset of rows by adding a WHERE predicate. Use when queries
+frequently target a well-defined subset (e.g. `status = 'active'`); also
+helpful when a full index would be too large to maintain.
 
 ```sql
 CREATE INDEX order_active_idx ON order (customer_id)

@@ -21,6 +21,7 @@ ALTER TABLE events
 ```
 
 ## Extraction Operators
+
 | Syntax | Returns | Use for |
 |---|---|---|
 | `JSON_EXTRACT(col, '$.key')` | JSON type value (e.g., `"foo"` for strings) | When you need JSON type semantics |

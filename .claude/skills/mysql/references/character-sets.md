@@ -14,6 +14,7 @@ CREATE DATABASE myapp DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
 ```
 
 ## Collation Quick Reference
+
 | Collation | Behavior | Use for |
 |---|---|---|
 | `utf8mb4_0900_ai_ci` | Case-insensitive, accent-insensitive | Default |
