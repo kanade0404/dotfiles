@@ -100,6 +100,10 @@
       "Bash(git ls-files *)",
       "Bash(pwd)",
       "Bash(jq *)",
+      "Bash(readlink *)",
+      "Bash(date *)",
+      "Bash(true)",
+      "Bash(false)",
       "Bash(bun test *)",
       "Bash(head *)",
       "Bash(tail *)",
@@ -129,7 +133,8 @@
       "Bash(gh pr *)",
       "Bash(gh issue *)",
       "Bash(gh run view *)",
-      "Bash(gh api *)"
+      "Bash(gh api *)",
+      "Bash(gh repo view *)"
     ],
     "deny": [
       "Read(.env*)",
