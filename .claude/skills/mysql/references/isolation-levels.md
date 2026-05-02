@@ -41,6 +41,7 @@ Converts all plain SELECTs to `SELECT ... FOR SHARE` **if autocommit is disabled
 Dirty reads with no valid production use case.
 
 ## Decision Guide
+
 | Scenario | Recommendation |
 |---|---|
 | General OLTP / check-then-insert / reports | **REPEATABLE READ** (default) |
