@@ -1,0 +1,36 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bun ~/.codex/hooks/pre-tool-use-bash-analyzer.ts"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '\"[\" + (now | strftime(\"%Y-%m-%d %H:%M:%S\")) + \"] [\" + (.cwd // \"unknown\") + \"] \" + .tool_input.command' >> ~/.claude/command_history.log"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'ENV_BEFORE=$(export -p | sort); source ~/.zshrc 2>/dev/null; if [ -n \"$CLAUDE_ENV_FILE\" ]; then ENV_AFTER=$(export -p | sort); comm -13 <(echo \"$ENV_BEFORE\") <(echo \"$ENV_AFTER\") >> \"$CLAUDE_ENV_FILE\"; fi; exit 0'"
+          }
+        ]
+      }
+    ]
+  }
+}
