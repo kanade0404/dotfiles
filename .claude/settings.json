@@ -104,6 +104,7 @@
       "Bash(date *)",
       "Bash(true)",
       "Bash(false)",
+      "Bash(diff *)",
       "Bash(bun test *)",
       "Bash(head *)",
       "Bash(tail *)",
