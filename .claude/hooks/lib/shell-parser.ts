@@ -328,7 +328,36 @@ function extractCommandSubstitutions(
 }
 
 /**
+ * 算術展開 `$((...))` の中身を消費して終了位置を返す。
+ * 中身はコマンドではないため results には push しないが、
+ * 算術式内に埋め込まれた `$(cmd)` は再帰的に抽出する。
+ */
+function consumeArithmeticExpansion(
+  input: string,
+  startIndex: number,
+): { endIndex: number; content: string } {
+  // startIndex は `$((` の `$` の位置を指す
+  let i = startIndex + 3; // skip `$((`
+  const len = input.length;
+  let depth = 2; // 2つの `(` 分
+  let content = "";
+  while (i < len && depth > 0) {
+    if (input[i] === "(") depth++;
+    else if (input[i] === ")") {
+      depth--;
+      if (depth === 0) break;
+    }
+    content += input[i];
+    i++;
+  }
+  if (i < len) i++; // skip closing )
+  return { endIndex: i, content };
+}
+
+/**
  * 文字列中の $(...) / `...` / <(...) / >(...) から内側のコマンドを抽出する。
+ * 算術展開 $((...)) は数式評価のためコマンドとしては抽出しないが、
+ * 内側に埋め込まれた $(cmd) は再帰的に抽出する。
  */
 function extractInnerCommands(input: string): readonly string[] {
   const results: string[] = [];
@@ -356,6 +385,20 @@ function extractInnerCommands(input: string): readonly string[] {
         if (input[i] === '"') {
           i++;
           break;
+        }
+        // ダブルクォート内の算術展開 $((...))
+        if (
+          input[i] === "$" &&
+          i + 2 < len &&
+          input[i + 1] === "(" &&
+          input[i + 2] === "("
+        ) {
+          const r = consumeArithmeticExpansion(input, i);
+          for (const cmd of extractInnerCommands(r.content)) {
+            results.push(cmd);
+          }
+          i = r.endIndex;
+          continue;
         }
         // ダブルクォート内の $() も抽出（シェルは展開する）
         if (input[i] === "$" && i + 1 < len && input[i + 1] === "(") {
@@ -444,6 +487,16 @@ function extractInnerCommands(input: string): readonly string[] {
         results.push(inner.trim());
       }
       if (i < len) i++; // skip closing )
+      continue;
+    }
+
+    // 算術展開 $((...)) — コマンドではないが内側の $(cmd) は再帰抽出
+    if (ch === "$" && i + 2 < len && input[i + 1] === "(" && input[i + 2] === "(") {
+      const r = consumeArithmeticExpansion(input, i);
+      for (const cmd of extractInnerCommands(r.content)) {
+        results.push(cmd);
+      }
+      i = r.endIndex;
       continue;
     }
 

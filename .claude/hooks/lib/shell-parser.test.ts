@@ -264,6 +264,75 @@ EOF
     });
   });
 
+  describe("算術展開 $((...))", () => {
+    test("$((1+2)) はコマンドとして抽出しない", () => {
+      expect(parseShellCommands("echo $((1+2))")).toStrictEqual([
+        "echo $((1+2))",
+      ]);
+    });
+
+    test("$(($(cmd) + 1)) は内側の $(cmd) のみ抽出する", () => {
+      expect(parseShellCommands("echo $(($(date +%s) + 1))")).toStrictEqual([
+        "echo $(($(date +%s) + 1))",
+        "date +%s",
+      ]);
+    });
+
+    test("ダブルクォート内の $((...)) も内側のコマンドのみ抽出する", () => {
+      expect(
+        parseShellCommands('echo "$(($(date +%s) + 3*3600 + 45*60))"'),
+      ).toStrictEqual([
+        'echo "$(($(date +%s) + 3*3600 + 45*60))"',
+        "date +%s",
+      ]);
+    });
+
+    test("複数の算術展開が連なるケース", () => {
+      const input =
+        `printf '%s' "$(($(date +%s) + 3*3600))" "$(($(date +%s) + 5*86400))"`;
+      const result = parseShellCommands(input);
+      expect(result).toStrictEqual([input, "date +%s", "date +%s"]);
+    });
+
+    test("$((arith)) 内に危険コマンド $(rm -rf /) があれば抽出する", () => {
+      expect(parseShellCommands("echo $(($(rm -rf /) + 1))")).toStrictEqual([
+        "echo $(($(rm -rf /) + 1))",
+        "rm -rf /",
+      ]);
+    });
+
+    test("入れ子の算術展開: 内側の $(cmd) を抽出する", () => {
+      const input = "echo $(($((1+1)) + $(rm -rf /)))";
+      expect(parseShellCommands(input)).toStrictEqual([input, "rm -rf /"]);
+    });
+
+    test("算術展開内のバッククォートを内側コマンドとして抽出する", () => {
+      const input = "echo $((`rm -rf /` + 1))";
+      expect(parseShellCommands(input)).toStrictEqual([input, "rm -rf /"]);
+    });
+
+    test("ダブルクォート内の入れ子算術展開でも内側 $(cmd) を抽出する", () => {
+      const input = `echo "$(($(rm -rf /) + 0))"`;
+      expect(parseShellCommands(input)).toStrictEqual([input, "rm -rf /"]);
+    });
+  });
+
+  describe("クォート内に ) を含む $() の挙動", () => {
+    test("$(echo \")\") は parser のクォート無追跡 $() のため echo \" として抽出される", () => {
+      // 既知の制限事項: $() 内のクォート追跡が無いため `)` で早期終了する。
+      // bash 上の挙動とは一致しないが、抽出された "echo \"" は deny ルール `Bash(echo *)`
+      // に該当するため最終的に DENY 側に落ちる（多重防御）。
+      const result = parseShellCommands('echo $(echo ")")');
+      expect(result).toContain('echo "');
+    });
+
+    test("クォート内 ) のあとに別の $() が続く場合は両方抽出される", () => {
+      // parser は早期終了後も走査を続けるため、後続の $() は捕捉できる。
+      const result = parseShellCommands('FOO=$(date ")$(rm -rf /)")');
+      expect(result).toContain("rm -rf /");
+    });
+  });
+
   describe("バックスラッシュ+改行の行継続", () => {
     test("行継続を除去してコマンドを結合する", () => {
       expect(parseShellCommands("git add \\\n.")).toStrictEqual(["git add ."]);
