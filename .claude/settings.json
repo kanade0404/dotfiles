@@ -130,6 +130,7 @@
       "Bash(nix store *)",
       "Bash(nix path-info *)",
       "Bash(nix show-derivation *)",
+      "Bash(nix-env *)",
       "Bash(darwin-rebuild *)",
       "Bash(gh pr *)",
       "Bash(gh issue *)",

@@ -74,6 +74,7 @@
 
     # AI
     bun
+    codex
 
     # Other tools
     ghq
