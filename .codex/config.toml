@@ -13,7 +13,7 @@ source_type = "local"
 source = "/Users/kanade0404/.cache/codex-runtimes/codex-primary-runtime/plugins/openai-primary-runtime"
 
 [marketplaces.claude-plugins-official]
-last_updated = "2026-05-03T02:58:14Z"
+last_updated = "2026-05-03T08:05:26Z"
 last_revision = "b392f51899343f35a203260a4b344803de236d13"
 source_type = "git"
 source = "https://github.com/anthropics/claude-plugins-official.git"
@@ -130,8 +130,11 @@ enabled = true
 [projects."/Users/kanade0404/work/dotfiles"]
 trust_level = "trusted"
 
+[projects."/Users/kanade0404/work/skills"]
+trust_level = "trusted"
+
 [tui]
 status_line = ["model-with-reasoning", "current-dir", "model", "git-branch", "context-used", "five-hour-limit", "weekly-limit", "fast-mode"]
 
 [tui.model_availability_nux]
-"gpt-5.5" = 1
+"gpt-5.5" = 3
