@@ -200,7 +200,6 @@
       "Bash(gh pr close *)",
       "Bash(gh pr merge *)",
       "Bash(cd *)",
-      "Bash(echo *)",
       "Bash(bash -c *)",
       "Bash(git checkout *)",
       "Bash(git --git-dir *)",
@@ -280,7 +279,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash -c 'ENV_BEFORE=$(export -p | sort); source ~/.zshrc 2>/dev/null; if [ -n \"$CLAUDE_ENV_FILE\" ]; then ENV_AFTER=$(export -p | sort); comm -13 <(echo \"$ENV_BEFORE\") <(echo \"$ENV_AFTER\") >> \"$CLAUDE_ENV_FILE\"; fi; exit 0'"
+            "command": "zsh -c 'set +e; ENV_BEFORE=$(export -p | sort); source ~/.zshrc >/dev/null 2>&1; if [ -n \"$CLAUDE_ENV_FILE\" ]; then ENV_AFTER=$(export -p | sort); comm -13 <(echo \"$ENV_BEFORE\") <(echo \"$ENV_AFTER\") >> \"$CLAUDE_ENV_FILE\" || true; fi; exit 0' || exit 0"
           }
         ]
       }
