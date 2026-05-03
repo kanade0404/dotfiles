@@ -17,6 +17,9 @@ warn() { printf '\033[1;33m!!\033[0m %s\n' "$*" >&2; }
 die() { printf '\033[1;31mERROR:\033[0m %s\n' "$*" >&2; exit 1; }
 
 # ---- prerequisites ----
+[ "$(uname)" = "Darwin" ] \
+  || die "bootstrap.sh は macOS 専用です。Linux/クラウド環境では 'bash install.sh' のみ実行してください"
+
 command -v nix >/dev/null \
   || die "Nix が見つかりません。先に Determinate Nix をインストールしてください: https://determinate.systems/nix-installer/"
 
