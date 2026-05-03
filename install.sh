@@ -25,15 +25,17 @@ echo "==> Linking Claude Code user settings"
 mkdir -p "$HOME/.claude"
 ln -sf "$DOTFILES/.claude/settings.json" "$HOME/.claude/settings.json"
 ln -sf "$DOTFILES/.claude/statusline.py" "$HOME/.claude/statusline.py"
-# hooks: symlink each file (directory symlink would hide Claude's own hooks)
-mkdir -p "$HOME/.claude/hooks"
-for f in "$DOTFILES/.claude/hooks/"*; do
-  [ -f "$f" ] && ln -sf "$f" "$HOME/.claude/hooks/$(basename "$f")"
-done
-# hooks/lib: symlink TypeScript modules
-mkdir -p "$HOME/.claude/hooks/lib"
-for f in "$DOTFILES/.claude/hooks/lib/"*; do
-  [ -f "$f" ] && ln -sf "$f" "$HOME/.claude/hooks/lib/$(basename "$f")"
+# hooks: symlink each file to both ~/.claude/hooks/ and ~/.codex/hooks/
+# (directory symlink would hide each tool's own hooks; .claude/hooks/ is the
+#  single source of truth used by both Claude Code and Codex)
+for target in "$HOME/.claude/hooks" "$HOME/.codex/hooks"; do
+  mkdir -p "$target" "$target/lib"
+  for f in "$DOTFILES/.claude/hooks/"*; do
+    [ -f "$f" ] && ln -sf "$f" "$target/$(basename "$f")"
+  done
+  for f in "$DOTFILES/.claude/hooks/lib/"*; do
+    [ -f "$f" ] && ln -sf "$f" "$target/lib/$(basename "$f")"
+  done
 done
 # commands: symlink directory if it has content
 if [ -d "$DOTFILES/.claude/commands" ] && [ "$(ls -A "$DOTFILES/.claude/commands" 2>/dev/null)" ]; then

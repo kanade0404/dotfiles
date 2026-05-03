@@ -90,8 +90,9 @@ function main(): void {
           respond("ask", result.reason);
           break;
         case "allow":
-          respond("allow");
-          break;
+          // Codex は permissionDecision:"allow" を非対応。Claude Code も exit 0 +
+          // 無出力を pass-through として扱うため、allow は何も返さず終了する。
+          process.exit(0);
       }
     } catch (e) {
       respond("ask", `コマンド解析エラー: ${e instanceof Error ? e.message : "unknown error"}`);
