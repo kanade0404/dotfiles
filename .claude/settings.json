@@ -143,7 +143,9 @@
       "Bash(sleep *)",
       "Bash(sleep)",
       "Bash(shellcheck *)",
-      "Bash(shellcheck)"
+      "Bash(shellcheck)",
+      "Bash(command *)",
+      "Bash(diff *)"
     ],
     "deny": [
       "Read(.env*)",
@@ -358,52 +360,31 @@
     },
     "eslint": {
       "command": "npx",
-      "args": [
-        "@eslint/mcp"
-      ]
+      "args": ["@eslint/mcp"]
     },
     "terraform": {
       "command": "docker",
-      "args": [
-        "run",
-        "-i",
-        "--rm",
-        "hashicorp/terraform-mcp-server"
-      ]
+      "args": ["run", "-i", "--rm", "hashicorp/terraform-mcp-server"]
     },
     "aws-core-mcp-server": {
       "command": "docker",
-      "args": [
-        "run",
-        "-i",
-        "--rm",
-        "mcp/aws-core-mcp-server"
-      ]
+      "args": ["run", "-i", "--rm", "mcp/aws-core-mcp-server"]
     },
     "gemini-cli": {
       "type": "stdio",
       "command": "npx",
-      "args": [
-        "@choplin/mcp-gemini-cli",
-        "--allow-npx"
-      ],
+      "args": ["@choplin/mcp-gemini-cli", "--allow-npx"],
       "env": {}
     },
     "deepwiki": {
       "type": "stdio",
       "command": "npx",
-      "args": [
-        "mcp-remote",
-        "https://mcp.deepwiki.com/sse"
-      ],
+      "args": ["mcp-remote", "https://mcp.deepwiki.com/sse"],
       "env": {}
     },
     "next-devtools": {
       "command": "npx",
-      "args": [
-        "-y",
-        "next-devtools-mcp@latest"
-      ]
+      "args": ["-y", "next-devtools-mcp@latest"]
     },
     "notion": {
       "type": "http",
@@ -415,16 +396,11 @@
     },
     "playwright": {
       "command": "npx",
-      "args": [
-        "@playwright/mcp@latest"
-      ]
+      "args": ["@playwright/mcp@latest"]
     },
     "context7": {
       "command": "npx",
-      "args": [
-        "-y",
-        "@upstash/context7-mcp@latest"
-      ]
+      "args": ["-y", "@upstash/context7-mcp@latest"]
     },
     "excalidraw": {
       "url": "https://excalidraw-mcp-app.vercel.app/mcp"

@@ -33,7 +33,7 @@ nix/
 
 .config/nvim/            # Neovim (LazyVim) — install.sh でsymlink
 .config/ghostty/config   # Ghostty — install.sh でsymlink
-.codex/settings.json    # Codex user設定 — install.sh でsymlink
+.codex/config.toml      # Codex user設定/MCP plugins — install.sh でsymlink
 .codex/hooks/           # Codex hooks — install.sh でsymlink
 .codex/commands/        # Codex commands — install.sh でsymlink
 .local/bin/              # ヘルパースクリプト (tmux-project, gw) — install.sh でsymlink
