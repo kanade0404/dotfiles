@@ -49,19 +49,25 @@ function loadRulesFromFile(path: string): readonly Rule[] {
 /**
  * ユーザー設定 + プロジェクト設定から Bash ルールを読み込んでマージする。
  *
- * 読み込み順（Claude Code 公式の優先順位に準拠）:
- * 1. ~/.claude/settings.json（ユーザー設定）
- * 2. {cwd}/.claude/settings.json（プロジェクト共有設定）
- * 3. {cwd}/.claude/settings.local.json（プロジェクトローカル設定）
+ * 読み込み順（Codex / Claude Code 双方の設定をマージ）:
+ * 1. ~/.codex/settings.json
+ * 2. ~/.claude/settings.json
+ * 3. {cwd}/.codex/settings.json
+ * 4. {cwd}/.codex/settings.local.json
+ * 5. {cwd}/.claude/settings.json
+ * 6. {cwd}/.claude/settings.local.json
  *
  * ルールは全てマージされ、deny > allow > ask の順で評価される（matchCommand 側の責務）。
  */
 export function loadRules(cwd?: string): readonly Rule[] {
   const home = process.env.HOME ?? "";
   const paths = [
+    resolve(home, ".codex", "settings.json"),
     resolve(home, ".claude", "settings.json"),
     ...(cwd
       ? [
+          resolve(cwd, ".codex", "settings.json"),
+          resolve(cwd, ".codex", "settings.local.json"),
           resolve(cwd, ".claude", "settings.json"),
           resolve(cwd, ".claude", "settings.local.json"),
         ]

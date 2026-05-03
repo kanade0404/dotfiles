@@ -202,7 +202,6 @@
       "Bash(gh pr close *)",
       "Bash(gh pr merge *)",
       "Bash(cd *)",
-      "Bash(echo *)",
       "Bash(bash -c *)",
       "Bash(git checkout *)",
       "Bash(git --git-dir *)",
