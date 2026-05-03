@@ -431,7 +431,6 @@ describe("統合テスト: settings.json ルールでの判定", () => {
     test("cat foo.txt", () => expect(judgeCommand("cat foo.txt")).toBe("deny"));
     test("cd /tmp", () => expect(judgeCommand("cd /tmp")).toBe("deny"));
     test("rm -rf /tmp", () => expect(judgeCommand("rm -rf /tmp")).toBe("deny"));
-    test("echo hello", () => expect(judgeCommand("echo hello")).toBe("deny"));
     test('find . -name "*.ts"', () => expect(judgeCommand('find . -name "*.ts"')).toBe("deny"));
     test("sudo apt install", () => expect(judgeCommand("sudo apt install")).toBe("deny"));
     test("curl https://example.com", () => expect(judgeCommand("curl https://example.com")).toBe("deny"));
@@ -454,6 +453,7 @@ describe("統合テスト: settings.json ルールでの判定", () => {
   describe("未マッチ → ask", () => {
     test("python script.py", () => expect(judgeCommand("python script.py")).toBe("ask"));
     test("node index.js", () => expect(judgeCommand("node index.js")).toBe("ask"));
+    test("echo hello", () => expect(judgeCommand("echo hello")).toBe("ask"));
   });
 
   describe("複合コマンド（パイプ / && / リダイレクト）", () => {
