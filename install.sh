@@ -21,6 +21,28 @@ mkdir -p "$HOME/.local/bin"
 ln -sf "$DOTFILES/.local/bin/tmux-project" "$HOME/.local/bin/tmux-project"
 ln -sf "$DOTFILES/.local/bin/gw" "$HOME/.local/bin/gw"
 
+echo "==> Linking Codex user settings"
+mkdir -p "$HOME/.codex"
+ln -sf "$DOTFILES/.codex/config.toml" "$HOME/.codex/config.toml"
+ln -sf "$DOTFILES/.codex/hooks.json" "$HOME/.codex/hooks.json"
+# hooks: directory symlink だと Codex 自身の状態を隠すため、ファイル単位で symlink
+mkdir -p "$HOME/.codex/hooks"
+for f in "$DOTFILES/.codex/hooks/"*; do
+  [ -f "$f" ] && ln -sf "$f" "$HOME/.codex/hooks/$(basename "$f")"
+done
+# hooks/lib: TypeScript modules を symlink
+mkdir -p "$HOME/.codex/hooks/lib"
+for f in "$DOTFILES/.codex/hooks/lib/"*; do
+  [ -f "$f" ] && ln -sf "$f" "$HOME/.codex/hooks/lib/$(basename "$f")"
+done
+# commands: 内容がある場合のみ symlink
+if [ -d "$DOTFILES/.codex/commands" ] && [ "$(ls -A "$DOTFILES/.codex/commands" 2>/dev/null)" ]; then
+  mkdir -p "$HOME/.codex/commands"
+  for f in "$DOTFILES/.codex/commands/"*; do
+    [ -f "$f" ] && ln -sf "$f" "$HOME/.codex/commands/$(basename "$f")"
+  done
+fi
+
 echo "==> Linking Claude Code user settings"
 mkdir -p "$HOME/.claude"
 ln -sf "$DOTFILES/.claude/settings.json" "$HOME/.claude/settings.json"

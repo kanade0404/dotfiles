@@ -75,6 +75,7 @@
     # AI
     bun
     codex
+    nodejs # Codex MCP servers (context7, playwright) の npx 用
 
     # Other tools
     ghq
