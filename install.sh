@@ -7,14 +7,19 @@
 set -euo pipefail
 
 DOTFILES="$HOME/work/dotfiles"
+OS="$(uname)"
 
 echo "==> Linking Neovim config (LazyVim, managed outside Nix)"
 mkdir -p "$HOME/.config"
 ln -sfn "$DOTFILES/.config/nvim" "$HOME/.config/nvim"
 
-echo "==> Linking Ghostty config (no home-manager module)"
-mkdir -p "$HOME/Library/Application Support/com.mitchellh.ghostty"
-ln -sf "$DOTFILES/.config/ghostty/config" "$HOME/Library/Application Support/com.mitchellh.ghostty/config"
+if [ "$OS" = "Darwin" ]; then
+  echo "==> Linking Ghostty config (no home-manager module)"
+  mkdir -p "$HOME/Library/Application Support/com.mitchellh.ghostty"
+  ln -sf "$DOTFILES/.config/ghostty/config" "$HOME/Library/Application Support/com.mitchellh.ghostty/config"
+else
+  echo "==> Skipping Ghostty config (non-macOS)"
+fi
 
 echo "==> Linking helper scripts"
 mkdir -p "$HOME/.local/bin"
@@ -69,4 +74,8 @@ echo "==> Linking legacy files"
 ln -sf "$DOTFILES/.gitmessage" "$HOME/.gitmessage"
 ln -sf "$DOTFILES/.gitignore" "$HOME/.gitignore"
 
-echo "Done. Run 'sudo darwin-rebuild switch --flake ~/work/dotfiles/nix' for Nix-managed config."
+if [ "$OS" = "Darwin" ]; then
+  echo "Done. Run 'sudo darwin-rebuild switch --flake ~/work/dotfiles/nix' for Nix-managed config."
+else
+  echo "Done. (Nix-managed config is macOS-only and was skipped.)"
+fi
