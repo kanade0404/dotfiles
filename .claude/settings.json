@@ -99,6 +99,7 @@
       "Bash(git rm *)",
       "Bash(git ls-files *)",
       "Bash(pwd)",
+      "Bash(echo *)",
       "Bash(printf *)",
       "Bash(jq *)",
       "Bash(readlink *)",
