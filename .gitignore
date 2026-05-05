@@ -15,3 +15,7 @@ node_modules/
 
 # Serena MCP server プロジェクト状態 (ローカル固有)
 .serena/
+
+
+# APM dependencies
+apm_modules/

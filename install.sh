@@ -69,6 +69,13 @@ if [ -d "$DOTFILES/.claude/commands" ] && [ "$(ls -A "$DOTFILES/.claude/commands
     [ -f "$f" ] && ln -sf "$f" "$HOME/.claude/commands/$(basename "$f")"
   done
 fi
+# skills: symlink each skill directory (1 skill = 1 dir with SKILL.md + assets)
+if [ -d "$DOTFILES/.claude/skills" ] && [ "$(ls -A "$DOTFILES/.claude/skills" 2>/dev/null)" ]; then
+  mkdir -p "$HOME/.claude/skills"
+  for d in "$DOTFILES/.claude/skills/"*/; do
+    [ -d "$d" ] && ln -sfn "${d%/}" "$HOME/.claude/skills/$(basename "$d")"
+  done
+fi
 
 echo "==> Linking legacy files"
 ln -sf "$DOTFILES/.gitmessage" "$HOME/.gitmessage"
