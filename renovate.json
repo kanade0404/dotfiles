@@ -7,8 +7,7 @@
   "packageRules": [
     {
       "matchManagers": ["nix"],
-      "groupName": "Nix flake inputs",
-      "automerge": true
+      "groupName": "Nix flake inputs"
     }
   ]
 }
