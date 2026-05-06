@@ -257,7 +257,8 @@
       "mcp__sentry__create_team",
       "mcp__sentry__update_issue",
       "mcp__sentry__update_project"
-    ]
+    ],
+    "defaultMode": "auto"
   },
   "hooks": {
     "SessionStart": [
@@ -331,6 +332,9 @@
     "aws-serverless@claude-plugins-official": true
   },
   "plansDirectory": "./.claude/plans",
+  "theme": "auto",
+  "remoteControlAtStartup": true,
+  "skipAutoPermissionPrompt": true,
   "mcpServers": {
     "figma": {
       "type": "http",
