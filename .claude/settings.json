@@ -350,7 +350,7 @@
   "effortLevel": "high",
   "plansDirectory": "./.claude/plans",
   "autoMemoryEnabled": false,
-  "theme": "dark-ansi",
+  "theme": "auto",
   "remoteControlAtStartup": true,
   "skipAutoPermissionPrompt": true,
   "mcpServers": {
