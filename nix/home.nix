@@ -8,6 +8,12 @@
     rustup
   ];
 
+  # Session-wide env vars
+  home.sessionVariables = {
+    # Use 1Password SSH agent (keys managed in 1Password app)
+    SSH_AUTH_SOCK = "$HOME/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock";
+  };
+
   programs = {
     # direnv + nix-direnv for per-project flake support
     direnv = {
@@ -206,6 +212,7 @@
         tl = "tmux list-sessions";
 
         # Claude Code
+        claude = "caffeinate -dimsu claude";
         c = "ENABLE_TOOL_SEARCH=true claude";
 
         # git worktree
@@ -315,10 +322,15 @@
         # Helper scripts
         export PATH="$HOME/.local/bin:$PATH"
 
-        # mise (kept for Node.js multi-version management)
+        # Homebrew (Apple Silicon) — casks / formulae (rbenv 等) への PATH を通す
+        if [ -x /opt/homebrew/bin/brew ]; then
+          eval "$(/opt/homebrew/bin/brew shellenv)"
+        fi
+
+        # mise (Node.js 等の multi-version management, nixpkgs 管理)
         eval "$(mise activate zsh)"
 
-        # rbenv
+        # rbenv (Homebrew 管理)
         eval "$(rbenv init - zsh)"
 
         # mactex

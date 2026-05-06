@@ -2,16 +2,20 @@
 *.LSOverride
 Thumbs.db
 .bundle
-# Claude Code: ignore auto-generated files, track only settings/hooks/commands
-.claude/*
-!.claude/settings.json
-!.claude/hooks/
-!.claude/hooks/lib/
-!.claude/commands/
-!.claude/statusline.py
 node_modules/
-# Claude Code auto-generated plugin files
+
+# Claude Code: セッション単位の一時ファイル
+.claude/plans/
+.claude/worktrees/
+.claude/settings.local.json
+.claude/*.local.md
+
+# Claude Code プラグインの自動ダウンロード実体 (node_modules 相当)
 .agents/
-skills-lock.json
-# Track local plugin
-!.claude-plugin/
+
+# Serena MCP server プロジェクト状態 (ローカル固有)
+.serena/
+
+
+# APM dependencies
+apm_modules/

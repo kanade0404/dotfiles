@@ -9,11 +9,13 @@
 
     taps = [
       "ariga/tap"
+      "microsoft/apm"
     ];
 
     # Formulae that stay in Homebrew (not available or problematic in nixpkgs)
     brews = [
       "ariga/tap/atlas"
+      "microsoft/apm/apm" # Agent Package Manager (not in nixpkgs)
       "php"
       "rbenv"
       "ruby-build"
@@ -48,7 +50,6 @@
       "spotify"
       "sublime-text"
       "temurin@21"
-      "testcontainers-desktop"
       "the-unarchiver"
       "transmit"
       "tunnelblick"

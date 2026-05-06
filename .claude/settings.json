@@ -99,7 +99,13 @@
       "Bash(git rm *)",
       "Bash(git ls-files *)",
       "Bash(pwd)",
+      "Bash(echo *)",
+      "Bash(printf *)",
       "Bash(jq *)",
+      "Bash(readlink *)",
+      "Bash(date *)",
+      "Bash(true)",
+      "Bash(false)",
       "Bash(bun test *)",
       "Bash(head *)",
       "Bash(tail *)",
@@ -125,11 +131,22 @@
       "Bash(nix store *)",
       "Bash(nix path-info *)",
       "Bash(nix show-derivation *)",
+      "Bash(nix-env --version)",
+      "Bash(nix-env -q *)",
+      "Bash(nix-env --query *)",
+      "Bash(nix-env -qa *)",
       "Bash(darwin-rebuild *)",
       "Bash(gh pr *)",
       "Bash(gh issue *)",
       "Bash(gh run view *)",
-      "Bash(gh api *)"
+      "Bash(gh api *)",
+      "Bash(gh repo view *)",
+      "Bash(sleep *)",
+      "Bash(sleep)",
+      "Bash(shellcheck *)",
+      "Bash(shellcheck)",
+      "Bash(command *)",
+      "Bash(diff *)"
     ],
     "deny": [
       "Read(.env*)",
@@ -186,7 +203,6 @@
       "Bash(gh pr close *)",
       "Bash(gh pr merge *)",
       "Bash(cd *)",
-      "Bash(echo *)",
       "Bash(bash -c *)",
       "Bash(git checkout *)",
       "Bash(git --git-dir *)",
@@ -266,7 +282,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash -c 'ENV_BEFORE=$(export -p | sort); source ~/.zshrc 2>/dev/null; if [ -n \"$CLAUDE_ENV_FILE\" ]; then ENV_AFTER=$(export -p | sort); comm -13 <(echo \"$ENV_BEFORE\") <(echo \"$ENV_AFTER\") >> \"$CLAUDE_ENV_FILE\"; fi; exit 0'"
+            "command": "zsh -c 'set +e; ENV_BEFORE=$(export -p | sort); source ~/.zshrc >/dev/null 2>&1; if [ -n \"$CLAUDE_ENV_FILE\" ]; then ENV_AFTER=$(export -p | sort); comm -13 <(echo \"$ENV_BEFORE\") <(echo \"$ENV_AFTER\") >> \"$CLAUDE_ENV_FILE\" || true; fi; exit 0' || exit 0"
           }
         ]
       }
@@ -325,13 +341,15 @@
     "playground@claude-plugins-official": true,
     "sentry@claude-plugins-official": true,
     "huggingface-skills@claude-plugins-official": true,
-    "coderabbit@claude-plugins-official": true,
     "lua-lsp@claude-plugins-official": true,
     "chrome-devtools-mcp@claude-plugins-official": true,
     "deploy-on-aws@claude-plugins-official": true,
-    "aws-serverless@claude-plugins-official": true
+    "aws-serverless@claude-plugins-official": true,
+    "coderabbit@claude-plugins-official": true
   },
+  "effortLevel": "high",
   "plansDirectory": "./.claude/plans",
+  "autoMemoryEnabled": false,
   "theme": "auto",
   "remoteControlAtStartup": true,
   "skipAutoPermissionPrompt": true,
@@ -342,52 +360,31 @@
     },
     "eslint": {
       "command": "npx",
-      "args": [
-        "@eslint/mcp"
-      ]
+      "args": ["@eslint/mcp"]
     },
     "terraform": {
       "command": "docker",
-      "args": [
-        "run",
-        "-i",
-        "--rm",
-        "hashicorp/terraform-mcp-server"
-      ]
+      "args": ["run", "-i", "--rm", "hashicorp/terraform-mcp-server"]
     },
     "aws-core-mcp-server": {
       "command": "docker",
-      "args": [
-        "run",
-        "-i",
-        "--rm",
-        "mcp/aws-core-mcp-server"
-      ]
+      "args": ["run", "-i", "--rm", "mcp/aws-core-mcp-server"]
     },
     "gemini-cli": {
       "type": "stdio",
       "command": "npx",
-      "args": [
-        "@choplin/mcp-gemini-cli",
-        "--allow-npx"
-      ],
+      "args": ["@choplin/mcp-gemini-cli", "--allow-npx"],
       "env": {}
     },
     "deepwiki": {
       "type": "stdio",
       "command": "npx",
-      "args": [
-        "mcp-remote",
-        "https://mcp.deepwiki.com/sse"
-      ],
+      "args": ["mcp-remote", "https://mcp.deepwiki.com/sse"],
       "env": {}
     },
     "next-devtools": {
       "command": "npx",
-      "args": [
-        "-y",
-        "next-devtools-mcp@latest"
-      ]
+      "args": ["-y", "next-devtools-mcp@latest"]
     },
     "notion": {
       "type": "http",
@@ -399,16 +396,11 @@
     },
     "playwright": {
       "command": "npx",
-      "args": [
-        "@playwright/mcp@latest"
-      ]
+      "args": ["@playwright/mcp@latest"]
     },
     "context7": {
       "command": "npx",
-      "args": [
-        "-y",
-        "@upstash/context7-mcp@latest"
-      ]
+      "args": ["-y", "@upstash/context7-mcp@latest"]
     },
     "excalidraw": {
       "url": "https://excalidraw-mcp-app.vercel.app/mcp"

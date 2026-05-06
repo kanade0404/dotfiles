@@ -1,0 +1,140 @@
+model = "gpt-5.5"
+model_reasoning_effort = "medium"
+approvals_reviewer = "guardian_subagent"
+
+[marketplaces.openai-bundled]
+last_updated = "2026-05-03T02:24:48Z"
+source_type = "local"
+source = "/Users/kanade0404/.codex/.tmp/bundled-marketplaces/openai-bundled"
+
+[marketplaces.openai-primary-runtime]
+last_updated = "2026-05-02T13:53:38Z"
+source_type = "local"
+source = "/Users/kanade0404/.cache/codex-runtimes/codex-primary-runtime/plugins/openai-primary-runtime"
+
+[marketplaces.claude-plugins-official]
+last_updated = "2026-05-03T08:05:26Z"
+last_revision = "b392f51899343f35a203260a4b344803de236d13"
+source_type = "git"
+source = "https://github.com/anthropics/claude-plugins-official.git"
+
+[plugins."documents@openai-primary-runtime"]
+enabled = true
+
+[plugins."spreadsheets@openai-primary-runtime"]
+enabled = true
+
+[plugins."presentations@openai-primary-runtime"]
+enabled = true
+
+[plugins."agent-sdk-dev@claude-plugins-official"]
+enabled = true
+
+[plugins."aws-serverless@claude-plugins-official"]
+enabled = true
+
+[plugins."claude-code-setup@claude-plugins-official"]
+enabled = true
+
+[plugins."claude-md-management@claude-plugins-official"]
+enabled = true
+
+[plugins."code-review@claude-plugins-official"]
+enabled = true
+
+[plugins."code-simplifier@claude-plugins-official"]
+enabled = true
+
+[plugins."coderabbit@claude-plugins-official"]
+enabled = true
+
+[plugins."commit-commands@claude-plugins-official"]
+enabled = true
+
+[plugins."context7@claude-plugins-official"]
+enabled = true
+
+# deploy-on-aws は awsknowledge MCP も起動し、現環境では handshake に失敗する。
+# AWS MCP 作業用には aws-serverless を有効のまま残す。
+[plugins."deploy-on-aws@claude-plugins-official"]
+enabled = false
+
+[plugins."feature-dev@claude-plugins-official"]
+enabled = true
+
+[plugins."frontend-design@claude-plugins-official"]
+enabled = true
+
+# GitHub は下の OpenAI curated connector を優先する。公式 GitHub MCP は
+# CODEX_GITHUB_PERSONAL_ACCESS_TOKEN がないと起動時に警告が出る。
+[plugins."github@claude-plugins-official"]
+enabled = false
+
+# 必要になったら login 後に有効化する: codex mcp login huggingface-skills
+[plugins."huggingface-skills@claude-plugins-official"]
+enabled = false
+
+[plugins."playground@claude-plugins-official"]
+enabled = true
+
+[plugins."playwright@claude-plugins-official"]
+enabled = true
+
+[plugins."plugin-dev@claude-plugins-official"]
+enabled = true
+
+[plugins."pr-review-toolkit@claude-plugins-official"]
+enabled = true
+
+[plugins."ralph-loop@claude-plugins-official"]
+enabled = true
+
+[plugins."security-guidance@claude-plugins-official"]
+enabled = true
+
+[plugins."serena@claude-plugins-official"]
+enabled = true
+
+[plugins."skill-creator@claude-plugins-official"]
+enabled = true
+
+[plugins."superpowers@claude-plugins-official"]
+enabled = true
+
+# 必要になったら login 後に有効化する: codex mcp login zapier
+[plugins."zapier@claude-plugins-official"]
+enabled = false
+
+# 必要になったら login 後に有効化する: codex mcp login linear
+[plugins."linear@claude-plugins-official"]
+enabled = false
+
+[plugins."google-calendar@openai-curated"]
+enabled = true
+
+[plugins."gmail@openai-curated"]
+enabled = true
+
+[plugins."figma@openai-curated"]
+enabled = true
+
+[plugins."github@openai-curated"]
+enabled = true
+
+[plugins."google-drive@openai-curated"]
+enabled = true
+
+[plugins."browser-use@openai-bundled"]
+enabled = true
+
+[projects."/Users/kanade0404/work/dotfiles"]
+trust_level = "trusted"
+
+[projects."/Users/kanade0404/work/skills"]
+trust_level = "trusted"
+
+[tui]
+status_line = ["model-with-reasoning", "current-dir", "model", "git-branch", "context-used", "five-hour-limit", "weekly-limit", "fast-mode"]
+
+[tui.model_availability_nux]
+"gpt-5.5" = 3
