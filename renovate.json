@@ -1,6 +1,14 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "local>kanade0404/renovate-config"
+    "github>kanade0404/renovate-config"
+  ],
+  "commitMessagePrefix": ":up:",
+  "packageRules": [
+    {
+      "matchManagers": ["nix"],
+      "groupName": "Nix flake inputs",
+      "automerge": true
+    }
   ]
 }
