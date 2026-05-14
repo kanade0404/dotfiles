@@ -1,0 +1,151 @@
+#!/usr/bin/env bash
+# linear-issue-runner: 1時間毎の launchd から呼ばれる Linear → Claude Code 駆動エントリポイント。
+#
+# This runner is an explicitly opt-in personal automation. The owner of this
+# dotfiles repository (single-user macOS workstation) has chosen to allow
+# headless Claude Code sessions to act on Linear issues that are explicitly
+# tagged "claude:ready". Scope:
+#   - Repository / Linear / GitHub access is limited to the owner's own
+#     credentials (LINEAR_API_KEY, gh auth login).
+#   - Destructive shell commands are still blocked by settings.json deny rules
+#     (rm/sudo/force-push/etc.) — bypassPermissions only relaxes the *approval
+#     prompt* layer, not the deny layer.
+#   - Only issues explicitly labelled "claude:ready" by a human are picked up.
+#
+# 動作:
+#   1. ~/.config/linear-issue-runner/env をロード (LINEAR_API_KEY, PATH 等)
+#   2. flock で多重起動を防止
+#   3. linear-issue-fetch で未対応 issue を取得
+#   4. issue 毎に label "claude:in-progress" を付与 → claude -p で skill 起動
+#      → 成功時 "claude:done" / 失敗時 "claude:failed" に張替
+#
+# 1 issue = 1 Claude session で逐次実行 (並列にすると API/CPU/コンテキストが破綻するため)。
+# 各セッションのタイムアウトは LINEAR_ISSUE_SESSION_TIMEOUT (デフォルト 6h)。
+
+set -euo pipefail
+
+# --- 環境ロード -----------------------------------------------------------
+ENV_FILE="${LINEAR_ISSUE_RUNNER_ENV:-$HOME/.config/linear-issue-runner/env}"
+if [ -f "$ENV_FILE" ]; then
+  # shellcheck disable=SC1090
+  set -a; source "$ENV_FILE"; set +a
+fi
+
+: "${LINEAR_API_KEY:?LINEAR_API_KEY is required (set in $ENV_FILE)}"
+
+STATE_DIR="${LINEAR_ISSUE_RUNNER_STATE_DIR:-$HOME/.local/state/linear-issue-runner}"
+LOG_DIR="${LINEAR_ISSUE_RUNNER_LOG_DIR:-$HOME/.local/state/linear-issue-runner/logs}"
+mkdir -p "$STATE_DIR" "$LOG_DIR"
+
+LOCK_FILE="$STATE_DIR/runner.lock"
+SESSION_TIMEOUT="${LINEAR_ISSUE_SESSION_TIMEOUT:-21600}" # 6h
+
+log() {
+  printf '[%s] %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$*"
+}
+
+# --- flock 排他 -----------------------------------------------------------
+exec 9>"$LOCK_FILE"
+if ! flock -n 9; then
+  log "another linear-issue-runner is running. skip."
+  exit 0
+fi
+
+# --- Linear GraphQL ヘルパ -------------------------------------------------
+linear_graphql() {
+  local query="$1" vars_json="$2"
+  local payload
+  payload=$(jq -n --arg q "$query" --argjson v "$vars_json" '{query: $q, variables: $v}')
+  curl --fail-with-body --silent --show-error \
+    -X POST https://api.linear.app/graphql \
+    -H "Authorization: $LINEAR_API_KEY" \
+    -H "Content-Type: application/json" \
+    --data "$payload"
+}
+
+linear_ensure_label_id() {
+  local team_id="$1" name="$2"
+  local q='query($team: ID!, $name: String!) { issueLabels(filter: { team: { id: { eq: $team } }, name: { eq: $name } }) { nodes { id } } }'
+  local existing
+  existing=$(linear_graphql "$q" "$(jq -n --arg team "$team_id" --arg name "$name" '{team:$team,name:$name}')" \
+    | jq -r '.data.issueLabels.nodes[0].id // empty')
+  if [ -n "$existing" ]; then
+    echo "$existing"
+    return
+  fi
+  local m='mutation($team: String!, $name: String!) { issueLabelCreate(input: { teamId: $team, name: $name }) { issueLabel { id } } }'
+  linear_graphql "$m" "$(jq -n --arg team "$team_id" --arg name "$name" '{team:$team,name:$name}')" \
+    | jq -r '.data.issueLabelCreate.issueLabel.id'
+}
+
+linear_add_label() {
+  local issue_id="$1" label_id="$2"
+  local m='mutation($id: String!, $labelId: String!) { issueAddLabel(id: $id, labelId: $labelId) { success } }'
+  linear_graphql "$m" "$(jq -n --arg id "$issue_id" --arg labelId "$label_id" '{id:$id,labelId:$labelId}')" >/dev/null
+}
+
+linear_remove_label() {
+  local issue_id="$1" label_id="$2"
+  local m='mutation($id: String!, $labelId: String!) { issueRemoveLabel(id: $id, labelId: $labelId) { success } }'
+  linear_graphql "$m" "$(jq -n --arg id "$issue_id" --arg labelId "$label_id" '{id:$id,labelId:$labelId}')" >/dev/null
+}
+
+linear_get_team_id() {
+  local issue_id="$1"
+  local q='query($id: String!) { issue(id: $id) { team { id } } }'
+  linear_graphql "$q" "$(jq -n --arg id "$issue_id" '{id:$id}')" | jq -r '.data.issue.team.id'
+}
+
+# --- メインループ ----------------------------------------------------------
+log "fetching ready issues..."
+ISSUES_JSON=$("$HOME/.local/bin/linear-issue-fetch")
+COUNT=$(echo "$ISSUES_JSON" | jq 'length')
+log "found $COUNT issue(s)"
+
+echo "$ISSUES_JSON" | jq -c '.[]' | while read -r issue; do
+  issue_id=$(echo "$issue" | jq -r '.id')
+  identifier=$(echo "$issue" | jq -r '.identifier')
+  title=$(echo "$issue" | jq -r '.title')
+  log "=== $identifier: $title ==="
+
+  team_id=$(linear_get_team_id "$issue_id")
+  in_progress_id=$(linear_ensure_label_id "$team_id" "claude:in-progress")
+  done_id=$(linear_ensure_label_id "$team_id" "claude:done")
+  failed_id=$(linear_ensure_label_id "$team_id" "claude:failed")
+
+  linear_add_label "$issue_id" "$in_progress_id"
+
+  prompt=$(jq -n --argjson issue "$issue" '
+    "Run the skill `linear-issue-driven-development` for the following Linear issue.\n" +
+    "Do not ask for confirmation; complete the full pipeline (worktree → implement → PR → CI green → review comments resolved).\n\n" +
+    "Issue JSON:\n```json\n" + ($issue | tostring) + "\n```\n"
+  ' -r)
+
+  log_file="$LOG_DIR/${identifier}-$(date +%Y%m%d-%H%M%S).log"
+  log "claude session log: $log_file"
+
+  # claude CLI の non-interactive 実行。
+  # bypassPermissions は user が dotfiles で明示的に opt-in した運用方針
+  # (settings.json の deny / hook 層は引き続き有効)。
+  set +e
+  timeout "$SESSION_TIMEOUT" claude \
+    --print \
+    --permission-mode bypassPermissions \
+    --append-system-prompt "You are running headless. Use the linear-issue-driven-development skill and finish the task end-to-end. If a step is blocked (e.g. tests fail repeatedly), label the Linear issue claude:failed and stop." \
+    "$prompt" \
+    >"$log_file" 2>&1
+  status=$?
+  set -e
+
+  if [ "$status" -eq 0 ]; then
+    log "$identifier: success"
+    linear_remove_label "$issue_id" "$in_progress_id"
+    linear_add_label "$issue_id" "$done_id"
+  else
+    log "$identifier: failed (exit=$status). see $log_file"
+    linear_remove_label "$issue_id" "$in_progress_id"
+    linear_add_label "$issue_id" "$failed_id"
+  fi
+done
+
+log "done."

@@ -112,6 +112,7 @@
   # Import sub-modules
   imports = [
     ./modules/homebrew.nix
+    ./modules/linear-issue-runner.nix
   ];
 
   # Used for backwards compatibility
