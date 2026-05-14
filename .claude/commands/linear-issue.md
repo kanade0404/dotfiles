@@ -5,14 +5,13 @@ argument-hint: <ISSUE_IDENTIFIER> (例 ENG-123)
 
 # /linear-issue $ARGUMENTS
 
-`$ARGUMENTS` で指定された Linear issue 1 件をヘッドレス runner と同じ手順で処理する
-ための手動エントリポイント。runner が失敗した issue を再実行したい時や、特定の
-issue をすぐ着手したい時に使う。
+`$ARGUMENTS` に渡された Linear issue identifier 1 件を、Routine と同じパイプライン
+(`linear-issue-driven-development` skill) で処理する手動エントリポイント。
+Routine が失敗した issue の再実行や、特定 issue を即着手したい時に使う。
 
 ## 実行手順
 
-1. `LINEAR_API_KEY` が無ければ `~/.config/linear-issue-runner/env` を `source` する。
-   未設定なら停止してユーザーに通知。
+1. `LINEAR_API_KEY` / `GH_TOKEN` が無ければ環境変数または `~/.config/linear-issue-runner/env` から取得する。未設定なら停止して通知。
 
 2. Linear GraphQL で identifier 引きで issue を取得:
 
@@ -26,19 +25,16 @@ issue をすぐ着手したい時に使う。
      }')" | jq '.data.issue'
    ```
 
-3. 取得した issue JSON を引数に `linear-issue-driven-development` skill を起動する
-   (Skill ツール経由)。
+3. 取得した issue JSON を引数に Skill ツール経由で `linear-issue-driven-development`
+   を起動する。
 
-4. skill が完走したら、Linear のラベルを以下のいずれかに更新:
+4. skill が完走したら Linear ラベルを更新:
    - 成功: `claude:in-progress` を外し `claude:done` を付与
    - 失敗: `claude:in-progress` を外し `claude:failed` を付与
 
-   ラベル ID は `linear-issue-runner` 内のヘルパと同じ GraphQL ミューテーション
-   (`issueAddLabel` / `issueRemoveLabel`) で操作する。
-
 ## 注意
 
-- 手動実行時も runner と同じガードレールに従う (destructive git 禁止・他リポへ
-  逸脱しない・無限ループしない)。
-- runner が同時に同じ issue を拾うと二重起動になるので、開始時にまず
-  `claude:in-progress` を付けてから作業に入ること。
+- 手動実行時も Routine と同じガードレールに従う (destructive git 禁止、他リポへ
+  逸脱しない、CI 失敗 3 連 / レビュー 5 周で打ち切り)。
+- Routine と同時に走るとラベル排他で衝突する可能性あり。先に `claude:in-progress`
+  を付けてから作業に入ること。

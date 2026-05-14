@@ -25,8 +25,6 @@ echo "==> Linking helper scripts"
 mkdir -p "$HOME/.local/bin"
 ln -sf "$DOTFILES/.local/bin/tmux-project" "$HOME/.local/bin/tmux-project"
 ln -sf "$DOTFILES/.local/bin/gw" "$HOME/.local/bin/gw"
-ln -sf "$DOTFILES/.local/bin/linear-issue-fetch" "$HOME/.local/bin/linear-issue-fetch"
-ln -sf "$DOTFILES/.local/bin/linear-issue-runner" "$HOME/.local/bin/linear-issue-runner"
 
 echo "==> Linking Codex user settings"
 mkdir -p "$HOME/.codex"
