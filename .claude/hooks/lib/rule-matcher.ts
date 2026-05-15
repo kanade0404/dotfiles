@@ -455,14 +455,17 @@ export function matchCommand(
     return { decision: "deny", command, pattern: "dangerous-git-flags" };
   }
 
+  // 機密ファイルパスは allow ルールの有無に関わらず deny に昇格。
+  // evaluator が未定義コマンドを pass-through (allow) するようになったため、
+  // ここで早期チェックしないと機密パス操作が hook をすり抜ける。
+  if (checkSensitiveFilePaths(command)) {
+    return { decision: "deny", command, pattern: "sensitive-file-path" };
+  }
+
   // allow チェック
   for (const rule of rules) {
     if (rule.category !== "allow") continue;
     if (candidates.some((cmd) => rule.regex.test(cmd))) {
-      // 機密ファイルパスが含まれている場合はdenyに昇格
-      if (checkSensitiveFilePaths(command)) {
-        return { decision: "deny", command, pattern: "sensitive-file-path" };
-      }
       return { decision: "allow", command, pattern: rule.pattern };
     }
   }
