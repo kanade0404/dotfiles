@@ -10,10 +10,6 @@ log() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m!!\033[0m %s\n' "$*" >&2; }
 die() { printf '\033[1;31mERROR:\033[0m %s\n' "$*" >&2; exit 1; }
 
-coderabbitai() {
-  warn "Ignoring unexpected Codex Cloud setup token: coderabbitai"
-}
-
 BUN_MIN_VERSION="${BUN_MIN_VERSION:-1.3.0}"
 
 find_project_dir() {
