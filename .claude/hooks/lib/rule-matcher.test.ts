@@ -1,4 +1,5 @@
 import { describe, test, expect } from "bun:test";
+import { resolve } from "node:path";
 import {
   matchCommand,
   stripShellPrefixes,
@@ -377,7 +378,10 @@ describe("checkDangerousGitFlags", () => {
  * 統合テスト: 実際の settings.json ルールを使った判定検証
  */
 describe("統合テスト: settings.json ルールでの判定", () => {
-  const settingsRules = loadRules();
+  // CI には個人の ~/.claude/settings.json が存在しないため、リポジトリ同梱の
+  // .claude/settings.json を明示的に読む (import.meta.dir = .claude/hooks/lib)。
+  const repoRoot = resolve(import.meta.dir, "..", "..", "..");
+  const settingsRules = loadRules(repoRoot);
 
   /** 複合コマンドの全サブコマンドを判定し、最終結果を返す */
   function judgeCommand(command: string): "allow" | "deny" | "ask" {
