@@ -36,7 +36,7 @@ bash ~/work/dotfiles/install.sh
 
 ## 構成
 
-```
+```text
 nix/
   flake.nix              # エントリポイント (nixpkgs unstable + nix-darwin + home-manager)
   configuration.nix      # system-level packages + locale + user

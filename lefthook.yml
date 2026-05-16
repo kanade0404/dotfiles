@@ -1,0 +1,9 @@
+# lefthook — git hooks. lefthook 本体は nix configuration.nix の systemPackages
+# に同梱済み。`lefthook install` で .git/hooks に配線する (install.sh が実行)。
+pre-commit:
+  parallel: true
+  commands:
+    markdownlint:
+      # ステージ済みの *.md のみ検査 (既存の無関係ファイルは巻き込まない)。
+      glob: "*.md"
+      run: bunx markdownlint-cli2 {staged_files}

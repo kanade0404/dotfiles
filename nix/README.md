@@ -2,7 +2,7 @@
 
 ## ファイル構成
 
-```
+```text
 nix/
 ├── flake.nix            # エントリポイント。inputs (nixpkgs, nix-darwin, home-manager) を定義
 ├── flake.lock           # 依存バージョンのロックファイル (自動生成)
@@ -283,7 +283,7 @@ nix eval nixpkgs#<パッケージ名>.meta.description
 
 ### `/etc/xxx` のファイル衝突
 
-```
+```text
 Unexpected files in /etc, aborting activation
 ```
 
@@ -295,7 +295,7 @@ sudo mv /etc/<ファイル名> /etc/<ファイル名>.before-nix-darwin
 
 ### home-manager のファイル衝突
 
-```
+```text
 Existing file '/Users/kanade0404/.xxx' would be clobbered
 ```
 
