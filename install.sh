@@ -6,7 +6,7 @@
 
 set -euo pipefail
 
-DOTFILES="$HOME/work/dotfiles"
+DOTFILES="${DOTFILES:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 OS="$(uname)"
 
 echo "==> Linking Neovim config (LazyVim, managed outside Nix)"
@@ -84,7 +84,7 @@ ln -sf "$DOTFILES/.gitmessage" "$HOME/.gitmessage"
 ln -sf "$DOTFILES/.gitignore" "$HOME/.gitignore"
 
 if [ "$OS" = "Darwin" ]; then
-  echo "Done. Run 'sudo darwin-rebuild switch --flake ~/work/dotfiles/nix' for Nix-managed config."
+  echo "Done. Run 'sudo darwin-rebuild switch --flake $DOTFILES/nix' for Nix-managed config."
 else
   echo "Done. (Nix-managed config is macOS-only and was skipped.)"
 fi
