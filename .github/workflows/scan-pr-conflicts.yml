@@ -1,0 +1,185 @@
+name: Scan PR Conflicts (nightly)
+
+# 毎日深夜 (UTC 15:00 = JST 00:00) に既存 PR を走査し、
+# merge conflict が発生している PR ごとに Claude Code Action セッションを 1 つ割り当てて
+# 自動で conflict 解決対応を実施する。
+
+on:
+  schedule:
+    # JST 00:00 = UTC 15:00
+    - cron: "0 15 * * *"
+  workflow_dispatch:
+    inputs:
+      pr_numbers:
+        description: "対象 PR 番号 (カンマ区切り)。空なら conflict 検知された全 PR が対象"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  actions: read
+
+jobs:
+  detect:
+    name: Detect conflicting PRs
+    runs-on: ubuntu-latest
+    outputs:
+      prs: ${{ steps.find.outputs.prs }}
+      has_targets: ${{ steps.find.outputs.has_targets }}
+    steps:
+      - name: List PRs with conflicts
+        id: find
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MANUAL_PRS: ${{ github.event.inputs.pr_numbers }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          # GitHub は PR を取得した直後だと mergeable が UNKNOWN になる場合がある。
+          # その場合は少し待ってから再取得することで判定を確定させる。
+          fetch_prs() {
+            gh pr list \
+              --repo "$REPO" \
+              --state open \
+              --limit 200 \
+              --json number,title,headRefName,baseRefName,mergeable,isDraft,author
+          }
+
+          prs_json="$(fetch_prs)"
+
+          # mergeable が UNKNOWN の PR がある場合、確定するまで最大 5 回リトライ
+          for i in 1 2 3 4 5; do
+            unknown_count=$(echo "$prs_json" | jq '[.[] | select(.mergeable == "UNKNOWN")] | length')
+            if [ "$unknown_count" -eq 0 ]; then
+              break
+            fi
+            echo "mergeable=UNKNOWN の PR が $unknown_count 件あります。15 秒待って再取得します (試行 $i/5)"
+            sleep 15
+            prs_json="$(fetch_prs)"
+          done
+
+          if [ -n "${MANUAL_PRS:-}" ]; then
+            echo "Manual PR filter: $MANUAL_PRS"
+            filter=$(echo "$MANUAL_PRS" | tr ',' '\n' | sed 's/[^0-9]//g' | grep -v '^$' | jq -R . | jq -s 'map(tonumber)')
+            conflicting=$(echo "$prs_json" | jq --argjson nums "$filter" '[.[] | select(.number as $n | $nums | index($n))]')
+          else
+            conflicting=$(echo "$prs_json" | jq '[.[] | select(.mergeable == "CONFLICTING" and .isDraft == false)]')
+          fi
+
+          count=$(echo "$conflicting" | jq 'length')
+          echo "Conflicting PR count: $count"
+          echo "$conflicting" | jq -r '.[] | "  #\(.number) (head=\(.headRefName) base=\(.baseRefName))"'
+
+          # matrix include 用に整形 (PR title はここでは使わない。command injection 防止のため)
+          matrix=$(echo "$conflicting" | jq -c '[.[] | {number: .number, head: .headRefName, base: .baseRefName}]')
+          echo "prs=$matrix" >> "$GITHUB_OUTPUT"
+          if [ "$count" -gt 0 ]; then
+            echo "has_targets=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_targets=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  trigger:
+    name: "Trigger Claude (PR #${{ matrix.pr.number }})"
+    needs: detect
+    if: needs.detect.outputs.has_targets == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      # PR ごとに 1 session を割り当てる。1 つが失敗しても他は継続。
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        pr: ${{ fromJSON(needs.detect.outputs.prs) }}
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+    steps:
+      - name: Validate PR metadata
+        env:
+          PR_NUMBER: ${{ matrix.pr.number }}
+          PR_HEAD: ${{ matrix.pr.head }}
+          PR_BASE: ${{ matrix.pr.base }}
+        run: |
+          set -euo pipefail
+          # PR_HEAD / PR_BASE は GitHub の制約上 ref 名のみだが、念のため英数 / -_./ のみ許可
+          if ! printf '%s' "$PR_HEAD" | grep -Eq '^[A-Za-z0-9._/-]+$'; then
+            echo "Invalid head ref name: $PR_HEAD" >&2
+            exit 1
+          fi
+          if ! printf '%s' "$PR_BASE" | grep -Eq '^[A-Za-z0-9._/-]+$'; then
+            echo "Invalid base ref name: $PR_BASE" >&2
+            exit 1
+          fi
+          if ! printf '%s' "$PR_NUMBER" | grep -Eq '^[0-9]+$'; then
+            echo "Invalid PR number: $PR_NUMBER" >&2
+            exit 1
+          fi
+
+      - name: Post @claude conflict-resolution request
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ matrix.pr.number }}
+          PR_HEAD: ${{ matrix.pr.head }}
+          PR_BASE: ${{ matrix.pr.base }}
+        run: |
+          set -euo pipefail
+
+          # 24h 以内に同種の依頼コメントを投稿済みなら二重トリガを回避
+          recent=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json comments \
+            --jq '[.comments[] | select(.body | contains("scan-pr-conflicts marker:v1")) | .createdAt] | sort | last // ""')
+          if [ -n "$recent" ]; then
+            recent_epoch=$(date -u -d "$recent" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%SZ" "$recent" +%s 2>/dev/null || echo 0)
+            now_epoch=$(date -u +%s)
+            diff=$(( now_epoch - recent_epoch ))
+            if [ "$diff" -lt 86400 ]; then
+              echo "Already requested within last 24h (at $recent). Skipping to avoid duplicate sessions."
+              exit 0
+            fi
+          fi
+
+          # 本文を一時ファイルに書き出し (env 経由で展開し、shell へ untrusted input を直接埋め込まない)
+          body_file="$(mktemp)"
+          {
+            printf '@claude このPRは `%s` ブランチとの間で merge conflict が発生しています。\n' "$PR_BASE"
+            printf '`pr-conflict-resolver` skill の手順に従って自動修正をお願いします。\n\n'
+            printf -- '- PR: #%s\n' "$PR_NUMBER"
+            printf -- '- head: `%s`\n' "$PR_HEAD"
+            printf -- '- base: `%s`\n\n' "$PR_BASE"
+            printf '要件:\n'
+            printf '1. このPRブランチ (`%s`) を checkout する\n' "$PR_HEAD"
+            printf '2. `%s` を merge し、conflict を解決する\n' "$PR_BASE"
+            printf '   - 両側の意図を尊重し、機能を欠落させない\n'
+            printf '   - lock ファイルは再生成する\n'
+            printf '3. 既存のテスト / Lint / 型チェックが通ることを確認する\n'
+            printf '4. 解決後の commit を `%s` に push する\n' "$PR_HEAD"
+            printf '5. このPRに「conflict 解決完了 / 残課題」を要約コメントで報告する\n\n'
+            printf '解決が困難な場合は、無理に merge せず、conflict 箇所の概要と推奨される解決方針をコメントしてください。\n\n'
+            printf -- '<!-- scan-pr-conflicts marker:v1 ts=%s -->\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } > "$body_file"
+
+          gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file "$body_file"
+          rm -f "$body_file"
+          echo "Posted @claude conflict-resolution request to PR #${PR_NUMBER}"
+
+  summary:
+    name: Summary
+    needs: [detect, trigger]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report
+        env:
+          HAS_TARGETS: ${{ needs.detect.outputs.has_targets }}
+          PRS: ${{ needs.detect.outputs.prs }}
+        run: |
+          if [ "$HAS_TARGETS" != "true" ]; then
+            echo "Conflict ありの PR はありません。"
+            exit 0
+          fi
+          echo "対象 PR 番号:"
+          echo "$PRS" | jq -r '.[] | "  - #\(.number) (head=\(.head) base=\(.base))"'
