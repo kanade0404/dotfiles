@@ -30,6 +30,32 @@ sudo darwin-rebuild switch --flake ~/work/dotfiles/nix
 bash ~/work/dotfiles/install.sh
 ```
 
+### worktree から適用する場合
+
+git worktree 上の内容をそのまま Nix / symlink の参照元にしたい場合は、worktree 内で以下を実行します。
+
+```bash
+./bootstrap-worktree.sh
+```
+
+`install.sh` は実行された checkout/worktree を既定の dotfiles 参照元として使います。明示したい場合は `DOTFILES=/path/to/dotfiles bash install.sh` も利用できます。
+
+Codex の worktree 作成時 setup script のような非対話環境では、`sudo` が使えないため `/etc` ファイル退避と `darwin-rebuild` は自動でスキップされ、symlink 作成のみ実行されます。Nix 管理の設定まで適用したい場合は、作成後に対話ターミナルで `sudo darwin-rebuild switch --flake <worktree>/nix` を実行してください。
+
+### Codex Cloud で使う場合
+
+Codex Cloud では macOS / nix-darwin / Homebrew / symlink セットアップを行わず、Bun と依存関係だけをセットアップします。
+
+```bash
+./bootstrap-codex-cloud.sh
+```
+
+setup 中にテストまで実行したい場合は以下を使います。
+
+```bash
+RUN_TESTS=1 ./bootstrap-codex-cloud.sh
+```
+
 ### 新しい Mac で使う場合
 
 `nix/flake.nix` の `darwinConfigurations."kanade0404"` と `nix/configuration.nix` の `networking.hostName` を自分のホスト名に合わせて変更してから `bootstrap.sh` を実行してください (同一ホスト名で運用するなら変更不要)。
@@ -49,6 +75,8 @@ nix/
 .claude/                 # Claude Code (settings, hooks, commands)
 .local/bin/              # ヘルパースクリプト (tmux-project, gw)
 bootstrap.sh             # 初回セットアップ (Homebrew インストール + nix-darwin bootstrap + install.sh)
+bootstrap-codex-cloud.sh # Codex Cloud 用の依存関係セットアップ
+bootstrap-worktree.sh    # git worktree を参照元にして適用
 install.sh               # Nix 管理外ファイルの symlink 作成
 ```
 
