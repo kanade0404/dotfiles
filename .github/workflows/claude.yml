@@ -48,20 +48,8 @@ jobs:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           trigger_phrase: "@claude"
-          # conflict 解決時のデフォルトモデル (難度の高い merge にも対応できるよう Opus を既定)
-          model: claude-opus-4-7
-          allowed_tools: |
-            Bash(git:*),
-            Bash(gh:*),
-            Bash(npm:*),
-            Bash(pnpm:*),
-            Bash(yarn:*),
-            Bash(bun:*),
-            Bash(node:*),
-            Bash(npx:*),
-            Bash(make:*),
-            Edit,
-            Read,
-            Write,
-            Glob,
-            Grep
+          # model/allowed_tools は claude-code-action@v1 の input に存在しないため
+          # claude_args 経由で渡す。model は version 非依存のエイリアス (opus) を使用。
+          claude_args: >-
+            --model opus
+            --allowedTools "Bash(git:*),Bash(gh:*),Bash(npm:*),Bash(pnpm:*),Bash(yarn:*),Bash(bun:*),Bash(node:*),Bash(npx:*),Bash(make:*),Edit,Read,Write,Glob,Grep"

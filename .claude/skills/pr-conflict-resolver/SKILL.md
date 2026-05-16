@@ -49,11 +49,22 @@ rebase ではなく **merge** を既定とする。理由:
 - PR がレビュー中の場合、force-push は差分を見失わせるため避ける
 
 ```bash
-git merge --no-ff --no-edit "origin/$PR_BASE" || true
+merge_status=0
+git merge --no-ff --no-edit "origin/$PR_BASE" || merge_status=$?
+if [ "$merge_status" -ne 0 ]; then
+  if git diff --name-only --diff-filter=U | grep -q .; then
+    echo "merge conflict を検知。解決ステップへ進行。"
+  else
+    echo "merge が conflict 以外の理由で失敗。処理を中断。" >&2
+    exit "$merge_status"
+  fi
+fi
 ```
 
-`|| true` で conflict 発生時もスクリプトを継続させ、続く解決ステップへ進む。
-特別な指示で rebase を希望される場合のみ `git rebase origin/$PR_BASE` を選択する。
+`|| true` で全エラーを握り潰すと、認証エラーや壊れた ref 等の異常時にも誤って
+解決処理へ進んでしまう。上記のように **conflict (未マージファイルあり) のときだけ継続**し、
+それ以外の非ゼロ終了は中断する。特別な指示で rebase を希望される場合のみ
+`git rebase origin/$PR_BASE` を選択する。
 
 ## 3. conflict 箇所の特定
 

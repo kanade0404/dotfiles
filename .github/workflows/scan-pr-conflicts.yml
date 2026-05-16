@@ -3,6 +3,11 @@ name: Scan PR Conflicts (nightly)
 # 毎日深夜 (UTC 15:00 = JST 00:00) に既存 PR を走査し、
 # merge conflict が発生している PR ごとに Claude Code Action セッションを 1 つ割り当てて
 # 自動で conflict 解決対応を実施する。
+#
+# NOTE: GitHub の再帰防止ポリシーにより GITHUB_TOKEN で投稿したコメントは
+# 別 workflow (claude.yml の issue_comment) を起動しない。そのため本 workflow は
+# コメント経由で claude.yml を起動するのではなく、matrix job 内で
+# claude-code-action を prompt モードで直接実行する。
 
 on:
   schedule:
@@ -63,8 +68,15 @@ jobs:
 
           if [ -n "${MANUAL_PRS:-}" ]; then
             echo "Manual PR filter: $MANUAL_PRS"
-            filter=$(echo "$MANUAL_PRS" | tr ',' '\n' | sed 's/[^0-9]//g' | grep -v '^$' | jq -R . | jq -s 'map(tonumber)')
-            conflicting=$(echo "$prs_json" | jq --argjson nums "$filter" '[.[] | select(.number as $n | $nums | index($n))]')
+            # set -e 下で空集合になっても落ちないよう、抽出は || true でガード
+            raw_nums="$(echo "$MANUAL_PRS" | tr ',' '\n' | sed 's/[^0-9]//g' | grep -v '^$' || true)"
+            if [ -z "$raw_nums" ]; then
+              echo "有効な PR 番号が指定されていません。対象なしとして終了します。"
+              conflicting='[]'
+            else
+              filter=$(printf '%s\n' "$raw_nums" | jq -R . | jq -s 'map(tonumber)')
+              conflicting=$(echo "$prs_json" | jq --argjson nums "$filter" '[.[] | select(.number as $n | $nums | index($n))]')
+            fi
           else
             conflicting=$(echo "$prs_json" | jq '[.[] | select(.mergeable == "CONFLICTING" and .isDraft == false)]')
           fi
@@ -82,11 +94,12 @@ jobs:
             echo "has_targets=false" >> "$GITHUB_OUTPUT"
           fi
 
-  trigger:
-    name: "Trigger Claude (PR #${{ matrix.pr.number }})"
+  resolve:
+    name: "Resolve conflicts (PR #${{ matrix.pr.number }})"
     needs: detect
     if: needs.detect.outputs.has_targets == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       # PR ごとに 1 session を割り当てる。1 つが失敗しても他は継続。
       fail-fast: false
@@ -94,7 +107,7 @@ jobs:
       matrix:
         pr: ${{ fromJSON(needs.detect.outputs.prs) }}
     permissions:
-      contents: read
+      contents: write
       pull-requests: write
       issues: write
     steps:
@@ -119,56 +132,94 @@ jobs:
             exit 1
           fi
 
-      - name: Post @claude conflict-resolution request
+      - name: Dedup check (skip if handled within 24h)
+        id: dedup
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ matrix.pr.number }}
-          PR_HEAD: ${{ matrix.pr.head }}
-          PR_BASE: ${{ matrix.pr.base }}
         run: |
           set -euo pipefail
-
-          # 24h 以内に同種の依頼コメントを投稿済みなら二重トリガを回避
+          # bot が投稿したマーカーコメントのみを対象にし、第三者コメントによる
+          # 抑止迂回を防ぐ。GITHUB_TOKEN 投稿は author.login が github-actions[bot]。
           recent=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json comments \
-            --jq '[.comments[] | select(.body | contains("scan-pr-conflicts marker:v1")) | .createdAt] | sort | last // ""')
+            --jq '[.comments[]
+                   | select(.author.login == "github-actions" or .author.login == "github-actions[bot]")
+                   | select(.body | contains("scan-pr-conflicts marker:v1"))
+                   | .createdAt] | sort | last // ""')
+          skip=false
           if [ -n "$recent" ]; then
             recent_epoch=$(date -u -d "$recent" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%SZ" "$recent" +%s 2>/dev/null || echo 0)
             now_epoch=$(date -u +%s)
             diff=$(( now_epoch - recent_epoch ))
             if [ "$diff" -lt 86400 ]; then
-              echo "Already requested within last 24h (at $recent). Skipping to avoid duplicate sessions."
-              exit 0
+              echo "Already handled within last 24h (at $recent). Skipping."
+              skip=true
             fi
           fi
+          echo "skip=$skip" >> "$GITHUB_OUTPUT"
 
-          # 本文を一時ファイルに書き出し (env 経由で展開し、shell へ untrusted input を直接埋め込まない)
+      - name: Post audit marker comment
+        if: steps.dedup.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ matrix.pr.number }}
+          PR_BASE: ${{ matrix.pr.base }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
           body_file="$(mktemp)"
           {
-            printf '@claude このPRは `%s` ブランチとの間で merge conflict が発生しています。\n' "$PR_BASE"
-            printf '`pr-conflict-resolver` skill の手順に従って自動修正をお願いします。\n\n'
-            printf -- '- PR: #%s\n' "$PR_NUMBER"
-            printf -- '- head: `%s`\n' "$PR_HEAD"
-            printf -- '- base: `%s`\n\n' "$PR_BASE"
-            printf '要件:\n'
-            printf '1. このPRブランチ (`%s`) を checkout する\n' "$PR_HEAD"
-            printf '2. `%s` を merge し、conflict を解決する\n' "$PR_BASE"
-            printf '   - 両側の意図を尊重し、機能を欠落させない\n'
-            printf '   - lock ファイルは再生成する\n'
-            printf '3. 既存のテスト / Lint / 型チェックが通ることを確認する\n'
-            printf '4. 解決後の commit を `%s` に push する\n' "$PR_HEAD"
-            printf '5. このPRに「conflict 解決完了 / 残課題」を要約コメントで報告する\n\n'
-            printf '解決が困難な場合は、無理に merge せず、conflict 箇所の概要と推奨される解決方針をコメントしてください。\n\n'
+            printf 'このPRは `%s` との間で merge conflict を検知しました。\n' "$PR_BASE"
+            printf 'scan-pr-conflicts workflow が自動 conflict 解決セッションを開始します。\n\n'
+            printf -- '- 進捗: %s\n\n' "$RUN_URL"
             printf -- '<!-- scan-pr-conflicts marker:v1 ts=%s -->\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           } > "$body_file"
-
           gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file "$body_file"
           rm -f "$body_file"
-          echo "Posted @claude conflict-resolution request to PR #${PR_NUMBER}"
+
+      - name: Checkout PR head branch
+        if: steps.dedup.outputs.skip != 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.pr.head }}
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve conflicts with Claude Code
+        if: steps.dedup.outputs.skip != 'true'
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          # model/allowed_tools は v1 の input に存在しないため claude_args 経由で渡す。
+          # model は version 非依存のエイリアス (opus) を使い外部仕様依存を避ける。
+          claude_args: >-
+            --model opus
+            --allowedTools "Bash(git:*),Bash(gh:*),Bash(npm:*),Bash(pnpm:*),Bash(yarn:*),Bash(bun:*),Bash(node:*),Bash(npx:*),Bash(make:*),Edit,Read,Write,Glob,Grep"
+          prompt: |
+            このリポジトリの PR #${{ matrix.pr.number }} で `${{ matrix.pr.base }}` ブランチとの
+            merge conflict が発生しています。リポジトリの `.claude/skills/pr-conflict-resolver`
+            skill の手順に厳密に従って conflict を解決してください。
+
+            前提:
+            - 既に PR head ブランチ `${{ matrix.pr.head }}` を checkout 済みです。
+            - base ブランチは `${{ matrix.pr.base }}` です。
+
+            要件:
+            1. `origin/${{ matrix.pr.base }}` を merge し conflict を解決する
+               (両側の意図を尊重し機能を欠落させない / lock ファイルは再生成する)
+            2. 既存のテスト・Lint・型チェックが通ることを可能な範囲で確認する
+            3. 解決後の commit を `${{ matrix.pr.head }}` に push する
+            4. このPRに「conflict 解決完了 / 残課題」を要約コメントで報告する
+
+            解決が困難な場合は無理に merge せず、skill の「無理しない撤退判断」に従い
+            conflict 箇所の概要と推奨方針を PR にコメントして終了してください。
 
   summary:
     name: Summary
-    needs: [detect, trigger]
+    needs: [detect, resolve]
     if: always()
     runs-on: ubuntu-latest
     steps:

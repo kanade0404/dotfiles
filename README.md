@@ -84,9 +84,13 @@ bun test
 
 | ファイル | 役割 |
 |---------|-----|
-| `.github/workflows/scan-pr-conflicts.yml` | 毎日深夜 (JST 00:00 / UTC 15:00) に open PR を走査。`mergeable: CONFLICTING` の PR ごとに matrix job (= 1 session) を割り当て、`@claude` メンションを PR にコメント |
-| `.github/workflows/claude.yml` | `@claude` メンション (issue/PR コメント・review) を検出して [`anthropics/claude-code-action`](https://github.com/anthropics/claude-code-action) を実行 |
+| `.github/workflows/scan-pr-conflicts.yml` | 毎日深夜 (JST 00:00 / UTC 15:00) に open PR を走査。`mergeable: CONFLICTING` の PR ごとに matrix job (= 1 session) を割り当て、その job 内で [`anthropics/claude-code-action`](https://github.com/anthropics/claude-code-action) を直接実行して conflict を解決 |
+| `.github/workflows/claude.yml` | 人間が PR/issue で `@claude` メンションした際に手動で claude-code-action を起動 (merge 後の追従対応・手動依頼用) |
 | `.claude/skills/pr-conflict-resolver/SKILL.md` | conflict 解決の安全手順 (checkout → merge → 解決 → lock 再生成 → 検証 → push → 報告) を Claude に渡す skill |
+
+> **設計メモ**: GitHub の再帰防止ポリシーにより `GITHUB_TOKEN` で投稿したコメントは
+> 別 workflow の `issue_comment` を起動しません。そのため scan は「コメントで claude.yml を起こす」のではなく
+> matrix job 内で claude-code-action を `prompt` モードで直接実行します (PAT 不要)。
 
 ### 有効化手順
 
@@ -97,27 +101,38 @@ bun test
 
 ### 二重トリガ回避
 
-`scan-pr-conflicts` は PR コメントに `<!-- scan-pr-conflicts marker:v1 -->` を埋め込み、24h 以内に
-同マーカーのコメントが存在する PR には再度依頼しません。意図的に再実行したい場合は workflow_dispatch
-で `pr_numbers` を指定するか、該当コメントを手で削除してから再実行してください。
+`scan-pr-conflicts` は処理開始時に PR へ `<!-- scan-pr-conflicts marker:v1 -->` を含む
+監査コメントを投稿し、24h 以内に **bot (`github-actions[bot]`) が投稿した** 同マーカーの
+コメントが存在する PR は再処理しません (第三者が同文字列を投稿しても抑止は迂回されません)。
+意図的に再実行したい場合は workflow_dispatch で `pr_numbers` を指定するか、該当コメントを
+手で削除してから再実行してください。
+
+### CI 再実行に関する注意
+
+claude-code-action が `GITHUB_TOKEN` で push したコミットは、再帰防止ポリシーにより
+`push` / `pull_request` トリガの CI を再実行しません。CI を確実に回したい場合は、
+解決後の PR で空コミットを足すか、PR を一度 close/reopen するか、`secrets` に PAT を
+用意して checkout / push をその PAT で行うよう workflow を調整してください
+(個人 dotfiles 用途では手動 re-run でも十分なため既定では PAT 不要)。
 
 ### 動作フロー
 
-```
+```text
 deep-night cron ──▶ scan-pr-conflicts
                        │
-                       ├─ gh pr list で CONFLICTING な open PR を抽出
+                       ├─ detect: gh pr list で CONFLICTING な open PR を抽出
                        │
-                       └─ PR ごとに matrix job:
-                           └─ "@claude resolve conflicts ..." を PR にコメント
+                       └─ resolve: PR ごとに matrix job (= 1 session):
+                           ├─ 24h dedup チェック
+                           ├─ 監査コメント投稿 (marker 埋め込み)
+                           ├─ PR head ブランチを checkout
+                           └─ claude-code-action (prompt モード) を直接実行
+                               └─ pr-conflict-resolver skill に従って解決 → push
+                                      │
+                                      └─ CI 緑になったら人手で merge
 
-@claude コメント ──▶ claude.yml (issue_comment event)
-                       │
-                       └─ claude-code-action 実行
-                           └─ pr-conflict-resolver skill に従って自動修正 → push
-                                  │
-                                  └─ CI 緑になったら人手で merge
-                                       (= 次回以降は @claude メンションで再駆動可能)
+@claude コメント (人間) ──▶ claude.yml (issue_comment event)
+                              └─ claude-code-action を起動 (手動依頼・追従対応用)
 ```
 
 ## 開発環境
