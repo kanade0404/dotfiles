@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
 set -e
-msg=$(cat ~/.claude/.last_prompt | head -c 72)
+msg=$(head -c 72 ~/.claude/.last_prompt)
 git add -A
 git commit -m "$msg"

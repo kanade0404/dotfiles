@@ -94,7 +94,15 @@ export function isAssignmentOnly(command: string): boolean {
 
 /**
  * サブコマンド群をルールで評価し、最終判定を返す。
- * 優先順位: deny > unmatched(ask) > ask > allow
+ * 優先順位: deny > ask > allow(pass-through)
+ *
+ * 未定義コマンドは hook で判断せず pass-through (allow) する。Claude Code
+ * 標準の default モードプロンプトに委ねることで、ユーザは「Yes, don't ask
+ * again for `Bash(prefix *)`」を選んで自動的に allow ルールを増やせる。
+ * hook 由来の ask ではこの選択肢が出ないため UX が悪化していた。
+ *
+ * 機密ファイルパスや危険な git フラグは rule-matcher 側で deny に昇格する
+ * ので、pass-through 経路でも安全性は維持される。
  */
 export function evaluateCommand(
   subCommands: readonly string[],
@@ -102,7 +110,6 @@ export function evaluateCommand(
 ): EvaluationResult {
   const denyReasons: { command: string; pattern: string }[] = [];
   const askReasons: string[] = [];
-  const unmatchedReasons: string[] = [];
 
   for (const sub of subCommands) {
     if (isAssignmentOnly(sub)) {
@@ -112,7 +119,6 @@ export function evaluateCommand(
     const result = matchCommand(sub, rules);
 
     if (result === null) {
-      unmatchedReasons.push(sub);
       continue;
     }
 
@@ -130,13 +136,6 @@ export function evaluateCommand(
 
   if (denyReasons.length > 0) {
     return { decision: "deny", denyReasons };
-  }
-
-  if (unmatchedReasons.length > 0) {
-    return {
-      decision: "ask",
-      reason: `ルールに未定義のコマンドが含まれています: ${unmatchedReasons.join(", ")}`,
-    };
   }
 
   if (askReasons.length > 0) {

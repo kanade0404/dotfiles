@@ -130,4 +130,33 @@ describe("evaluateCommand - 変数代入", () => {
     );
     expect(result.decision).toBe("deny");
   });
+
+  test("未定義コマンドは pass-through で allow になる", () => {
+    const result = evaluateCommand(["some-undefined-cmd --flag"], rules);
+    expect(result.decision).toBe("allow");
+  });
+
+  test("未定義コマンド + 既存 ask ルールの混在は ask になる", () => {
+    const result = evaluateCommand(
+      ["some-undefined-cmd", "pnpm install lodash"],
+      rules,
+    );
+    expect(result.decision).toBe("ask");
+  });
+
+  test("未定義コマンド + deny ルールの混在は deny になる", () => {
+    const result = evaluateCommand(
+      ["some-undefined-cmd", "rm -rf /"],
+      rules,
+    );
+    expect(result.decision).toBe("deny");
+  });
+
+  test("未定義コマンドに機密ファイルパスが含まれていれば deny", () => {
+    const result = evaluateCommand(
+      ["some-undefined-cmd ~/.ssh/id_rsa"],
+      rules,
+    );
+    expect(result.decision).toBe("deny");
+  });
 });
