@@ -78,7 +78,7 @@ fi
 
 # ---- symlinks ----
 log "Nix 管理外ファイルの symlink 作成"
-bash "$DOTFILES_DIR/install.sh"
+DOTFILES="$DOTFILES_DIR" bash "$DOTFILES_DIR/install.sh"
 
 log "完了。新しいシェルを開いて以下で確認:"
 cat <<'EOF'

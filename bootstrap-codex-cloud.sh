@@ -92,6 +92,11 @@ ensure_bun() {
   fi
 
   install_bun
+  bun_version="$(bun --version)"
+  if ! version_at_least "$bun_version" "$BUN_MIN_VERSION"; then
+    die "Installed Bun $bun_version is still older than required $BUN_MIN_VERSION"
+  fi
+  log "Bun is available: $bun_version"
 }
 
 PROJECT_DIR="$(find_project_dir)"
