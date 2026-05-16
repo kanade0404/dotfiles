@@ -62,9 +62,22 @@ orchestrator (routine prompt 側) が GraphQL で 1 件選んで JSON を渡す:
 ## 排他制御 (二重起動防止)
 
 着手前に Linear ラベルを `claude:ready` → `claude:in-progress` に張り替える。
-他のセッションが同じ issue を拾うと in-progress ラベル付きになるため fetch 側の
-フィルタで除外される。完了時に `claude:done`, 失敗時に `claude:failed` に
-張り替える (どちらの場合も `claude:in-progress` は外す)。
+ただしラベル付与は atomic な compare-and-set ではないため、2 つの実行 (cron と
+手動 `/linear-issue` の併走など) が同じ `claude:ready` issue をほぼ同時取得すると
+両方が処理を始める。これを防ぐため必ず以下のロック取得検証を行う:
+
+1. issue に一意 lock marker を書き込む — `commentCreate` で
+   `claude-lock: <run-id>` (run-id は uuid) のコメントを 1 件付ける。
+2. `issueAddLabel` で `claude:in-progress` を付与する。
+3. issue を再取得し、`comments` を作成時刻昇順で見て **最古の `claude-lock:`
+   コメントが自分の run-id か** を確認する。
+   - 自分が最古 → ロック取得成功、続行。
+   - 他者が最古 → 競合に負け。自分が付けた `claude:in-progress` だけ外して
+     何もせず即終了 (exit 0)。
+4. `claude:done` / `claude:failed` が既に付いていれば処理済み。即終了する。
+
+完了時に `claude:done`, 失敗時に `claude:failed` に張り替える (どちらの場合も
+`claude:in-progress` は外す)。
 
 ラベル ID は team 単位なので、team ごとに `claude:in-progress` / `claude:done` /
 `claude:failed` が存在するか確認し、無ければ `issueLabelCreate` で作成する。
@@ -116,7 +129,7 @@ git switch -c "$BRANCH_NAME" "origin/$BASE"
 dotfiles 規約の絵文字 prefix を踏襲。issue identifier を commit 末尾に含めると
 Linear と自動連携できる:
 
-```
+```text
 :sparkles: <Subject>
 
 <Body explaining the why>
