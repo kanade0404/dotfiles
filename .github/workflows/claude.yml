@@ -1,8 +1,10 @@
 name: Claude Code
 
-# @claude メンションを受けて Claude Code Action を起動するメイン workflow。
-# scan-pr-conflicts.yml が conflict 検知時に PR コメントで @claude を呼び出すので、
-# その PR ごとに 1 session ずつ走り、conflict を自動修正 → push する。
+# 人間が PR/issue コメント・レビューで @claude を呼び出した際に Claude Code Action を
+# 起動する手動依頼用 workflow (merge 後の追従対応・任意の依頼に使用)。
+# conflict の自動解決は scan-pr-conflicts.yml が claude-code-action を prompt モードで
+# 直接実行するため本 workflow を経由しない (GITHUB_TOKEN 投稿コメントは別 workflow を
+# 起動できない GitHub の制約による設計)。
 #
 # 必要な secrets:
 #   - ANTHROPIC_API_KEY: Anthropic の API キー (Settings > Secrets > Actions)

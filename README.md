@@ -104,8 +104,10 @@ bun test
 `scan-pr-conflicts` は処理開始時に PR へ `<!-- scan-pr-conflicts marker:v1 -->` を含む
 監査コメントを投稿し、24h 以内に **bot (`github-actions[bot]`) が投稿した** 同マーカーの
 コメントが存在する PR は再処理しません (第三者が同文字列を投稿しても抑止は迂回されません)。
-意図的に再実行したい場合は workflow_dispatch で `pr_numbers` を指定するか、該当コメントを
-手で削除してから再実行してください。
+dedup チェックは `workflow_dispatch` でも無条件に実行されるため、意図的に再実行したい場合は
+**該当のマーカーコメントを手で削除してから** 再実行してください。`workflow_dispatch` の
+`pr_numbers` は conflict 状態に関わらず特定 PR を対象に含めるための指定であり、
+これだけでは 24h dedup は回避できません (マーカー削除が別途必要)。
 
 ### CI 再実行に関する注意
 
