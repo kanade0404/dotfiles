@@ -6,11 +6,34 @@
 
 set -euo pipefail
 
-PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
 log() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m!!\033[0m %s\n' "$*" >&2; }
 die() { printf '\033[1;31mERROR:\033[0m %s\n' "$*" >&2; exit 1; }
+
+find_project_dir() {
+  if [ -n "${PROJECT_DIR:-}" ]; then
+    printf '%s\n' "$PROJECT_DIR"
+    return
+  fi
+
+  if [ -f package.json ]; then
+    pwd
+    return
+  fi
+
+  if git_root="$(git rev-parse --show-toplevel 2>/dev/null)" && [ -f "$git_root/package.json" ]; then
+    printf '%s\n' "$git_root"
+    return
+  fi
+
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  if [ -f "$script_dir/package.json" ]; then
+    printf '%s\n' "$script_dir"
+    return
+  fi
+
+  die "Could not find project root with package.json. Run this script from the repository checkout or set PROJECT_DIR."
+}
 
 ensure_bun() {
   if command -v bun >/dev/null; then
@@ -32,7 +55,9 @@ ensure_bun() {
   log "Bun installed: $(bun --version)"
 }
 
+PROJECT_DIR="$(find_project_dir)"
 cd "$PROJECT_DIR"
+log "Project directory: $PROJECT_DIR"
 
 case "$(uname)" in
   Linux)
