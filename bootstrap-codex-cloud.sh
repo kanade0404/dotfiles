@@ -40,22 +40,28 @@ find_project_dir() {
 }
 
 version_at_least() {
-  current="$1"
-  minimum="$2"
+  current="${1#v}"
+  minimum="${2#v}"
 
   current_major="${current%%.*}"
   rest="${current#*.}"
   current_minor="${rest%%.*}"
-  rest="${rest#*.}"
-  current_patch="${rest%%[^0-9]*}"
+  current_patch="${rest#"$current_minor"}"
+  current_patch="${current_patch#.}"
+  current_patch="${current_patch%%[^0-9]*}"
 
   minimum_major="${minimum%%.*}"
   rest="${minimum#*.}"
   minimum_minor="${rest%%.*}"
-  rest="${rest#*.}"
-  minimum_patch="${rest%%[^0-9]*}"
+  minimum_patch="${rest#"$minimum_minor"}"
+  minimum_patch="${minimum_patch#.}"
+  minimum_patch="${minimum_patch%%[^0-9]*}"
 
+  current_major="${current_major:-0}"
+  current_minor="${current_minor:-0}"
   current_patch="${current_patch:-0}"
+  minimum_major="${minimum_major:-0}"
+  minimum_minor="${minimum_minor:-0}"
   minimum_patch="${minimum_patch:-0}"
 
   [ "$current_major" -gt "$minimum_major" ] && return 0
