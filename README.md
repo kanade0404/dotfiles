@@ -94,10 +94,19 @@ bun test
 
 ### 有効化手順
 
-1. リポジトリの **Settings > Secrets and variables > Actions** に `ANTHROPIC_API_KEY` を登録
-   - claude.ai/code 経由の OAuth を使う場合は `CLAUDE_CODE_OAUTH_TOKEN` を代わりに登録し、`claude.yml` の `with:` を差し替える
+1. Claude Code CLI でこのリポジトリ上で `/install-github-app` を実行
+   - Claude GitHub App のインストールと、`ANTHROPIC_API_KEY`
+     (Max/Pro 契約内課金にする場合は `CLAUDE_CODE_OAUTH_TOKEN`) の
+     リポジトリ Secret 登録を自動で行う
+   - 手動で登録する場合は **Settings > Secrets and variables > Actions** に
+     `ANTHROPIC_API_KEY` を追加してもよい。`CLAUDE_CODE_OAUTH_TOKEN` を使う場合は
+     両 workflow の `anthropic_api_key:` を `claude_code_oauth_token:` に差し替える
 2. **Settings > Actions > General** で *Allow GitHub Actions to create and approve pull requests* を有効化
 3. push したリポジトリで実際に conflict した PR を作って動作確認 (`workflow_dispatch` から `scan-pr-conflicts` を手動実行することも可能)
+
+> **keyless 構成について**: Anthropic API 直の場合は Secret が必須。静的キーを置きたくない場合は
+> AWS Bedrock (`use_bedrock` + GitHub OIDC) か GCP Vertex AI
+> (`use_vertex` + Workload Identity Federation) 経由にすると `id-token: write` 権限のみで運用できる。
 
 ### 二重トリガ回避
 

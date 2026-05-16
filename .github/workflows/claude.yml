@@ -6,12 +6,13 @@ name: Claude Code
 # 直接実行するため本 workflow を経由しない (GITHUB_TOKEN 投稿コメントは別 workflow を
 # 起動できない GitHub の制約による設計)。
 #
-# 必要な secrets:
-#   - ANTHROPIC_API_KEY: Anthropic の API キー (Settings > Secrets > Actions)
+# 必要な secrets (Claude Code CLI で `/install-github-app` を実行すると自動登録される):
+#   - ANTHROPIC_API_KEY: Anthropic の API キー
+#     (Max/Pro 契約内課金にする場合は CLAUDE_CODE_OAUTH_TOKEN を登録し
+#      `anthropic_api_key:` を `claude_code_oauth_token:` に差し替える)
 #   - GITHUB_TOKEN は自動付与
 #
-# Cloud-hosted の Claude Code (claude.ai/code 経由) を使う場合は CLAUDE_CODE_OAUTH_TOKEN を
-# 代わりに設定する。詳細は https://github.com/anthropics/claude-code-action を参照。
+# 詳細は https://github.com/anthropics/claude-code-action を参照。
 
 on:
   issue_comment:
