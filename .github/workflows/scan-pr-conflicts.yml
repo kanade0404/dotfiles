@@ -191,7 +191,7 @@ jobs:
         if: steps.dedup.outputs.skip != 'true'
         uses: anthropics/claude-code-action@v1
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           # model/allowed_tools は v1 の input に存在しないため claude_args 経由で渡す。
           # model は version 非依存のエイリアス (opus) を使い外部仕様依存を避ける。

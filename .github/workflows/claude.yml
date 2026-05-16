@@ -7,9 +7,9 @@ name: Claude Code
 # 起動できない GitHub の制約による設計)。
 #
 # 必要な secrets (Claude Code CLI で `/install-github-app` を実行すると自動登録される):
-#   - ANTHROPIC_API_KEY: Anthropic の API キー
-#     (Max/Pro 契約内課金にする場合は CLAUDE_CODE_OAUTH_TOKEN を登録し
-#      `anthropic_api_key:` を `claude_code_oauth_token:` に差し替える)
+#   - CLAUDE_CODE_OAUTH_TOKEN: Claude Max/Pro 契約内課金用 OAuth トークン
+#     (従量 API キーを使う場合は ANTHROPIC_API_KEY を登録し
+#      `claude_code_oauth_token:` を `anthropic_api_key:` に差し替える)
 #   - GITHUB_TOKEN は自動付与
 #
 # 詳細は https://github.com/anthropics/claude-code-action を参照。
@@ -48,7 +48,7 @@ jobs:
         # 該当しない場合は no-op で終了する。そのため workflow 側で if 判定をする必要はない。
         uses: anthropics/claude-code-action@v1
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           trigger_phrase: "@claude"
           # model/allowed_tools は claude-code-action@v1 の input に存在しないため

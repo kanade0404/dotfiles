@@ -95,12 +95,12 @@ bun test
 ### 有効化手順
 
 1. Claude Code CLI でこのリポジトリ上で `/install-github-app` を実行
-   - Claude GitHub App のインストールと、`ANTHROPIC_API_KEY`
-     (Max/Pro 契約内課金にする場合は `CLAUDE_CODE_OAUTH_TOKEN`) の
-     リポジトリ Secret 登録を自動で行う
-   - 手動で登録する場合は **Settings > Secrets and variables > Actions** に
-     `ANTHROPIC_API_KEY` を追加してもよい。`CLAUDE_CODE_OAUTH_TOKEN` を使う場合は
-     両 workflow の `anthropic_api_key:` を `claude_code_oauth_token:` に差し替える
+   - Claude GitHub App のインストールと、`CLAUDE_CODE_OAUTH_TOKEN`
+     (Max/Pro 契約内課金用 OAuth トークン) のリポジトリ Secret 登録を自動で行う
+   - 両 workflow は既定で `claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}`
+     を参照する。従量 API キーを使う場合は **Settings > Secrets and variables > Actions** に
+     `ANTHROPIC_API_KEY` を登録し、両 workflow の `claude_code_oauth_token:` を
+     `anthropic_api_key:` に差し替える
 2. **Settings > Actions > General** で *Allow GitHub Actions to create and approve pull requests* を有効化
 3. push したリポジトリで実際に conflict した PR を作って動作確認 (`workflow_dispatch` から `scan-pr-conflicts` を手動実行することも可能)
 
