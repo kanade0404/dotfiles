@@ -146,7 +146,8 @@
       "Bash(shellcheck *)",
       "Bash(shellcheck)",
       "Bash(command *)",
-      "Bash(diff *)"
+      "Bash(diff *)",
+      "Bash(od *)"
     ],
     "deny": [
       "Read(.env*)",
