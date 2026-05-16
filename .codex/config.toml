@@ -3,18 +3,18 @@ model_reasoning_effort = "medium"
 approvals_reviewer = "guardian_subagent"
 
 [marketplaces.openai-bundled]
-last_updated = "2026-05-03T02:24:48Z"
+last_updated = "2026-05-15T00:09:50Z"
 source_type = "local"
 source = "/Users/kanade0404/.codex/.tmp/bundled-marketplaces/openai-bundled"
 
 [marketplaces.openai-primary-runtime]
-last_updated = "2026-05-02T13:53:38Z"
+last_updated = "2026-05-14T12:11:23Z"
 source_type = "local"
 source = "/Users/kanade0404/.cache/codex-runtimes/codex-primary-runtime/plugins/openai-primary-runtime"
 
 [marketplaces.claude-plugins-official]
-last_updated = "2026-05-03T08:05:26Z"
-last_revision = "b392f51899343f35a203260a4b344803de236d13"
+last_updated = "2026-05-15T00:09:50Z"
+last_revision = "1a2f18b05cf5652fd25403e8d229fc884fb84103"
 source_type = "git"
 source = "https://github.com/anthropics/claude-plugins-official.git"
 
@@ -124,7 +124,13 @@ enabled = true
 [plugins."google-drive@openai-curated"]
 enabled = true
 
-[plugins."browser-use@openai-bundled"]
+[plugins."browser@openai-bundled"]
+enabled = true
+
+[plugins."chrome@openai-bundled"]
+enabled = true
+
+[plugins."computer-use@openai-bundled"]
 enabled = true
 
 [projects."/Users/kanade0404/work/dotfiles"]
