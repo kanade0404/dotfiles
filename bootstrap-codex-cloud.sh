@@ -11,9 +11,11 @@ warn() { printf '\033[1;33m!!\033[0m %s\n' "$*" >&2; }
 die() { printf '\033[1;31mERROR:\033[0m %s\n' "$*" >&2; exit 1; }
 
 find_project_dir() {
-  if [ -n "${PROJECT_DIR:-}" ]; then
+  if [ -n "${PROJECT_DIR:-}" ] && [ -f "$PROJECT_DIR/package.json" ]; then
     printf '%s\n' "$PROJECT_DIR"
     return
+  elif [ -n "${PROJECT_DIR:-}" ]; then
+    warn "Ignoring PROJECT_DIR without package.json: $PROJECT_DIR"
   fi
 
   if [ -f package.json ]; then
