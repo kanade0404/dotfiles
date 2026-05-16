@@ -5,5 +5,7 @@ pre-commit:
   commands:
     markdownlint:
       # ステージ済みの *.md のみ検査 (既存の無関係ファイルは巻き込まない)。
-      glob: "*.md"
+      # glob は gobwas/glob で `*` が `/` を跨がないため `**/*.md` で
+      # サブディレクトリも対象にする (lint:md スクリプトと挙動を一致)。
+      glob: "**/*.md"
       run: bunx markdownlint-cli2 {staged_files}

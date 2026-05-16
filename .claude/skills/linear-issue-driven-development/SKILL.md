@@ -66,15 +66,18 @@ orchestrator (routine prompt 側) が GraphQL で 1 件選んで JSON を渡す:
 手動 `/linear-issue` の併走など) が同じ `claude:ready` issue をほぼ同時取得すると
 両方が処理を始める。これを防ぐため必ず以下のロック取得検証を行う:
 
+0. issue の labels を取得し、`claude:done` / `claude:failed` が既に付いて
+   いれば処理済み。lock marker を書く前に即終了する (無駄な API 呼び出し回避)。
 1. issue に一意 lock marker を書き込む — `commentCreate` で
    `claude-lock: <run-id>` (run-id は uuid) のコメントを 1 件付ける。
-2. `issueAddLabel` で `claude:in-progress` を付与する。
-3. issue を再取得し、`comments` を作成時刻昇順で見て **最古の `claude-lock:`
-   コメントが自分の run-id か** を確認する。
+2. `issueRemoveLabel` で `claude:ready` を外し、`issueAddLabel` で
+   `claude:in-progress` を付与する (張り替えを atomic に完了させる)。
+3. issue を再取得し、`comments(orderBy: { field: createdAt, direction: ASC })`
+   で **最古の `claude-lock:` コメントが自分の run-id か** を確認する
+   (順序を非決定にしないため orderBy は必須)。
    - 自分が最古 → ロック取得成功、続行。
    - 他者が最古 → 競合に負け。自分が付けた `claude:in-progress` だけ外して
      何もせず即終了 (exit 0)。
-4. `claude:done` / `claude:failed` が既に付いていれば処理済み。即終了する。
 
 完了時に `claude:done`, 失敗時に `claude:failed` に張り替える (どちらの場合も
 `claude:in-progress` は外す)。
@@ -218,6 +221,9 @@ mutation { issueLabelCreate(input: { teamId: $team, name: $name }) { issueLabel 
 # label add/remove
 mutation { issueAddLabel(id: $id, labelId: $labelId) { success } }
 mutation { issueRemoveLabel(id: $id, labelId: $labelId) { success } }
+
+# lock 検証用コメント取得 (作成時刻昇順、最古の claude-lock: を判定)
+query { issue(id: $id) { comments(orderBy: { field: createdAt, direction: ASC }) { nodes { id body createdAt } } } }
 
 # state 遷移 (任意)
 mutation { issueUpdate(id: $id, input: { stateId: $stateId }) { success } }
