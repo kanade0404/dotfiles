@@ -1,0 +1,58 @@
+name: Claude Code
+
+# 人間が PR/issue コメント・レビューで @claude を呼び出した際に Claude Code Action を
+# 起動する手動依頼用 workflow (merge 後の追従対応・任意の依頼に使用)。
+# conflict の自動解決は scan-pr-conflicts.yml が claude-code-action を prompt モードで
+# 直接実行するため本 workflow を経由しない (GITHUB_TOKEN 投稿コメントは別 workflow を
+# 起動できない GitHub の制約による設計)。
+#
+# 必要な secrets (Claude Code CLI で `/install-github-app` を実行すると自動登録される):
+#   - CLAUDE_CODE_OAUTH_TOKEN: Claude Max/Pro 契約内課金用 OAuth トークン
+#     (従量 API キーを使う場合は ANTHROPIC_API_KEY を登録し
+#      `claude_code_oauth_token:` を `anthropic_api_key:` に差し替える)
+#   - GITHUB_TOKEN は自動付与
+#
+# 詳細は https://github.com/anthropics/claude-code-action を参照。
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  pull_request_review:
+    types: [submitted]
+  issues:
+    types: [opened, assigned]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  id-token: write
+  actions: read
+
+jobs:
+  claude:
+    name: Claude Code session
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run Claude Code
+        # claude-code-action は trigger_phrase ("@claude") をイベント本文から検出して
+        # 該当しない場合は no-op で終了する。そのため workflow 側で if 判定をする必要はない。
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          trigger_phrase: "@claude"
+          # model/allowed_tools は claude-code-action@v1 の input に存在しないため
+          # claude_args 経由で渡す。model は version 非依存のエイリアス (opus) を使用。
+          claude_args: >-
+            --model opus
+            --allowedTools "Bash(git:*),Bash(gh:*),Bash(npm:*),Bash(pnpm:*),Bash(yarn:*),Bash(bun:*),Bash(node:*),Bash(npx:*),Bash(make:*),Edit,Read,Write,Glob,Grep"
