@@ -15,6 +15,9 @@ jobs:
   #  CI ではソースリポジトリを SHA 固定で checkout して同じ skill を再現する）
   custom-review:
     name: Custom skill review (kanade0404/skills code-review)
+    # fork からの PR では secrets が渡らず CLAUDE_CODE_OAUTH_TOKEN を参照できないため
+    # ノイズになる失敗を避けて同一リポジトリの PR のみ実行する
+    if: ${{ github.event.pull_request.head.repo.fork == false }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -24,12 +27,12 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
 
       - name: Checkout custom skill source (kanade0404/skills)
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           repository: kanade0404/skills
           # 再現性のため commit SHA で固定。更新時は
@@ -49,7 +52,7 @@ jobs:
 
       - name: Run custom code-review skill
         id: custom-review
-        uses: anthropics/claude-code-action@v1
+        uses: anthropics/claude-code-action@51ea8ea73a139f2a74ff649e3092c25a904aed7e # v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # github.repository / PR 番号のみ補間（slug と整数で injection 安全）。
@@ -71,6 +74,9 @@ jobs:
   # built-in: Claude Code 組み込みの /review スラッシュコマンドでレビュー
   builtin-review:
     name: Built-in /review
+    # fork からの PR では secrets が渡らず CLAUDE_CODE_OAUTH_TOKEN を参照できないため
+    # ノイズになる失敗を避けて同一リポジトリの PR のみ実行する
+    if: ${{ github.event.pull_request.head.repo.fork == false }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -80,13 +86,13 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
 
       - name: Run built-in /review
         id: builtin-review
-        uses: anthropics/claude-code-action@v1
+        uses: anthropics/claude-code-action@51ea8ea73a139f2a74ff649e3092c25a904aed7e # v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: '/review ${{ github.repository }}/pull/${{ github.event.pull_request.number }}'
