@@ -65,7 +65,7 @@ RUN_TESTS=1 ./bootstrap-codex-cloud.sh
 
 ## 構成
 
-```
+```text
 nix/
   flake.nix              # エントリポイント (nixpkgs unstable + nix-darwin + home-manager)
   configuration.nix      # system-level packages + locale + user

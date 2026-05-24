@@ -79,6 +79,13 @@ if [ -d "$DOTFILES/.claude/skills" ] && [ "$(ls -A "$DOTFILES/.claude/skills" 2>
   done
 fi
 
+echo "==> Installing git hooks (lefthook)"
+if command -v lefthook >/dev/null 2>&1 && [ -d "$DOTFILES/.git" ]; then
+  (cd "$DOTFILES" && lefthook install)
+else
+  echo "    skipped (lefthook not found or not a git repo)"
+fi
+
 echo "==> Linking legacy files"
 ln -sf "$DOTFILES/.gitmessage" "$HOME/.gitmessage"
 ln -sf "$DOTFILES/.gitignore" "$HOME/.gitignore"

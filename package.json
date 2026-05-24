@@ -3,10 +3,12 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "test": "bun test"
+    "test": "bun test",
+    "lint:md": "markdownlint-cli2 \"**/*.md\""
   },
   "devDependencies": {
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "markdownlint-cli2": "0.22.1"
   },
   "peerDependencies": {
     "typescript": "5.9.3"

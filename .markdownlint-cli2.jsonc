@@ -1,0 +1,25 @@
+{
+  // markdownlint-cli2 config — CodeRabbit CI が使う markdownlint-cli2 と揃える。
+  "config": {
+    "default": true,
+    // 日本語の散文 + コードブロックで行長制限は実用的でないため無効化
+    "MD013": false,
+    // 同一階層でのみ見出し重複を禁止 (手順書で "注意" 等が再出するため)
+    "MD024": { "siblings_only": true },
+    // 末尾の絵文字 prefix コミット例などで許容したい場合に備え句読点は緩める
+    "MD026": false,
+    // テーブルの pipe 周りスペースは整形の好みであり正しさではない (repo 全体で
+    // compact/loose 混在。CI の本質は MD040 等の構造的エラー検出)
+    "MD060": false
+  },
+  "globs": ["**/*.md"],
+  "ignores": [
+    "node_modules",
+    // 外部から取り込んだ skill バンドル (本リポジトリで著者管理していない)
+    ".claude/skills/postgres/**",
+    ".claude/skills/mysql/**",
+    ".claude/plugins/**",
+    ".claude-plugin/**",
+    "**/CHANGELOG.md"
+  ]
+}
