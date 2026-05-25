@@ -13,8 +13,8 @@ source_type = "local"
 source = "/Users/kanade0404/.cache/codex-runtimes/codex-primary-runtime/plugins/openai-primary-runtime"
 
 [marketplaces.claude-plugins-official]
-last_updated = "2026-05-15T00:09:50Z"
-last_revision = "1a2f18b05cf5652fd25403e8d229fc884fb84103"
+last_updated = "2026-05-24T14:07:57Z"
+last_revision = "3449c10cd1f254c2529a4a7e96a094ef118a00a5"
 source_type = "git"
 source = "https://github.com/anthropics/claude-plugins-official.git"
 
@@ -95,6 +95,9 @@ enabled = true
 [plugins."serena@claude-plugins-official"]
 enabled = true
 
+[plugins."serena@claude-plugins-official".mcp_servers.serena.tools.write_memory]
+approval_mode = "approve"
+
 [plugins."skill-creator@claude-plugins-official"]
 enabled = true
 
@@ -137,6 +140,9 @@ enabled = true
 trust_level = "trusted"
 
 [projects."/Users/kanade0404/work/skills"]
+trust_level = "trusted"
+
+[projects."/Users/kanade0404/work/agegis"]
 trust_level = "trusted"
 
 [tui]
