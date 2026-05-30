@@ -1,6 +1,6 @@
 ---
 title: InnoDB Row Locking Gotchas
-description: Gap locks, next-key locks, and surprise escalation
+description: Gap locks and next-key locks; InnoDB does not automatically escalate row locks
 tags: mysql, innodb, locking, gap-locks, next-key-locks, concurrency
 ---
 

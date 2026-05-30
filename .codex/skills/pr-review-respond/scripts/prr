@@ -39,19 +39,19 @@ shift || true
 
 case "$cmd" in
   fetch)
-    exec "$SCRIPT_DIR/fetch_threads.sh" "$@"
+    exec bash "$SCRIPT_DIR/fetch_threads.sh" "$@"
     ;;
   reply)
-    exec "$SCRIPT_DIR/reply_thread.sh" "$@"
+    exec bash "$SCRIPT_DIR/reply_thread.sh" "$@"
     ;;
   resolve)
-    exec "$SCRIPT_DIR/resolve_thread.sh" "$@"
+    exec bash "$SCRIPT_DIR/resolve_thread.sh" "$@"
     ;;
   summary)
-    exec "$SCRIPT_DIR/post_summary.sh" "$@"
+    exec bash "$SCRIPT_DIR/post_summary.sh" "$@"
     ;;
   wait-ci)
-    exec "$SCRIPT_DIR/wait_ci.sh" "$@"
+    exec bash "$SCRIPT_DIR/wait_ci.sh" "$@"
     ;;
   help|--help|-h)
     usage

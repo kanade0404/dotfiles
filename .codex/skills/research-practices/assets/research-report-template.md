@@ -167,4 +167,4 @@ BibTeX / CSL-JSON 形式で管理している場合はリンク:
 ### 関連資料
 
 - プロジェクト内: `docs/research-practices.md`
-- スキル: `.claude/skills/research-practices/`
+- スキル: `.codex/skills/research-practices/`

@@ -58,7 +58,7 @@ ROLLBACK;
 
 ## pgvector
 
-- **埋め込みの決定性**。`embedding_model` と `embedding_version` カラムを持つ。テストは固定埋め込み（事前計算 JSON）を fixture として使い、モデルの升バンプがサイレントに recall を変えないようにする。
+- **埋め込みの決定性**。`embedding_model` と `embedding_version` カラムを持つ。テストは固定埋め込み（事前計算 JSON）を fixture として使い、モデルのメジャーバンプがサイレントに recall を変えないようにする。
 - **距離メトリック**がインデックスと一致していること（`vector_cosine_ops` / `vector_l2_ops` / `vector_ip_ops`）。不一致は negative ケースとしてテストする。
 - **インデックス使用の確認**。PR がインデックス追加を含むなら、query planner が実際にそれを使うか `EXPLAIN (FORMAT JSON)` で確認し、`Index Scan using ...` が現れることを assert する。
 - **recall 閾値**。関連性既知の golden dataset に対して `recall@10`, `nDCG@10` が設定済み floor を下回ったら CI fail。HNSW と IVFFlat で別閾値を設定する。

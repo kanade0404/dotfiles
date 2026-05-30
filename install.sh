@@ -53,6 +53,16 @@ fi
 # skills: symlink each generated skill directory (1 skill = 1 dir with SKILL.md + assets)
 if [ -d "$DOTFILES/.codex/skills" ] && [ "$(ls -A "$DOTFILES/.codex/skills" 2>/dev/null)" ]; then
   mkdir -p "$HOME/.codex/skills"
+  for existing in "$HOME/.codex/skills/"*; do
+    [ -e "$existing" ] || [ -L "$existing" ] || continue
+    [ -L "$existing" ] || continue
+    link_target="$(readlink "$existing")"
+    case "$link_target" in
+      "$DOTFILES/.codex/skills/"*)
+        [ -e "$link_target" ] || rm -f "$existing"
+        ;;
+    esac
+  done
   for d in "$DOTFILES/.codex/skills/"*/; do
     if [ -d "$d" ]; then
       target="$HOME/.codex/skills/$(basename "$d")"

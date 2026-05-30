@@ -43,6 +43,8 @@
 
 set -euo pipefail
 
+export NO_COLOR=1 CLICOLOR=0 CLICOLOR_FORCE=0 GH_NO_UPDATE_NOTIFIER=1
+
 if [ "$#" -ne 1 ]; then
   echo "usage: $0 <pr-number>" >&2
   exit 2
