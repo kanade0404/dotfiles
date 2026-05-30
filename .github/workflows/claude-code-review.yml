@@ -87,8 +87,13 @@ jobs:
           # identical-content 検証 (OIDC) を回避できる。GITHUB_TOKEN は自動付与され
           # 追加 secret は不要。Anthropic 認証は上の oauth_token が担うため併用可。
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          # サマリ(総評)を 1 つの固定コメントとして push 毎に更新し続ける。
-          # pull_request イベント専用の機能で、これにより毎回新規コメントを作らない。
+          # サマリ(総評)を 1 つの固定コメントとして投稿し更新し続ける設定。
+          # - track_progress: tracking (進捗/サマリ) コメントを作成し、Claude の
+          #   最終メッセージをそこに反映する。これが無いと agent モードでは
+          #   サマリコメントがどこにも投稿されない (個別指摘の inline だけになる)。
+          # - use_sticky_comment: 上記コメントを push 毎に新規作成せず同一コメントを
+          #   更新し続ける (pull_request イベント専用)。
+          track_progress: true
           use_sticky_comment: true
           # github.repository / PR 番号のみ補間（slug と整数で injection 安全）。
           # base ブランチ等の差分情報は action が注入する PR コンテキストと
@@ -108,9 +113,8 @@ jobs:
 
             1. サマリ（総評）:
                PR 全体の総評・findings の概要・残課題を、あなたの「最終メッセージ」として
-               1 つにまとめてください。このメッセージは sticky comment として
-               同じコメントが更新され続けます。gh pr comment で新しいコメントを
-               作成しないでください（毎回コメントが増えるのを防ぐため）。
+               1 つにまとめてください。この最終メッセージは tracking コメントに反映され、
+               同じコメントが自動で更新され続けます（新規コメントは作られません）。
 
             2. 個別の指摘:
                具体的な指摘は必ず mcp__github_inline_comment__create_inline_comment
