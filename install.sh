@@ -110,7 +110,14 @@ if [ -d "$DOTFILES/.claude/skills" ] && [ "$(ls -A "$DOTFILES/.claude/skills" 2>
     esac
   done
   for d in "$DOTFILES/.claude/skills/"*/; do
-    [ -d "$d" ] && ln -sfn "${d%/}" "$HOME/.claude/skills/$(basename "$d")"
+    if [ -d "$d" ]; then
+      target="$HOME/.claude/skills/$(basename "$d")"
+      if [ -e "$target" ] && [ ! -L "$target" ]; then
+        echo "Error: $target exists and is not a symlink. Move it aside before re-running install.sh." >&2
+        exit 1
+      fi
+      ln -sfn "${d%/}" "$target"
+    fi
   done
 fi
 

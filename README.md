@@ -40,6 +40,8 @@ DOTFILES="$DOTFILES_DIR" bash "$DOTFILES_DIR/install.sh"
 bun run rulesync:skills:update
 ```
 
+`rulesync` を upgrade するときは、`package.json` の devDependency と `rulesync.jsonc` の `$schema` URL を同じバージョンに更新する。
+
 ### worktree から適用する場合
 
 git worktree 上の内容をそのまま Nix / symlink の参照元にしたい場合は、worktree 内で以下を実行します。
