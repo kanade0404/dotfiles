@@ -10,14 +10,28 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # custom: kanade0404/skills の自作 code-review skill でレビュー
+  # kanade0404/skills の自作 code-review skill で 1 ジョブにレビューを統合。
   # （ローカルでは rulesync で .claude/skills/ へ同期している skill。
   #  CI ではソースリポジトリを SHA 固定で checkout して同じ skill を再現する）
-  custom-review:
-    name: Custom skill review (kanade0404/skills code-review)
-    # fork からの PR では secrets が渡らず CLAUDE_CODE_OAUTH_TOKEN を参照できないため
-    # ノイズになる失敗を避けて同一リポジトリの PR のみ実行する
-    if: ${{ github.event.pull_request.head.repo.fork == false }}
+  #
+  # 以前は custom skill / built-in /review の 2 ジョブ構成だったが、
+  #   1. 2 ジョブが同じ action キャッシュ (_actions/anthropics/...) を並行使用して
+  #      "Internal error: directory mismatch" を誘発していた
+  #   2. レビューが二重に走りサマリコメントも 2 つできていた
+  # ため 1 ジョブへ統合した。
+  claude-review:
+    name: Claude Code Review
+    # 異常終了の根本対策:
+    # - fork PR は secrets (CLAUDE_CODE_OAUTH_TOKEN) が渡らず必ず失敗するため除外。
+    # - renovate / dependabot などの bot PR は OIDC トークン交換が
+    #   "App token exchange failed: 401 Unauthorized - Workflow validation failed"
+    #   で必ず失敗する (bot 起動の OIDC トークンは検証を通らない)。
+    #   レビュー対象としても不要なので bot 作成 PR は除外し、恒常的な赤を根絶する。
+    if: >-
+      github.event.pull_request.head.repo.fork == false &&
+      github.actor != 'renovate[bot]' &&
+      github.actor != 'dependabot[bot]' &&
+      github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     # Claude やステップがハングした場合の暴走を防ぐ
     timeout-minutes: 30
@@ -26,6 +40,8 @@ jobs:
       pull-requests: write
       issues: write
       id-token: write
+      # OIDC のワークフロー検証 (App token exchange) を補助するため付与
+      actions: read
 
     steps:
       - name: Checkout repository
@@ -53,13 +69,19 @@ jobs:
           rm -rf .tmp-skills-src
 
       - name: Run custom code-review skill
-        id: custom-review
+        id: claude-review
+        # レビューはあくまで助言。bot 除外で根本原因は潰しているが、
+        # 万一 action 側の一時障害等で異常終了しても PR の CI を失敗扱いにしない安全網。
+        continue-on-error: true
         uses: anthropics/claude-code-action@51ea8ea73a139f2a74ff649e3092c25a904aed7e # v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # サマリ(総評)を 1 つの固定コメントとして push 毎に更新し続ける。
+          # pull_request イベント専用の機能で、これにより毎回新規コメントを作らない。
+          use_sticky_comment: true
           # github.repository / PR 番号のみ補間（slug と整数で injection 安全）。
           # base ブランチ等の差分情報は action が注入する PR コンテキストと
-          # `gh pr diff` に委ねる。
+          # gh pr diff に委ねる。
           prompt: |
             /code-review
 
@@ -68,38 +90,23 @@ jobs:
 
             上記 PR を自作 code-review skill でレビューしてください。
             PR の base ブランチとの差分を対象に Critical / Important / Minor の
-            三分類で findings をまとめ、その結果を PR コメントとして投稿してください。
+            三分類で findings をまとめてください。
+
+            ## レビュー結果の出力方法（厳守）
+            出力は次の 2 種類に必ず分けてください。
+
+            1. サマリ（総評）:
+               PR 全体の総評・findings の概要・残課題を、あなたの「最終メッセージ」として
+               1 つにまとめてください。このメッセージは sticky comment として
+               同じコメントが更新され続けます。gh pr comment で新しいコメントを
+               作成しないでください（毎回コメントが増えるのを防ぐため）。
+
+            2. 個別の指摘:
+               具体的な指摘は必ず mcp__github_inline_comment__create_inline_comment
+               ツールを使い、該当ファイル・該当行へインラインコメントとして残してください。
+               個別行の指摘をサマリ側へ重複して列挙しないでください。
+
+            指摘が無い場合も、その旨をサマリ（最終メッセージ）に記載してください。
           claude_args: |
-            --allowedTools "Task,Read,Bash(git diff:*),Bash(git log:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),mcp__github_inline_comment__create_inline_comment"
-          # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
-
-  # built-in: Claude Code 組み込みの /review スラッシュコマンドでレビュー
-  builtin-review:
-    name: Built-in /review
-    # fork からの PR では secrets が渡らず CLAUDE_CODE_OAUTH_TOKEN を参照できないため
-    # ノイズになる失敗を避けて同一リポジトリの PR のみ実行する
-    if: ${{ github.event.pull_request.head.repo.fork == false }}
-    runs-on: ubuntu-latest
-    # Claude やステップがハングした場合の暴走を防ぐ
-    timeout-minutes: 30
-    permissions:
-      contents: read
-      pull-requests: write
-      issues: write
-      id-token: write
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          fetch-depth: 0
-
-      - name: Run built-in /review
-        id: builtin-review
-        uses: anthropics/claude-code-action@51ea8ea73a139f2a74ff649e3092c25a904aed7e # v1
-        with:
-          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          prompt: '/review ${{ github.repository }}/pull/${{ github.event.pull_request.number }}'
-          claude_args: |
-            --allowedTools "Read,Bash(git diff:*),Bash(git log:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),mcp__github_inline_comment__create_inline_comment"
+            --allowedTools "Task,Read,Bash(git diff:*),Bash(git log:*),Bash(gh pr view:*),Bash(gh pr diff:*),mcp__github_inline_comment__create_inline_comment"
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
