@@ -21,14 +21,20 @@ jobs:
   # ため 1 ジョブへ統合した。
   claude-review:
     name: Claude Code Review
-    # 異常終了の根本対策:
-    # - fork PR は secrets (CLAUDE_CODE_OAUTH_TOKEN) が渡らず必ず失敗するため除外。
-    # - renovate / dependabot などの bot PR は OIDC トークン交換が
-    #   "App token exchange failed: 401 Unauthorized - Workflow validation failed"
-    #   で必ず失敗する (bot 起動の OIDC トークンは検証を通らない)。
-    #   これが root cause。レビュー対象としても不要なので bot 作成 PR を除外し、
-    #   恒常的な赤を根絶する。permissions は claude-code-action の標準セット
-    #   (contents/pull-requests/issues/id-token) のみで十分。
+    # 異常終了で PR の CI を赤くしないための設計:
+    # - 主因: claude-code-action は OIDC→GitHub App トークン交換時に
+    #   「ワークフローファイルが default ブランチと同一内容であること」を検証する。
+    #   そのため claude-code-review.yml 自身を変更する PR では bot/人間を問わず
+    #   "App token exchange failed: 401 - Workflow validation failed" で必ず失敗する。
+    #   この制約は action 側の仕様で回避できないため、Run ステップに
+    #   continue-on-error: true を付け、レビューが失敗しても CI を赤にしない
+    #   (レビューは助言であり PR をブロックすべきでないため妥当な割り切り)。
+    # - fork PR は secrets (CLAUDE_CODE_OAUTH_TOKEN) が渡らず必ず失敗する。
+    # - renovate / dependabot などの bot PR もレビュー不要。
+    #   ノイズ低減のため fork / bot PR は下記 if で除外する
+    #   (※これは異常終了の根本対策ではなく副次的なクリーンアップ)。
+    # permissions は claude-code-action の標準セット
+    # (contents/pull-requests/issues/id-token) のみで十分。
     if: >-
       github.event.pull_request.head.repo.fork == false &&
       github.actor != 'renovate[bot]' &&
