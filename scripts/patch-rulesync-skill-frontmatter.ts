@@ -212,7 +212,6 @@ for (const root of generatedRoots) {
   await patchFile(`${root}/skill-builder/SKILL.md`, [
     { from: "`.claude/skills/<name>/SKILL.md` または top-level `<name>/SKILL.md`", to: "`.codex/skills/<name>/SKILL.md` または rulesync source `skills/<name>/SKILL.md`" },
     { from: "- consumer プロジェクト形式: `.claude/skills/<name>/SKILL.md`", to: "- consumer プロジェクト形式: `.codex/skills/<name>/SKILL.md`" },
-    { from: "skill カタログ形式 (rulesync 配布元): `skills/<name>/SKILL.md`", to: "skill カタログ形式 (rulesync 配布元): `skills/<name>/SKILL.md`" },
     { from: "`evals/<skill>-trigger-results-<date>.json` + description 改訂案", to: "`evals/<skill>-trigger-results-<date>.jsonl` (JSON Lines) + description 改訂案" },
   ], required);
 
