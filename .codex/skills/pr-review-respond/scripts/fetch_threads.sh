@@ -64,6 +64,7 @@ while :; do
   if [ -n "$cursor" ]; then
     args+=(-F cursor="$cursor")
   fi
+  # shellcheck disable=SC2016
   resp=$(gh api graphql "${args[@]}" -f query='query($owner:String!, $repo:String!, $pr:Int!, $cursor:String) {
     repository(owner:$owner, name:$repo) {
       pullRequest(number:$pr) {
@@ -104,6 +105,7 @@ issue_comments=$(gh api --paginate "repos/$owner/$repo/issues/$pr/comments" \
   --jq '[.[] | {id, author: .user.login, body, url: .html_url, created_at}]' \
   | jq -s 'add // []')
 
+# shellcheck disable=SC2016
 vendor_filter='
 def vendor(login):
   (login // "" | ascii_downcase) as $l

@@ -2,6 +2,10 @@ const patches = [
   ".rulesync/skills/.curated/pr-review-respond/SKILL.md",
 ];
 
+const shellcheckPatches = [
+  ".rulesync/skills/.curated/pr-review-respond/scripts/fetch_threads.sh",
+];
+
 for (const path of patches) {
   const file = Bun.file(path);
   if (!(await file.exists())) {
@@ -33,4 +37,28 @@ for (const path of patches) {
     `---\n${lines.join("\n")}\n---`,
   );
   await Bun.write(path, patched);
+}
+
+for (const path of shellcheckPatches) {
+  const file = Bun.file(path);
+  if (!(await file.exists())) {
+    continue;
+  }
+
+  let text = await file.text();
+  if (!text.includes("# shellcheck disable=SC2016\n  resp=$(gh api graphql")) {
+    text = text.replace(
+      "  resp=$(gh api graphql",
+      "  # shellcheck disable=SC2016\n  resp=$(gh api graphql",
+    );
+  }
+
+  if (!text.includes("# shellcheck disable=SC2016\nvendor_filter='")) {
+    text = text.replace(
+      "\nvendor_filter='",
+      "\n# shellcheck disable=SC2016\nvendor_filter='",
+    );
+  }
+
+  await Bun.write(path, text);
 }
