@@ -87,17 +87,13 @@ jobs:
           # identical-content 検証 (OIDC) を回避できる。GITHUB_TOKEN は自動付与され
           # 追加 secret は不要。Anthropic 認証は上の oauth_token が担うため併用可。
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          # サマリ(総評)を 1 つの固定コメントとして投稿し更新し続ける設定。
-          # - track_progress: tracking (進捗/サマリ) コメントを作成し、Claude の
-          #   最終メッセージをそこに反映する。これが無いと agent モードでは
-          #   サマリコメントがどこにも投稿されない (個別指摘の inline だけになる)。
-          # - use_sticky_comment: 上記コメントを push 毎に新規作成せず同一コメントを
-          #   更新し続ける (pull_request イベント専用)。
-          track_progress: true
-          use_sticky_comment: true
+          # サマリは action の use_sticky_comment / track_progress を使わない。
+          # 理由: use_sticky_comment は claude[bot] 認証専用で、上記の通り
+          # github_token (= github-actions[bot]) を渡す構成では既存コメントの
+          # 照合が外れ、run 毎に新規コメントが増えてしまう (公式 FAQ 記載)。
+          # 代わりに prompt 内で隠しマーカー付きコメントを自前で PATCH/POST して
+          # 「単一コメントを更新し続ける」を実現する (下記 prompt 参照)。
           # github.repository / PR 番号のみ補間（slug と整数で injection 安全）。
-          # base ブランチ等の差分情報は action が注入する PR コンテキストと
-          # gh pr diff に委ねる。
           prompt: |
             /code-review
 
@@ -111,19 +107,29 @@ jobs:
             ## レビュー結果の出力方法（厳守）
             出力は次の 2 種類に必ず分けてください。
 
-            1. サマリ（総評）:
-               PR 全体の総評・findings の概要・残課題を、あなたの「最終メッセージ」として
-               1 つにまとめてください。この最終メッセージは tracking コメントに反映され、
-               同じコメントが自動で更新され続けます（新規コメントは作られません）。
+            ### 1. サマリ（総評）— 単一コメントを更新し続ける
+            PR 全体の総評・findings の概要・残課題を 1 つの「サマリコメント」に
+            まとめます。run のたびに新規コメントを作らず、既存のサマリコメントを
+            更新してください。手順:
+            1. サマリ本文の先頭に必ず次の隠しマーカー行を含める:
+               <!-- claude-code-review:summary -->
+            2. 既存コメントを取得:
+               gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" --paginate
+            3. body にそのマーカーを含むコメントを探す。
+            4-a. 見つかれば、その comment id に対して更新 (PATCH):
+                 gh api --method PATCH "repos/${{ github.repository }}/issues/comments/<ID>" -F body=@<file>
+            4-b. 見つからなければ新規作成 (POST):
+                 gh api --method POST "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" -F body=@<file>
+            ※ body は改行を含むため一時ファイル経由 (-F body=@<file>) で渡すこと。
 
-            2. 個別の指摘:
-               具体的な指摘は必ず mcp__github_inline_comment__create_inline_comment
-               ツールを使い、該当ファイル・該当行へインラインコメントとして残してください。
-               個別行の指摘をサマリ側へ重複して列挙しないでください。
+            ### 2. 個別の指摘 — 該当行へインライン
+            具体的な指摘は必ず mcp__github_inline_comment__create_inline_comment
+            ツールを使い、該当ファイル・該当行へインラインコメントとして残してください。
+            個別行の指摘をサマリ側へ重複して列挙しないでください。
 
-            指摘が無い場合も、その旨をサマリ（最終メッセージ）に記載してください。
+            指摘が無い場合も、その旨をサマリコメント (マーカー付き) に記載して更新してください。
           claude_args: |
-            --allowedTools "Task,Read,Bash(git diff:*),Bash(git log:*),Bash(gh pr view:*),Bash(gh pr diff:*),mcp__github_inline_comment__create_inline_comment"
+            --allowedTools "Task,Read,Bash(git diff:*),Bash(git log:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh api:*),mcp__github_inline_comment__create_inline_comment"
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
 
       # continue-on-error でレビュー失敗を CI に波及させない代わりに、
