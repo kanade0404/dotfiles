@@ -116,11 +116,10 @@ bun test
 | ファイル | 役割 |
 |---------|-----|
 | `.github/workflows/scan-pr-conflicts.yml` | 毎日深夜 (JST 00:00 / UTC 15:00) に open PR を走査。`mergeable: CONFLICTING` の PR ごとに matrix job (= 1 session) を割り当て、その job 内で [`anthropics/claude-code-action`](https://github.com/anthropics/claude-code-action) を直接実行して conflict を解決 |
-| `.github/workflows/claude.yml` | 人間が PR/issue で `@claude` メンションした際に手動で claude-code-action を起動 (merge 後の追従対応・手動依頼用) |
 | `.claude/skills/pr-conflict-resolver/SKILL.md` | conflict 解決の安全手順 (checkout → merge → 解決 → lock 再生成 → 検証 → push → 報告) を Claude に渡す skill |
 
 > **設計メモ**: GitHub の再帰防止ポリシーにより `GITHUB_TOKEN` で投稿したコメントは
-> 別 workflow の `issue_comment` を起動しません。そのため scan は「コメントで claude.yml を起こす」のではなく
+> 別 workflow の `issue_comment` を起動しません。そのため scan は「コメントで別 workflow を起こす」のではなく
 > matrix job 内で claude-code-action を `prompt` モードで直接実行します (PAT 不要)。
 
 ### 有効化手順
@@ -128,9 +127,9 @@ bun test
 1. Claude Code CLI でこのリポジトリ上で `/install-github-app` を実行
    - Claude GitHub App のインストールと、`CLAUDE_CODE_OAUTH_TOKEN`
      (Max/Pro 契約内課金用 OAuth トークン) のリポジトリ Secret 登録を自動で行う
-   - 両 workflow は既定で `claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}`
+   - `scan-pr-conflicts.yml` は既定で `claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}`
      を参照する。従量 API キーを使う場合は **Settings > Secrets and variables > Actions** に
-     `ANTHROPIC_API_KEY` を登録し、両 workflow の `claude_code_oauth_token:` を
+     `ANTHROPIC_API_KEY` を登録し、workflow の `claude_code_oauth_token:` を
      `anthropic_api_key:` に差し替える
 2. **Settings > Actions > General** で *Allow GitHub Actions to create and approve pull requests* を有効化
 3. push したリポジトリで実際に conflict した PR を作って動作確認 (`workflow_dispatch` から `scan-pr-conflicts` を手動実行することも可能)
@@ -172,9 +171,6 @@ deep-night cron ──▶ scan-pr-conflicts
                                └─ pr-conflict-resolver skill に従って解決 → push
                                       │
                                       └─ CI 緑になったら人手で merge
-
-@claude コメント (人間) ──▶ claude.yml (issue_comment event)
-                              └─ claude-code-action を起動 (手動依頼・追従対応用)
 ```
 
 ## 開発環境
