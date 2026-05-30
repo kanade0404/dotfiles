@@ -1,16 +1,13 @@
 const generatedRoots = [
   ".rulesync/skills/.curated",
-  ".codex/skills",
 ];
 
 const patches = [
   ".rulesync/skills/.curated/pr-review-respond/SKILL.md",
-  ".codex/skills/pr-review-respond/SKILL.md",
 ];
 
 const shellcheckPatches = [
   ".rulesync/skills/.curated/pr-review-respond/scripts/fetch_threads.sh",
-  ".codex/skills/pr-review-respond/scripts/fetch_threads.sh",
 ];
 
 type Replacement = {
@@ -47,6 +44,37 @@ async function patchFile(path: string, replacements: Replacement[], required = f
   if (changed) {
     await Bun.write(path, text);
   }
+}
+
+async function patchPostgresQueryPatterns(path: string, required: boolean) {
+  const file = Bun.file(path);
+  if (!(await file.exists())) {
+    if (required) {
+      throw new Error(`patch target not found: ${path}`);
+    }
+    return;
+  }
+
+  let text = await file.text();
+  const normalized = text
+    .replace(/\busers{2,}\b/g, "users")
+    .replace(/\borders{2,}\b/g, "orders");
+  if (normalized !== text) {
+    await Bun.write(path, normalized);
+  }
+
+  await patchFile(path, [
+    { from: "SELECT * FROM user WHERE status = 'active';", to: "SELECT * FROM users WHERE status = 'active';" },
+    { from: "SELECT id, name, email FROM user WHERE status = 'active';", to: "SELECT id, name, email FROM users WHERE status = 'active';" },
+    { from: "SELECT id, (SELECT COUNT(*) FROM order WHERE order.user_id = user.id) FROM user;", to: "SELECT id, (SELECT COUNT(*) FROM orders WHERE orders.user_id = users.id) FROM users;" },
+    { from: "SELECT u.id, COUNT(o.id) FROM user u LEFT JOIN order o ON o.user_id = u.id GROUP BY u.id;", to: "SELECT u.id, COUNT(o.id) FROM users u LEFT JOIN orders o ON o.user_id = u.id GROUP BY u.id;" },
+    { from: "SELECT * FROM user WHERE date_trunc('day', created_at) = '2023-01-01';", to: "SELECT * FROM users WHERE date_trunc('day', created_at) = '2023-01-01';" },
+    { from: "SELECT * FROM user WHERE created_at >= '2023-01-01' AND created_at < '2023-01-02';", to: "SELECT * FROM users WHERE created_at >= '2023-01-01' AND created_at < '2023-01-02';" },
+    { from: '    cursor.execute("SELECT name FROM user WHERE id = %s", (uid,))', to: '    cursor.execute("SELECT name FROM users WHERE id = %s", (uid,))' },
+    { from: 'cursor.execute("SELECT id, name FROM user WHERE id = ANY(%s)", (list(user_ids),))', to: 'cursor.execute("SELECT id, name FROM users WHERE id = ANY(%s)", (list(user_ids),))' },
+    { from: '# cursor.execute("SELECT id, name FROM user WHERE id IN %s", (tuple(user_ids),))', to: '# cursor.execute("SELECT id, name FROM users WHERE id IN %s", (tuple(user_ids),))' },
+    { from: "SELECT id, name FROM user u\nWHERE EXISTS (SELECT 1 FROM order o WHERE o.user_id = u.id AND o.total > 100);", to: "SELECT id, name FROM users u\nWHERE EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.id AND o.total > 100);" },
+  ], required);
 }
 
 for (const path of patches) {
@@ -168,13 +196,7 @@ for (const root of generatedRoots) {
     { from: "CREATE TABLE order_default PARTITION OF order DEFAULT;", to: "CREATE TABLE orders_default PARTITION OF orders DEFAULT;" },
   ], required);
 
-  await patchFile(`${root}/postgres/references/query-patterns.md`, [
-    { from: "FROM user", to: "FROM users" },
-    { from: "FROM order", to: "FROM orders" },
-    { from: "JOIN order", to: "JOIN orders" },
-    { from: "order.user_id", to: "orders.user_id" },
-    { from: "user.id", to: "users.id" },
-  ], required);
+  await patchPostgresQueryPatterns(`${root}/postgres/references/query-patterns.md`, required);
 
   await patchFile(`${root}/postgres/references/schema-design.md`, [
     { from: "CREATE TABLE user (\n", to: "CREATE TABLE users (\n" },
