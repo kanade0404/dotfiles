@@ -3,6 +3,8 @@
   "type": "module",
   "private": true,
   "scripts": {
+    "rulesync:skills": "bunx rulesync install --mode rulesync && bun scripts/patch-rulesync-skill-frontmatter.ts && bunx rulesync generate --targets codexcli --features skills",
+    "rulesync:skills:update": "bunx rulesync install --mode rulesync --update && bun scripts/patch-rulesync-skill-frontmatter.ts && bunx rulesync generate --targets codexcli --features skills",
     "test": "bun test",
     "lint:md": "markdownlint-cli2 \"**/*.md\""
   },

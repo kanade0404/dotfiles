@@ -3,6 +3,7 @@
 Thumbs.db
 .bundle
 node_modules/
+.rulesync/skills/.curated/
 
 # Claude Code: セッション単位の一時ファイル
 .claude/plans/

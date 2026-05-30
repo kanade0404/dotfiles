@@ -10,17 +10,6 @@
           }
         ]
       }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "mkdir -p ~/.codex && jq -r '\"[\" + (now | strftime(\"%Y-%m-%d %H:%M:%S\")) + \"] [\" + (.cwd // \"unknown\") + \"] \" + .tool_input.command' >> ~/.codex/command_history.log"
-          }
-        ]
-      }
     ]
   }
 }

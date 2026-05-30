@@ -41,6 +41,7 @@
     dprint
     pandoc
     plantuml
+    shellcheck
     sqlc
 
     # Networking

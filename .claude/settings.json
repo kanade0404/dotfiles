@@ -316,17 +316,6 @@
           }
         ]
       }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "jq -r '\"[\" + (now | strftime(\"%Y-%m-%d %H:%M:%S\")) + \"] [\" + (.cwd // \"unknown\") + \"] \" + .tool_input.command' >> ~/.claude/command_history.log"
-          }
-        ]
-      }
     ]
   },
   "statusLine": {

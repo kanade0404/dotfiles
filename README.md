@@ -31,6 +31,10 @@ sudo darwin-rebuild switch --flake "$DOTFILES_DIR/nix"
 
 # Nix 管理外ファイルの symlink 再作成 (.config/, .local/bin/, .claude/ 等変更時)
 DOTFILES="$DOTFILES_DIR" bash "$DOTFILES_DIR/install.sh"
+
+# Codex skills を rulesync で更新して ~/.codex/skills に反映
+bun run rulesync:skills
+DOTFILES="$DOTFILES_DIR" bash "$DOTFILES_DIR/install.sh"
 ```
 
 ### worktree から適用する場合
@@ -75,6 +79,8 @@ nix/
 
 .config/nvim/            # Neovim (LazyVim)
 .config/ghostty/config   # Ghostty terminal
+.codex/                  # Codex user settings, hooks, commands
+.codex/skills/           # Codex skills (rulesync generated)
 .claude/                 # Claude Code (settings, hooks, commands, skills)
 .github/workflows/       # PR conflict 自動解決 workflows
 .local/bin/              # ヘルパースクリプト (tmux-project, gw)
@@ -93,6 +99,8 @@ install.sh               # Nix 管理外ファイルの symlink 作成
 | Shell / Git / tmux | `nix/home.nix` | `darwin-rebuild switch` |
 | Neovim | `.config/nvim/` | `install.sh` |
 | Ghostty | `.config/ghostty/` | `install.sh` |
+| Codex skills | `rulesync.jsonc` → `.codex/skills/` | `bun run rulesync:skills` + `install.sh` |
+| Codex settings/hooks/commands | `.codex/` | `install.sh` |
 | Claude Code | `.claude/` | `install.sh` |
 
 ## Claude Code Hooks

@@ -50,6 +50,20 @@ if [ -d "$DOTFILES/.codex/commands" ] && [ "$(ls -A "$DOTFILES/.codex/commands" 
     [ -f "$f" ] && ln -sf "$f" "$HOME/.codex/commands/$(basename "$f")"
   done
 fi
+# skills: symlink each generated skill directory (1 skill = 1 dir with SKILL.md + assets)
+if [ -d "$DOTFILES/.codex/skills" ] && [ "$(ls -A "$DOTFILES/.codex/skills" 2>/dev/null)" ]; then
+  mkdir -p "$HOME/.codex/skills"
+  for d in "$DOTFILES/.codex/skills/"*/; do
+    if [ -d "$d" ]; then
+      target="$HOME/.codex/skills/$(basename "$d")"
+      if [ -e "$target" ] && [ ! -L "$target" ]; then
+        echo "Error: $target exists and is not a symlink. Move it aside before re-running install.sh." >&2
+        exit 1
+      fi
+      ln -sfn "${d%/}" "$target"
+    fi
+  done
+fi
 
 echo "==> Linking Claude Code user settings"
 mkdir -p "$HOME/.claude"
