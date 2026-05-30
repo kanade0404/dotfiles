@@ -100,6 +100,15 @@ fi
 # skills: symlink each skill directory (1 skill = 1 dir with SKILL.md + assets)
 if [ -d "$DOTFILES/.claude/skills" ] && [ "$(ls -A "$DOTFILES/.claude/skills" 2>/dev/null)" ]; then
   mkdir -p "$HOME/.claude/skills"
+  for existing in "$HOME/.claude/skills/"*; do
+    [ -L "$existing" ] || continue
+    link_target="$(readlink "$existing")"
+    case "$link_target" in
+      "$DOTFILES/.claude/skills/"*)
+        [ -e "$link_target" ] || rm -f "$existing"
+        ;;
+    esac
+  done
   for d in "$DOTFILES/.claude/skills/"*/; do
     [ -d "$d" ] && ln -sfn "${d%/}" "$HOME/.claude/skills/$(basename "$d")"
   done

@@ -3,14 +3,15 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "rulesync:skills": "bunx rulesync install --mode rulesync && bun scripts/patch-rulesync-skill-frontmatter.ts && bunx rulesync generate --targets codexcli --features skills",
-    "rulesync:skills:update": "bunx rulesync install --mode rulesync --update && bun scripts/patch-rulesync-skill-frontmatter.ts && bunx rulesync generate --targets codexcli --features skills",
+    "rulesync:skills": "bun run rulesync install --mode rulesync && bun scripts/patch-rulesync-skill-frontmatter.ts && bun run rulesync generate --targets codexcli --features skills",
+    "rulesync:skills:update": "bun run rulesync install --mode rulesync --update && bun scripts/patch-rulesync-skill-frontmatter.ts && bun run rulesync generate --targets codexcli --features skills",
     "test": "bun test",
     "lint:md": "markdownlint-cli2 \"**/*.md\""
   },
   "devDependencies": {
     "@types/bun": "latest",
-    "markdownlint-cli2": "0.22.1"
+    "markdownlint-cli2": "0.22.1",
+    "rulesync": "8.23.0"
   },
   "peerDependencies": {
     "typescript": "5.9.3"
