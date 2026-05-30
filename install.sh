@@ -1,5 +1,5 @@
 #!/bin/bash
-# install.sh - Symlink dotfiles NOT managed by home-manager
+# install.sh - Install dotfiles NOT managed by home-manager
 #
 # home-manager handles: .zshrc, .gitconfig, tmux.conf, starship.toml, bat config, etc.
 # This script handles: Neovim config (LazyVim), Ghostty, helper scripts, legacy files.
@@ -26,9 +26,12 @@ mkdir -p "$HOME/.local/bin"
 ln -sf "$DOTFILES/.local/bin/tmux-project" "$HOME/.local/bin/tmux-project"
 ln -sf "$DOTFILES/.local/bin/gw" "$HOME/.local/bin/gw"
 
-echo "==> Linking Codex user settings"
+echo "==> Installing Codex user settings"
 mkdir -p "$HOME/.codex"
-ln -sf "$DOTFILES/.codex/config.toml" "$HOME/.codex/config.toml"
+# Replace an old symlink so Codex runtime writes stay in ~/.codex only.
+# Re-running install.sh resets local Codex state such as project trust prompts.
+rm -f "$HOME/.codex/config.toml"
+install -m 600 "$DOTFILES/.codex/config.toml" "$HOME/.codex/config.toml"
 ln -sf "$DOTFILES/.codex/hooks.json" "$HOME/.codex/hooks.json"
 # hooks: directory symlink だと Codex 自身の状態を隠すため、ファイル単位で symlink
 mkdir -p "$HOME/.codex/hooks"
