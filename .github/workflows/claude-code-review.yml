@@ -21,20 +21,20 @@ jobs:
   # ため 1 ジョブへ統合した。
   claude-review:
     name: Claude Code Review
-    # 異常終了で PR の CI を赤くしないための設計:
-    # - 主因: claude-code-action は OIDC→GitHub App トークン交換時に
-    #   「ワークフローファイルが default ブランチと同一内容であること」を検証する。
-    #   そのため claude-code-review.yml 自身を変更する PR では bot/人間を問わず
-    #   "App token exchange failed: 401 - Workflow validation failed" で必ず失敗する。
-    #   この制約は action 側の仕様で回避できないため、Run ステップに
-    #   continue-on-error: true を付け、レビューが失敗しても CI を赤にしない
-    #   (レビューは助言であり PR をブロックすべきでないため妥当な割り切り)。
-    # - fork PR は secrets (CLAUDE_CODE_OAUTH_TOKEN) が渡らず必ず失敗する。
-    # - renovate / dependabot などの bot PR もレビュー不要。
-    #   ノイズ低減のため fork / bot PR は下記 if で除外する
-    #   (※これは異常終了の根本対策ではなく副次的なクリーンアップ)。
+    # 異常終了 (exit 1) の根本対策:
+    # - 真因: github_token を渡さないと claude-code-action は OIDC→GitHub App
+    #   トークン交換を行い、その際「ワークフローが default ブランチと同一内容で
+    #   あること」を検証する。そのため本ワークフロー自身を変更する PR では
+    #   "App token exchange failed: 401 - Workflow validation failed" で必ず失敗し、
+    #   レビューが全く投稿されないまま exit 1 になっていた。
+    #   → 下記 step で github_token を明示的に渡し、App トークン交換 (OIDC 検証) 自体を
+    #     スキップする。これが根本対策で、自己変更 PR でもレビューが正常に走る。
+    # - 保険として Run step に continue-on-error: true も付ける。レビューは助言であり
+    #   一時障害等で落ちても PR の CI を赤にすべきでないため。
+    # - fork PR は secrets (CLAUDE_CODE_OAUTH_TOKEN) が渡らず動かない。renovate /
+    #   dependabot 等の bot PR はレビュー不要。両者はノイズ低減目的で下記 if で除外。
     # permissions は claude-code-action の標準セット
-    # (contents/pull-requests/issues/id-token) のみで十分。
+    # (contents/pull-requests/issues/id-token) で十分。
     if: >-
       github.event.pull_request.head.repo.fork == false &&
       github.actor != 'renovate[bot]' &&
@@ -76,12 +76,17 @@ jobs:
 
       - name: Run custom code-review skill
         id: claude-review
-        # レビューはあくまで助言。bot 除外で根本原因は潰しているが、
-        # 万一 action 側の一時障害等で異常終了しても PR の CI を失敗扱いにしない安全網。
+        # レビューは助言。根本対策 (github_token 明示) で異常終了は解消済みだが、
+        # 万一 action 側の一時障害等で落ちても PR の CI を失敗扱いにしない保険。
         continue-on-error: true
         uses: anthropics/claude-code-action@51ea8ea73a139f2a74ff649e3092c25a904aed7e # v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # github_token を明示的に渡すと action は OIDC→GitHub App トークン交換を
+          # 行わず、このトークンを直接使う。これにより自己変更 PR で 401 となる
+          # identical-content 検証 (OIDC) を回避できる。GITHUB_TOKEN は自動付与され
+          # 追加 secret は不要。Anthropic 認証は上の oauth_token が担うため併用可。
+          github_token: ${{ secrets.GITHUB_TOKEN }}
           # サマリ(総評)を 1 つの固定コメントとして push 毎に更新し続ける。
           # pull_request イベント専用の機能で、これにより毎回新規コメントを作らない。
           use_sticky_comment: true
