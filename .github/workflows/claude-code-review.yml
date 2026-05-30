@@ -147,11 +147,3 @@ jobs:
         if: steps.claude-review.outcome == 'failure'
         run: |
           echo "::warning title=Claude Code Review failed::レビュー step が失敗しました (CI は継続)。OAuth トークン期限切れや action 障害の可能性があります。ログを確認してください。"
-
-      # continue-on-error でレビュー失敗を CI に波及させない代わりに、
-      # 失敗が誰にも気づかれないサイレント化を防ぐため警告として可視化する
-      # (Important 指摘への対応)。CI ステータスは緑のまま、ログ/Annotations に残る。
-      - name: Warn if review step failed
-        if: steps.claude-review.outcome == 'failure'
-        run: |
-          echo "::warning title=Claude Code Review failed::レビュー step が失敗しました (CI は継続)。OAuth トークン期限切れや action 障害の可能性があります。ログを確認してください。"
