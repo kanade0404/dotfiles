@@ -26,7 +26,9 @@ jobs:
     # - renovate / dependabot などの bot PR は OIDC トークン交換が
     #   "App token exchange failed: 401 Unauthorized - Workflow validation failed"
     #   で必ず失敗する (bot 起動の OIDC トークンは検証を通らない)。
-    #   レビュー対象としても不要なので bot 作成 PR は除外し、恒常的な赤を根絶する。
+    #   これが root cause。レビュー対象としても不要なので bot 作成 PR を除外し、
+    #   恒常的な赤を根絶する。permissions は claude-code-action の標準セット
+    #   (contents/pull-requests/issues/id-token) のみで十分。
     if: >-
       github.event.pull_request.head.repo.fork == false &&
       github.actor != 'renovate[bot]' &&
@@ -40,8 +42,6 @@ jobs:
       pull-requests: write
       issues: write
       id-token: write
-      # OIDC のワークフロー検証 (App token exchange) を補助するため付与
-      actions: read
 
     steps:
       - name: Checkout repository
