@@ -13,12 +13,40 @@ const shellcheckPatches = [
 type Replacement = {
   from: string;
   to: string;
+  applied?: string;
+  allowMultipleApplied?: boolean;
 };
 
 const curatedRootExists = await Bun.file(".rulesync/skills/.curated").exists();
 
 function isRequiredTarget(path: string) {
   return curatedRootExists && path.startsWith(".rulesync/skills/.curated/");
+}
+
+function countOccurrences(text: string, needle: string) {
+  if (needle.length === 0) {
+    throw new Error("empty patch marker is not allowed");
+  }
+
+  let count = 0;
+  let offset = 0;
+  while (true) {
+    const index = text.indexOf(needle, offset);
+    if (index === -1) {
+      return count;
+    }
+    count += 1;
+    offset = index + needle.length;
+  }
+}
+
+function replacementAlreadyApplied(path: string, text: string, replacement: Replacement) {
+  const marker = replacement.applied ?? replacement.to;
+  const count = countOccurrences(text, marker);
+  if (count > 1 && !replacement.allowMultipleApplied) {
+    throw new Error(`patch applied marker is ambiguous in ${path}: ${marker}`);
+  }
+  return count > 0;
 }
 
 async function patchFile(path: string, replacements: Replacement[], required = false) {
@@ -32,11 +60,12 @@ async function patchFile(path: string, replacements: Replacement[], required = f
 
   let text = await file.text();
   let changed = false;
-  for (const { from, to } of replacements) {
+  for (const replacement of replacements) {
+    const { from, to } = replacement;
     if (text.includes(from)) {
       text = text.split(from).join(to);
       changed = true;
-    } else if (!text.includes(to)) {
+    } else if (!replacementAlreadyApplied(path, text, replacement)) {
       throw new Error(`patch pattern not found in ${path}: ${from}`);
     }
   }
@@ -56,6 +85,7 @@ async function patchPostgresQueryPatterns(path: string, required: boolean) {
   }
 
   let text = await file.text();
+  // Upstream examples can become userss/orderss after pluralization patches; normalize only those generated typos.
   const normalized = text
     .replace(/\busers{2,}\b/g, "users")
     .replace(/\borders{2,}\b/g, "orders");
@@ -190,7 +220,7 @@ for (const root of generatedRoots) {
   ], required);
 
   await patchFile(`${root}/postgres/references/partitioning.md`, [
-    { from: "CREATE TABLE order (\n", to: "CREATE TABLE orders (\n" },
+    { from: "CREATE TABLE order (\n", to: "CREATE TABLE orders (\n", allowMultipleApplied: true },
     { from: "CREATE TABLE order_us PARTITION OF order FOR VALUES IN ('us');", to: "CREATE TABLE orders_us PARTITION OF orders FOR VALUES IN ('us');" },
     { from: "CREATE TABLE order_eu PARTITION OF order FOR VALUES IN ('eu');", to: "CREATE TABLE orders_eu PARTITION OF orders FOR VALUES IN ('eu');" },
     { from: "CREATE TABLE order_default PARTITION OF order DEFAULT;", to: "CREATE TABLE orders_default PARTITION OF orders DEFAULT;" },
@@ -200,7 +230,7 @@ for (const root of generatedRoots) {
 
   await patchFile(`${root}/postgres/references/schema-design.md`, [
     { from: "CREATE TABLE user (\n", to: "CREATE TABLE users (\n" },
-    { from: "CREATE TABLE order (\n", to: "CREATE TABLE orders (\n" },
+    { from: "CREATE TABLE order (\n", to: "CREATE TABLE orders (\n", allowMultipleApplied: true },
     { from: "CREATE INDEX order_customer_id_idx ON order (customer_id);", to: "CREATE INDEX orders_customer_id_idx ON orders (customer_id);" },
     { from: "e.g., `order_status_check`", to: "e.g., `orders_status_check`" },
   ], required);

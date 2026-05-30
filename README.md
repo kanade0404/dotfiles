@@ -35,6 +35,9 @@ DOTFILES="$DOTFILES_DIR" bash "$DOTFILES_DIR/install.sh"
 # Codex skills を rulesync で更新して ~/.codex/skills に反映
 bun run rulesync:skills
 DOTFILES="$DOTFILES_DIR" bash "$DOTFILES_DIR/install.sh"
+
+# upstream の skill 参照を更新してから再生成
+bun run rulesync:skills:update
 ```
 
 ### worktree から適用する場合
@@ -106,6 +109,8 @@ install.sh               # Nix 管理外ファイルの symlink 作成
 ## Claude Code Hooks
 
 TypeScript 製の PreToolUse hook で Bash コマンドの権限を統合管理。
+
+`PostToolUse` の command history logging は、通常の shell history と重複し、コマンド引数に含まれる機微情報を永続化しやすいため設定しない。履歴収集ではなく、実行前の権限制御を `PreToolUse` hook に寄せる。
 
 - `settings.json` の `permissions.allow/deny/ask` ルールでコマンドを判定
 - シェルコマンドを構文解析（パイプ、`&&`、コマンド置換、ヒアドキュメント等）

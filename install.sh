@@ -54,7 +54,6 @@ fi
 if [ -d "$DOTFILES/.codex/skills" ] && [ "$(ls -A "$DOTFILES/.codex/skills" 2>/dev/null)" ]; then
   mkdir -p "$HOME/.codex/skills"
   for existing in "$HOME/.codex/skills/"*; do
-    [ -e "$existing" ] || [ -L "$existing" ] || continue
     [ -L "$existing" ] || continue
     link_target="$(readlink "$existing")"
     case "$link_target" in
