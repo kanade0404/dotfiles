@@ -33,6 +33,13 @@ mkdir -p "$HOME/.codex"
 rm -f "$HOME/.codex/config.toml"
 install -m 600 "$DOTFILES/.codex/config.toml" "$HOME/.codex/config.toml"
 ln -sf "$DOTFILES/.codex/hooks.json" "$HOME/.codex/hooks.json"
+# rules: Codex execpolicy command permissions
+if [ -d "$DOTFILES/.codex/rules" ] && [ "$(ls -A "$DOTFILES/.codex/rules" 2>/dev/null)" ]; then
+  mkdir -p "$HOME/.codex/rules"
+  for f in "$DOTFILES/.codex/rules/"*; do
+    [ -f "$f" ] && ln -sf "$f" "$HOME/.codex/rules/$(basename "$f")"
+  done
+fi
 # hooks: directory symlink だと Codex 自身の状態を隠すため、ファイル単位で symlink
 mkdir -p "$HOME/.codex/hooks"
 for f in "$DOTFILES/.codex/hooks/"*; do
