@@ -10,75 +10,28 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # custom: kanade0404/skills の自作 code-review skill でレビュー
-  # （ローカルでは rulesync で .claude/skills/ へ同期している skill。
-  #  CI ではソースリポジトリを SHA 固定で checkout して同じ skill を再現する）
-  custom-review:
-    name: Custom skill review (kanade0404/skills code-review)
-    # fork からの PR では secrets が渡らず CLAUDE_CODE_OAUTH_TOKEN を参照できないため
-    # ノイズになる失敗を避けて同一リポジトリの PR のみ実行する
-    if: ${{ github.event.pull_request.head.repo.fork == false }}
-    runs-on: ubuntu-latest
-    # Claude やステップがハングした場合の暴走を防ぐ
-    timeout-minutes: 30
-    permissions:
-      contents: read
-      pull-requests: write
-      issues: write
-      id-token: write
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          fetch-depth: 0
-
-      - name: Checkout custom skill source (kanade0404/skills)
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          repository: kanade0404/skills
-          # 再現性のため commit SHA で固定。更新時は
-          #   gh api repos/kanade0404/skills/commits/master --jq .sha
-          # の結果に差し替える
-          ref: dd4d49e70c0cb27a3e6f7feb99c4a7b85f501eb6
-          path: .tmp-skills-src
-          fetch-depth: 1
-
-      - name: Stage custom code-review skill into .claude/skills
-        run: |
-          set -euo pipefail
-          mkdir -p .claude/skills
-          rm -rf .claude/skills/code-review
-          cp -R .tmp-skills-src/skills/code-review .claude/skills/code-review
-          rm -rf .tmp-skills-src
-
-      - name: Run custom code-review skill
-        id: custom-review
-        uses: anthropics/claude-code-action@51ea8ea73a139f2a74ff649e3092c25a904aed7e # v1
-        with:
-          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          # github.repository / PR 番号のみ補間（slug と整数で injection 安全）。
-          # base ブランチ等の差分情報は action が注入する PR コンテキストと
-          # `gh pr diff` に委ねる。
-          prompt: |
-            /code-review
-
-            REPO: ${{ github.repository }}
-            PR NUMBER: ${{ github.event.pull_request.number }}
-
-            上記 PR を自作 code-review skill でレビューしてください。
-            PR の base ブランチとの差分を対象に Critical / Important / Minor の
-            三分類で findings をまとめ、その結果を PR コメントとして投稿してください。
-          claude_args: |
-            --allowedTools "Task,Read,Bash(git diff:*),Bash(git log:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),mcp__github_inline_comment__create_inline_comment"
-          # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
-
-  # built-in: Claude Code 組み込みの /review スラッシュコマンドでレビュー
-  builtin-review:
-    name: Built-in /review
-    # fork からの PR では secrets が渡らず CLAUDE_CODE_OAUTH_TOKEN を参照できないため
-    # ノイズになる失敗を避けて同一リポジトリの PR のみ実行する
-    if: ${{ github.event.pull_request.head.repo.fork == false }}
+  # Claude Code 組み込みの /review スラッシュコマンドでレビューする単一ジョブ。
+  # /review はサマリ(総評)と該当行へのインラインコメントを標準で出力するため、
+  # 自作 skill の checkout やサマリ投稿用スクリプトは不要。
+  claude-review:
+    name: Claude Code Review
+    # 異常終了 (exit 1) の根本対策と保険:
+    # - 真因: github_token を渡さないと claude-code-action は OIDC→GitHub App
+    #   トークン交換を行い、その際「ワークフローが default ブランチと同一内容で
+    #   あること」を検証する。そのため本ワークフロー自身を変更する PR では
+    #   "App token exchange failed: 401 - Workflow validation failed" で必ず失敗し、
+    #   レビューが全く投稿されないまま exit 1 になっていた。
+    #   → 下記 step で github_token を明示的に渡し、App トークン交換 (OIDC 検証) 自体を
+    #     スキップする。これが根本対策で、自己変更 PR でもレビューが正常に走る。
+    # - 保険として Run step に continue-on-error: true も付ける。レビューは助言であり
+    #   一時障害等で落ちても PR の CI を赤にすべきでないため。
+    # - fork PR は secrets (CLAUDE_CODE_OAUTH_TOKEN) が渡らず動かない。renovate /
+    #   dependabot 等の bot PR はレビュー不要。両者はノイズ低減目的で下記 if で除外。
+    if: >-
+      github.event.pull_request.head.repo.fork == false &&
+      github.actor != 'renovate[bot]' &&
+      github.actor != 'dependabot[bot]' &&
+      github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     # Claude やステップがハングした場合の暴走を防ぐ
     timeout-minutes: 30
@@ -95,11 +48,32 @@ jobs:
           fetch-depth: 0
 
       - name: Run built-in /review
-        id: builtin-review
+        id: claude-review
+        # レビューは助言。根本対策 (github_token 明示) で異常終了は解消済みだが、
+        # 万一 action 側の一時障害等で落ちても PR の CI を失敗扱いにしない保険。
+        continue-on-error: true
         uses: anthropics/claude-code-action@51ea8ea73a139f2a74ff649e3092c25a904aed7e # v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          prompt: '/review ${{ github.repository }}/pull/${{ github.event.pull_request.number }}'
+          # github_token を明示的に渡すと action は OIDC→GitHub App トークン交換を
+          # 行わず、このトークンを直接使う。これにより自己変更 PR で 401 となる
+          # identical-content 検証 (OIDC) を回避できる。GITHUB_TOKEN は自動付与され
+          # 追加 secret は不要。Anthropic 認証は上の oauth_token が担うため併用可。
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          # サマリ(総評)を 1 つのコメントに集約する (pull_request イベント専用)。
+          use_sticky_comment: true
+          # 組み込み /review スラッシュコマンドを実行。github.repository / PR 番号
+          # のみ補間 (slug と整数で injection 安全)。/review が PR 差分を解析し、
+          # サマリ(総評)と該当行へのインラインコメントを出力する。
+          prompt: "/review ${{ github.repository }}/pull/${{ github.event.pull_request.number }}"
           claude_args: |
-            --allowedTools "Read,Bash(git diff:*),Bash(git log:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),mcp__github_inline_comment__create_inline_comment"
+            --allowedTools "Read,Bash(git diff:*),Bash(git log:*),Bash(gh pr view:*),Bash(gh pr diff:*),mcp__github_inline_comment__create_inline_comment"
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
+
+      # continue-on-error でレビュー失敗を CI に波及させない代わりに、
+      # 失敗が誰にも気づかれないサイレント化を防ぐため警告として可視化する。
+      # CI ステータスは緑のまま、ログ/Annotations に残る。
+      - name: Warn if review step failed
+        if: steps.claude-review.outcome == 'failure'
+        run: |
+          echo "::warning title=Claude Code Review failed::レビュー step が失敗しました (CI は継続)。OAuth トークン期限切れや action 障害の可能性があります。ログを確認してください。"
