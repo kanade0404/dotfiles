@@ -6,6 +6,9 @@ approvals_reviewer = "guardian_subagent"
 # outside the workspace still require approval.
 sandbox_mode = "workspace-write"
 
+# Command permissions are managed by Codex execpolicy rules.
+# See .codex/rules/default.rules for the Claude settings.json permissions mirror.
+
 [marketplaces.claude-plugins-official]
 last_revision = "c40770ae5a1d6855fce096c5b747e709ec946b2b"
 source_type = "git"
