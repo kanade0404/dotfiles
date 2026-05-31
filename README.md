@@ -31,7 +31,16 @@ sudo darwin-rebuild switch --flake "$DOTFILES_DIR/nix"
 
 # Nix 管理外ファイルの symlink 再作成 (.config/, .local/bin/, .claude/ 等変更時)
 DOTFILES="$DOTFILES_DIR" bash "$DOTFILES_DIR/install.sh"
+
+# Codex skills を rulesync で更新して ~/.codex/skills に反映
+bun run rulesync:skills
+DOTFILES="$DOTFILES_DIR" bash "$DOTFILES_DIR/install.sh"
+
+# upstream の skill 参照を更新してから再生成
+bun run rulesync:skills:update
 ```
+
+`rulesync` を upgrade するときは、`package.json` の devDependency と `rulesync.jsonc` の `$schema` URL を同じバージョンに更新する。
 
 ### worktree から適用する場合
 
@@ -75,6 +84,8 @@ nix/
 
 .config/nvim/            # Neovim (LazyVim)
 .config/ghostty/config   # Ghostty terminal
+.codex/                  # Codex user settings, hooks, commands
+.codex/skills/           # Codex skills (rulesync generated)
 .claude/                 # Claude Code (settings, hooks, commands, skills)
 .github/workflows/       # PR conflict 自動解決 workflows
 .local/bin/              # ヘルパースクリプト (tmux-project, gw)
@@ -93,11 +104,15 @@ install.sh               # Nix 管理外ファイルの symlink 作成
 | Shell / Git / tmux | `nix/home.nix` | `darwin-rebuild switch` |
 | Neovim | `.config/nvim/` | `install.sh` |
 | Ghostty | `.config/ghostty/` | `install.sh` |
+| Codex skills | `rulesync.jsonc` → `.codex/skills/` | `bun run rulesync:skills` + `install.sh` |
+| Codex settings/hooks/commands | `.codex/` | `install.sh` |
 | Claude Code | `.claude/` | `install.sh` |
 
 ## Claude Code Hooks
 
 TypeScript 製の PreToolUse hook で Bash コマンドの権限を統合管理。
+
+`PostToolUse` の command history logging は、通常の shell history と重複し、コマンド引数に含まれる機微情報を永続化しやすいため設定しない。履歴収集ではなく、実行前の権限制御を `PreToolUse` hook に寄せる。
 
 - `settings.json` の `permissions.allow/deny/ask` ルールでコマンドを判定
 - シェルコマンドを構文解析（パイプ、`&&`、コマンド置換、ヒアドキュメント等）

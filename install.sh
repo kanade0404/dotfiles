@@ -50,6 +50,31 @@ if [ -d "$DOTFILES/.codex/commands" ] && [ "$(ls -A "$DOTFILES/.codex/commands" 
     [ -f "$f" ] && ln -sf "$f" "$HOME/.codex/commands/$(basename "$f")"
   done
 fi
+# skills: symlink each generated skill directory (1 skill = 1 dir with SKILL.md + assets)
+if [ -d "$HOME/.codex/skills" ]; then
+  for existing in "$HOME/.codex/skills/"*; do
+    [ -L "$existing" ] || continue
+    link_target="$(readlink "$existing")"
+    case "$link_target" in
+      "$DOTFILES/.codex/skills/"*)
+        [ -e "$link_target" ] || rm -f "$existing"
+      ;;
+    esac
+  done
+fi
+if [ -d "$DOTFILES/.codex/skills" ] && [ "$(ls -A "$DOTFILES/.codex/skills" 2>/dev/null)" ]; then
+  mkdir -p "$HOME/.codex/skills"
+  for d in "$DOTFILES/.codex/skills/"*/; do
+    if [ -d "$d" ]; then
+      target="$HOME/.codex/skills/$(basename "$d")"
+      if [ -e "$target" ] && [ ! -L "$target" ]; then
+        echo "Error: $target exists and is not a symlink. Move it aside before re-running install.sh." >&2
+        exit 1
+      fi
+      ln -sfn "${d%/}" "$target"
+    fi
+  done
+fi
 
 echo "==> Linking Claude Code user settings"
 mkdir -p "$HOME/.claude"
@@ -75,10 +100,28 @@ if [ -d "$DOTFILES/.claude/commands" ] && [ "$(ls -A "$DOTFILES/.claude/commands
   done
 fi
 # skills: symlink each skill directory (1 skill = 1 dir with SKILL.md + assets)
+if [ -d "$HOME/.claude/skills" ]; then
+  for existing in "$HOME/.claude/skills/"*; do
+    [ -L "$existing" ] || continue
+    link_target="$(readlink "$existing")"
+    case "$link_target" in
+      "$DOTFILES/.claude/skills/"*)
+        [ -e "$link_target" ] || rm -f "$existing"
+      ;;
+    esac
+  done
+fi
 if [ -d "$DOTFILES/.claude/skills" ] && [ "$(ls -A "$DOTFILES/.claude/skills" 2>/dev/null)" ]; then
   mkdir -p "$HOME/.claude/skills"
   for d in "$DOTFILES/.claude/skills/"*/; do
-    [ -d "$d" ] && ln -sfn "${d%/}" "$HOME/.claude/skills/$(basename "$d")"
+    if [ -d "$d" ]; then
+      target="$HOME/.claude/skills/$(basename "$d")"
+      if [ -e "$target" ] && [ ! -L "$target" ]; then
+        echo "Error: $target exists and is not a symlink. Move it aside before re-running install.sh." >&2
+        exit 1
+      fi
+      ln -sfn "${d%/}" "$target"
+    fi
   done
 fi
 

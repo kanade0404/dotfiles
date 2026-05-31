@@ -1,0 +1,76 @@
+{
+  "lockfileVersion": 1,
+  "sources": {
+    "kanade0404/skills": {
+      "requestedRef": "master",
+      "resolvedRef": "363138744442c5f1f2b65a2414a4d8ba7e0ac264",
+      "resolvedAt": "2026-05-30T08:40:45.052Z",
+      "skills": {
+        "adr-writer": {
+          "integrity": "sha256-2dc6bbe927830b7c4b9140abf89b4497ea85c6701984d8be6c2fe1df44a51de5"
+        },
+        "ci-self-heal": {
+          "integrity": "sha256-c46feb0c19c3299f0241748a090dd31e2da13bc4abe1f9009a83ab1431765459"
+        },
+        "code-review": {
+          "integrity": "sha256-f6ec087fed7d5b9643985fa220eee4e622543e89a78165324acd16598f5aee7a"
+        },
+        "design": {
+          "integrity": "sha256-4abc4af286ab41674b074069d157f7075a9478d67102398820655bb34bdc2450"
+        },
+        "design-review": {
+          "integrity": "sha256-e12f06ca49cd6465a91ee25e687000f9cc467f23fd9957e8a06553efc0b558b4"
+        },
+        "empirical-prompt-tuning": {
+          "integrity": "sha256-09c619ee18b9ebbea8c52709824ffb8d63c55ef94dd0e016e52f5f184582f055"
+        },
+        "grill-with-docs": {
+          "integrity": "sha256-d2f4b9abc9c7bd94ab37a5c6aee00daf1afd91d90ee842ab48712c84bcf7e163"
+        },
+        "pr-review-respond": {
+          "integrity": "sha256-f325b47e90e875fbf8052ab97071758fc28bc2cc8ab13c5404de92c78a8c7813"
+        },
+        "product-discovery": {
+          "integrity": "sha256-5311f711ff99b56537beeffda1b41cdede0a81603390b676c41e0180dfae20bf"
+        },
+        "research-practices": {
+          "integrity": "sha256-aadee3a00264383e111acefa9e5e1cba2bb0745a666eefa3e12f1d359a716d4e"
+        },
+        "shipping": {
+          "integrity": "sha256-a12f7ec2c78428dbedb2c1dee656343e6c90c13ef22ddb5ad0767530a04abcb0"
+        },
+        "skill-builder": {
+          "integrity": "sha256-63ab17d9d422174842e39b98e59f61ee522c51199fb932600b3e210735a08eea"
+        },
+        "software-design": {
+          "integrity": "sha256-7521486b477629578111b090a012c41118b895e9749a472025df7a3cb69906d5"
+        },
+        "tdd": {
+          "integrity": "sha256-d77b0daebc823a2a62e73139e6dd6ec06cce9ad2b51bdb097ae300146004f7cd"
+        },
+        "test-review": {
+          "integrity": "sha256-cff490ab76f83b4b12c7ebb1f0a4fd338b3ae03c86035a9bc22cadd47dbfb6c5"
+        },
+        "tidy-first": {
+          "integrity": "sha256-cd3dc209290590f0dc0da7310ea8e3d63a40cfcb765fba89b8c19bcd700946ac"
+        },
+        "verify-done": {
+          "integrity": "sha256-74944b00cfb1bb7c1b9e8af86e0251db6bed56330d1de2db21ed444786cd95da"
+        }
+      }
+    },
+    "planetscale/database-skills": {
+      "requestedRef": "main",
+      "resolvedRef": "b156f4ca73c03d0350438bfd042331aaef6eec77",
+      "resolvedAt": "2026-05-30T08:40:46.398Z",
+      "skills": {
+        "mysql": {
+          "integrity": "sha256-1f408c1fecb77a0e33576de9189bda48cd67e7c0784208c10105280d8b872302"
+        },
+        "postgres": {
+          "integrity": "sha256-78782765f1ae00b777d815082a3ad5ec9d1d1cc3ffffa2b143e8a51b994c7a09"
+        }
+      }
+    }
+  }
+}

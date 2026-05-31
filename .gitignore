@@ -4,6 +4,9 @@ Thumbs.db
 .bundle
 node_modules/
 
+# rulesync が生成する cache。bun run rulesync:skills で再生成可能
+.rulesync/skills/.curated/
+
 # Claude Code: セッション単位の一時ファイル
 .claude/plans/
 .claude/worktrees/
