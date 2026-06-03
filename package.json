@@ -11,7 +11,7 @@
   "devDependencies": {
     "@types/bun": "latest",
     "markdownlint-cli2": "0.22.1",
-    "rulesync": "8.24.0"
+    "rulesync": "8.24.1"
   },
   "peerDependencies": {
     "typescript": "5.9.3"
