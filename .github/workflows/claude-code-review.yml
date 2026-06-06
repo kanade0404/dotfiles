@@ -74,9 +74,19 @@ jobs:
       - name: Stage custom code-review skill into .claude/skills
         run: |
           set -euo pipefail
+          src=.tmp-skills-src/skills/code-review
+          # ピン留め先に skill が無ければ即失敗させる (壊れた/移動した SHA を早期検知)。
+          if [[ ! -f "${src}/SKILL.md" ]]; then
+            echo "::error::${src}/SKILL.md が見つかりません。kanade0404/skills のピン留め SHA を確認してください。"
+            exit 1
+          fi
           mkdir -p .claude/skills
+          # 先に新しい skill をコピーしてから旧ディレクトリと差し替える
+          # (cp 失敗時に既存 skill を消してしまわない順序)。
+          rm -rf .claude/skills/code-review.new
+          cp -R "${src}" .claude/skills/code-review.new
           rm -rf .claude/skills/code-review
-          cp -R .tmp-skills-src/skills/code-review .claude/skills/code-review
+          mv .claude/skills/code-review.new .claude/skills/code-review
           rm -rf .tmp-skills-src
 
       - name: Run custom code-review skill
@@ -138,6 +148,7 @@ jobs:
       # 含む JSON。その .result を取り出してサマリ本文ファイルにする。
       # Write を skill に許可せずにサマリを得るための決定的ステップ。
       - name: Extract review summary from execution log
+        id: extract-summary
         if: always()
         continue-on-error: true
         env:
@@ -152,13 +163,18 @@ jobs:
           fi
           # execution_file は JSON 配列または JSONL のいずれか。両対応で
           # type=result の result 文字列 (= 最終メッセージ) を取り出す。
-          jq -rs '
+          # jq が失敗 (壊れた JSON 等) しても CI は赤にしないが、サイレントに
+          # しないよう警告を出す (|| true で握り潰すと不具合に気づけないため)。
+          if ! jq -rs '
             [ .[]
               | (if type=="array" then .[] else . end)
               | select(.type=="result" and (.result|type=="string"))
               | .result
             ] | last // empty
-          ' "${EXEC_FILE}" >"${out}" || true
+          ' "${EXEC_FILE}" >"${out}"; then
+            echo "::warning title=summary extract failed::execution_file の解析に失敗しました。サマリは空になります。"
+            : >"${out}"
+          fi
           echo "Extracted summary bytes: $(wc -c <"${out}")"
 
       # サマリ(総評)を単一コメントとして upsert する決定的ステップ。
@@ -167,6 +183,7 @@ jobs:
       # LLM の手順実行に依存せず確実に実現する。
       # レビュー本体が失敗してファイルが無い/空のときはスクリプトが no-op で抜ける。
       - name: Upsert review summary comment
+        id: upsert-summary
         if: always()
         # gh api がレート制限・ネットワーク障害等で失敗しても CI を赤にしない
         # (claude-review ステップと同じく、レビュー投稿は助言であるため)。
@@ -180,13 +197,17 @@ jobs:
         run: |
           bash .github/scripts/upsert-pr-comment.sh "${RUNNER_TEMP}/claude-review-summary.md"
 
-      # continue-on-error でレビュー失敗を CI に波及させない代わりに、
+      # continue-on-error で各ステップ失敗を CI に波及させない代わりに、
       # 失敗が誰にも気づかれないサイレント化を防ぐため警告として可視化する。
       # CI ステータスは緑のまま、ログ/Annotations に残る。
-      # always() を明示しないと暗黙の success() ガートにより、直前の upsert
-      # ステップが (continue-on-error 無しで) 失敗した場合に本ステップが
-      # skip され警告が出ない。always() で常に評価させる。
-      - name: Warn if review step failed
-        if: always() && steps.claude-review.outcome == 'failure'
+      # review 本体だけでなく extract / upsert の失敗も監視対象にする。
+      # always() を明示しないと暗黙の success() ガートで skip され得るため明示する。
+      - name: Warn if any review step failed
+        if: >-
+          always() && (
+            steps.claude-review.outcome == 'failure' ||
+            steps.extract-summary.outcome == 'failure' ||
+            steps.upsert-summary.outcome == 'failure'
+          )
         run: |
-          echo "::warning title=Claude Code Review failed::レビュー step が失敗しました (CI は継続)。OAuth トークン期限切れ・API レート制限・action 障害などの可能性があります。ログを確認してください。"
+          echo "::warning title=Claude Code Review degraded::レビュー関連 step のいずれかが失敗しました (CI は継続)。review=${{ steps.claude-review.outcome }} extract=${{ steps.extract-summary.outcome }} upsert=${{ steps.upsert-summary.outcome }}。OAuth 期限切れ・API レート制限・action 障害などの可能性があります。ログを確認してください。"
