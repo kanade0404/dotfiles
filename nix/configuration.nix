@@ -39,6 +39,7 @@
     bison
     doxygen
     dprint
+    flyctl # Fly.io デプロイ CLI
     pandoc
     plantuml
     shellcheck
