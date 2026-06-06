@@ -59,9 +59,13 @@ else
 fi
 
 # マーカーを含む既存コメント ID を探す (最初の 1 件)。
+# 注意: `gh api --paginate --jq FILTER` は各ページの JSON 配列に対して
+# 独立に jq を適用するため、複数ページにマーカーコメントがあると複数 ID が
+# 出力されてしまう。--paginate に --slurp を併用して全ページを 1 つの配列に
+# 連結 (= [[page1...],[page2...]]) してから flatten し、確実に 1 件へ絞る。
 existing_id="$(
-  gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" --paginate \
-    --jq "map(select(.body | contains(\"${marker}\"))) | .[0].id // empty"
+  gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" --paginate --slurp \
+    --jq "[.[][] | select(.body | contains(\"${marker}\"))] | .[0].id // empty"
 )"
 
 if [[ -n "${existing_id}" ]]; then
