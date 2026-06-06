@@ -175,6 +175,14 @@ jobs:
             echo "::warning title=summary extract failed::execution_file の解析に失敗しました。サマリは空になります。"
             : >"${out}"
           fi
+          # 空サマリの検知はこのステップ内で行う。後続の Warn ステップは
+          # outcome を見るが、本ステップは continue-on-error かつ jq が
+          # マッチ無し時に exit 0 (last // empty) で返るため outcome では
+          # 「サマリが空」を判定できない。ここでバイト数 0 を直接検知して警告する
+          # (execution_file のスキーマ変更やレビュー失敗を見逃さないため)。
+          if [[ ! -s "${out}" ]]; then
+            echo "::warning title=empty review summary::サマリが空です。レビュー失敗・空振り、または execution_file のスキーマ変更の可能性があります。ログを確認してください。"
+          fi
           echo "Extracted summary bytes: $(wc -c <"${out}")"
 
       # サマリ(総評)を単一コメントとして upsert する決定的ステップ。
@@ -200,13 +208,15 @@ jobs:
       # continue-on-error で各ステップ失敗を CI に波及させない代わりに、
       # 失敗が誰にも気づかれないサイレント化を防ぐため警告として可視化する。
       # CI ステータスは緑のまま、ログ/Annotations に残る。
-      # review 本体だけでなく extract / upsert の失敗も監視対象にする。
+      # 監視対象は「非ゼロ終了で outcome が failure になる」 claude-review と
+      # upsert-summary。extract-summary は jq がマッチ無し時に exit 0 で空を
+      # 返し outcome が failure にならないため、空サマリ検知は extract-summary
+      # ステップ内 (::warning empty review summary::) で直接行っている。
       # always() を明示しないと暗黙の success() ガートで skip され得るため明示する。
       - name: Warn if any review step failed
         if: >-
           always() && (
             steps.claude-review.outcome == 'failure' ||
-            steps.extract-summary.outcome == 'failure' ||
             steps.upsert-summary.outcome == 'failure'
           )
         run: |
