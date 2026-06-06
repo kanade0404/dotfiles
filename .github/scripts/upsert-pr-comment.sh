@@ -64,9 +64,12 @@ fi
 # 出力されてしまう。--slurp で全ページを 1 つの配列 (= [[page1...],[page2...]])
 # に連結し、それを standalone jq へパイプして flatten・確実に 1 件へ絞る。
 # (--slurp は --jq/--template と併用不可のため jq へパイプする)
+# marker は jq 式へ直接展開せず --arg で安全に渡す
+# (カスタム MARKER に " や \ 等が含まれても jq 式が壊れない)。
 existing_id="$(
   gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" --paginate --slurp \
-    | jq -r "[.[][] | select(.body | contains(\"${marker}\"))] | .[0].id // empty"
+    | jq -r --arg marker "${marker}" \
+        '[.[][] | select(.body | contains($marker))] | .[0].id // empty'
 )"
 
 if [[ -n "${existing_id}" ]]; then
