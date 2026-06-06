@@ -9,7 +9,6 @@ tags: mysql, data-types, numeric, varchar, datetime, json
 Choose the smallest correct type — more rows per page, better cache, faster queries.
 
 ## Numeric Sizes
-
 | Type | Bytes | Unsigned Max |
 |---|---|---|
 | `TINYINT` | 1 | 255 |

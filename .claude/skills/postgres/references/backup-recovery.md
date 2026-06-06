@@ -21,7 +21,6 @@ Requires base backup + continuous WAL archiving. Restores to any timestamp, tran
 `archive_mode=on`, `archive_command='test ! -f /archive/%f && cp %p /archive/%f'`. **Test archive command as postgres user** (not root) since permission issues are common. Monitor `pg_stat_archiver` for `failed_count`, `last_archived_time`. Archive failures prevent WAL recycling → disk fills.
 
 ## Tool Comparison
-
 | Tool | Use case |
 |------|----------|
 | pg_dump | Small DBs, migrations, selective restore |

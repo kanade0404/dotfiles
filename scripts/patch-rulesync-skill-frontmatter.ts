@@ -1,6 +1,21 @@
+import { existsSync } from "node:fs";
+
 const generatedRoots = [
   ".rulesync/skills/.curated",
 ];
+
+const curatedPrefix = ".rulesync/skills/.curated/";
+
+// curated 配下の patch 対象は「その skill がこの install で取得されているとき」だけ必須にする。
+// codex (全 skill) では従来通り存在チェックに引っかかれば throw、claude (4 skill サブセット) では
+// 取得していない skill (pr-review-respond 等) の patch を黙ってスキップできるようにするための判定。
+function skillPresentSync(path: string) {
+  if (!path.startsWith(curatedPrefix)) {
+    return true;
+  }
+  const name = path.slice(curatedPrefix.length).split("/")[0];
+  return existsSync(curatedPrefix + name);
+}
 
 const patches = [
   ".rulesync/skills/.curated/pr-review-respond/SKILL.md",
@@ -20,7 +35,11 @@ type Replacement = {
 const curatedRootExists = await Bun.file(".rulesync/skills/.curated").exists();
 
 function isRequiredTarget(path: string) {
-  return curatedRootExists && path.startsWith(".rulesync/skills/.curated/");
+  return (
+    curatedRootExists &&
+    path.startsWith(".rulesync/skills/.curated/") &&
+    skillPresentSync(path)
+  );
 }
 
 function countOccurrences(text: string, needle: string) {
@@ -52,7 +71,7 @@ function replacementAlreadyApplied(path: string, text: string, replacement: Repl
 async function patchFile(path: string, replacements: Replacement[], required = false) {
   const file = Bun.file(path);
   if (!(await file.exists())) {
-    if (required) {
+    if (required && skillPresentSync(path)) {
       throw new Error(`patch target not found: ${path}`);
     }
     return;
@@ -78,7 +97,7 @@ async function patchFile(path: string, replacements: Replacement[], required = f
 async function patchPostgresQueryPatterns(path: string, required: boolean) {
   const file = Bun.file(path);
   if (!(await file.exists())) {
-    if (required) {
+    if (required && skillPresentSync(path)) {
       throw new Error(`patch target not found: ${path}`);
     }
     return;

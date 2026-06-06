@@ -11,7 +11,7 @@ tags: postgres, schema, primary-keys, data-types, foreign-keys, naming
 Prefer `BIGINT GENERATED ALWAYS AS IDENTITY`. Avoid random UUIDs (UUIDv4) as primary keys; use `uuidv7()` when you need UUIDs.
 
 ```sql
-CREATE TABLE user (
+CREATE TABLE users (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   email TEXT NOT NULL UNIQUE
 );
@@ -31,7 +31,7 @@ Random UUID PKs (v4) can cause index fragmentation; UUIDs are also larger (16 vs
 Prefer CHECK constraints over ENUM types — they're easier to modify:
 
 ```sql
-CREATE TABLE order (
+CREATE TABLE orders (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   status TEXT NOT NULL CHECK (status IN ('pending', 'shipped', 'delivered'))
 );
@@ -44,11 +44,11 @@ CREATE TABLE order (
 - Suggestion: use `ON DELETE CASCADE` or `ON DELETE SET NULL` explicitly
 
 ```sql
-CREATE TABLE order (
+CREATE TABLE orders (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   customer_id BIGINT NOT NULL REFERENCES customer(id) ON DELETE CASCADE
 );
-CREATE INDEX order_customer_id_idx ON order (customer_id);
+CREATE INDEX orders_customer_id_idx ON orders (customer_id);
 ```
 
 ## Naming Conventions
@@ -56,7 +56,7 @@ CREATE INDEX order_customer_id_idx ON order (customer_id);
 - Tables: singular snake_case (`user_account`, `order_item`)
 - Columns: singular snake_case (`created_at`, `user_id`)
 - Indexes: `{table}_{column}_idx`
-- Constraints: `{table}_{column}_{type}` (e.g., `order_status_check`)
+- Constraints: `{table}_{column}_{type}` (e.g., `orders_status_check`)
 
 ## General Guidelines
 

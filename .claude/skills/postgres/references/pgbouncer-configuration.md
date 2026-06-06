@@ -42,4 +42,3 @@ Multiple users/databases: `default_pool_size = 25, max_user_connections = 150, p
 ```sql
 SELECT datname, usename, COUNT(*) FROM pg_stat_activity WHERE backend_type = 'client backend' GROUP BY datname, usename;
 ```
-

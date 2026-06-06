@@ -1,0 +1,31 @@
+{
+  "lockfileVersion": 1,
+  "sources": {
+    "kanade0404/skills": {
+      "requestedRef": "master",
+      "resolvedRef": "8a263413a0d18425c5d3f3e3b21de910217c4ed4",
+      "resolvedAt": "2026-06-06T12:43:35.975Z",
+      "skills": {
+        "linear-issue-driven-development": {
+          "integrity": "sha256-b3c842fe5dafad853fd057617773bd8d1df44d95b7f56fda9c31b8a21c46d93b"
+        },
+        "pr-conflict-resolver": {
+          "integrity": "sha256-d73ffc83b2acc47128b722aef68d0169dfbebe1c5b413bb488e3355820ef2b6a"
+        }
+      }
+    },
+    "planetscale/database-skills": {
+      "requestedRef": "main",
+      "resolvedRef": "b156f4ca73c03d0350438bfd042331aaef6eec77",
+      "resolvedAt": "2026-06-06T12:43:37.295Z",
+      "skills": {
+        "mysql": {
+          "integrity": "sha256-1f408c1fecb77a0e33576de9189bda48cd67e7c0784208c10105280d8b872302"
+        },
+        "postgres": {
+          "integrity": "sha256-78782765f1ae00b777d815082a3ad5ec9d1d1cc3ffffa2b143e8a51b994c7a09"
+        }
+      }
+    }
+  }
+}

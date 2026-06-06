@@ -17,6 +17,8 @@
     "node_modules",
     // 外部から取り込んだ skill バンドル (本リポジトリで著者管理していない)
     ".rulesync/skills/.curated/**",
+    // claude 用隔離パイプラインの cache (codex と同じく lint 対象外)
+    "rulesync-claude/.rulesync/**",
     ".agents/skills/**",
     ".codex/skills/**",
     ".claude/skills/postgres/**",

@@ -1,11 +1,10 @@
 ---
-description: Plan and review MySQL/InnoDB schema, indexing, query tuning, transactions, and operations. Use when creating or modifying MySQL tables, indexes, or queries; diagnosing slow/locking behavior; planning migrations; or troubleshooting replication and connection issues. Load when using a MySQL database.
-metadata:
-    github-path: skills/mysql
-    github-ref: refs/heads/main
-    github-repo: https://github.com/planetscale/database-skills
-    github-tree-sha: a2d3f6d189cb2847d659da7108b399df9ac08875
 name: mysql
+description: >-
+  Plan and review MySQL/InnoDB schema, indexing, query tuning, transactions, and
+  operations. Use when creating or modifying MySQL tables, indexes, or queries;
+  diagnosing slow/locking behavior; planning migrations; or troubleshooting
+  replication and connection issues. Load when using a MySQL database.
 ---
 # MySQL
 

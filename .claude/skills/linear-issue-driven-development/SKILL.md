@@ -13,7 +13,6 @@ description: |
   実行環境はクラウド (Anthropic 側 sandbox) を想定しているため、`gw` 等の
   dotfiles 同梱ヘルパには依存しない。素の `git` / `gh` / `curl` だけで動くこと。
 ---
-
 # linear-issue-driven-development
 
 Linear issue を 1 件受け取り、PR がマージ可能な状態 (CI 緑 + 未解消レビュー

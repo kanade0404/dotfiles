@@ -5,15 +5,7 @@ description: |
   PR コメントで `@claude` 経由で呼ばれた conflict 解決タスクや、ローカルでの rebase / merge
   conflict を解決するときに必ず参照する。チェックアウト → merge / rebase → conflict 解決 →
   lock ファイル再生成 → テスト → push までの一連の安全な流れを定義する。
-allowed-tools:
-  - Bash
-  - Read
-  - Edit
-  - Write
-  - Glob
-  - Grep
 ---
-
 # PR conflict resolver
 
 PR のターゲットブランチ (base) と head ブランチの間で発生した merge conflict を、機能を欠落させず

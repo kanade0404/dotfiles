@@ -16,7 +16,7 @@ Credentials (roles) are branch-specific and cannot be recovered after creation.
 
 ## Connection String
 
-```text
+```
 postgresql://<user>:<password>@<host>.horizon.psdb.cloud:5432/<database>?sslmode=verify-full&sslrootcert=system&sslnegotiation=direct
 ```
 
