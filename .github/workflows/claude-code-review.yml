@@ -149,8 +149,10 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+        # 実行ビットの有無に依存しないよう bash 経由で起動する
+        # (checkout 後の mode 差異で Permission denied / exit 126 になるのを防ぐ)。
         run: |
-          .github/scripts/upsert-pr-comment.sh "${RUNNER_TEMP}/claude-review-summary.md"
+          bash .github/scripts/upsert-pr-comment.sh "${RUNNER_TEMP}/claude-review-summary.md"
 
       # continue-on-error でレビュー失敗を CI に波及させない代わりに、
       # 失敗が誰にも気づかれないサイレント化を防ぐため警告として可視化する。
