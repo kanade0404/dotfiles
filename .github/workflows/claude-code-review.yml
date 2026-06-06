@@ -10,12 +10,15 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Claude Code 組み込みの /review スラッシュコマンドでレビューする単一ジョブ。
-  # /review はサマリ(総評)と該当行へのインラインコメントを標準で出力するため、
-  # 自作 skill の checkout やサマリ投稿用スクリプトは不要。
+  # kanade0404/skills の自作 code-review skill で 1 ジョブにレビューを統合。
+  # （ローカルでは rulesync で .claude/skills/ へ同期している skill。
+  #  CI ではソースリポジトリを SHA 固定で checkout して同じ skill を再現する）
+  #
+  # built-in /review は run 成功でもレビューを出さず空振りすることがあったため、
+  # findings を Critical / Important / Minor で安定して出す自作 skill を採用する。
   claude-review:
     name: Claude Code Review
-    # 異常終了 (exit 1) の根本対策と保険:
+    # 異常終了 (exit 1) の根本対策:
     # - 真因: github_token を渡さないと claude-code-action は OIDC→GitHub App
     #   トークン交換を行い、その際「ワークフローが default ブランチと同一内容で
     #   あること」を検証する。そのため本ワークフロー自身を変更する PR では
@@ -26,12 +29,17 @@ jobs:
     # - 保険として Run step に continue-on-error: true も付ける。レビューは助言であり
     #   一時障害等で落ちても PR の CI を赤にすべきでないため。
     # - fork PR は secrets (CLAUDE_CODE_OAUTH_TOKEN) が渡らず動かない。renovate /
-    #   dependabot 等の bot PR はレビュー不要。両者はノイズ低減目的で下記 if で除外。
+    #   dependabot / claude / github-actions 等の bot PR はレビュー不要 (claude[bot] は
+    #   Linear → Anthropic Routines パイプラインが作成する PR。セルフレビューを避ける)。
+    #   いずれもノイズ低減目的で下記 if で除外する。
+    #   bot 判定は「実行をトリガーした人」ではなく PR 作成者 (pull_request.user.login)
+    #   で行う。トリガー実行者だとメンテナが bot の PR を再実行した際に判定が外れるため。
     if: >-
       github.event.pull_request.head.repo.fork == false &&
-      github.actor != 'renovate[bot]' &&
-      github.actor != 'dependabot[bot]' &&
-      github.actor != 'github-actions[bot]'
+      github.event.pull_request.user.login != 'renovate[bot]' &&
+      github.event.pull_request.user.login != 'dependabot[bot]' &&
+      github.event.pull_request.user.login != 'github-actions[bot]' &&
+      github.event.pull_request.user.login != 'claude[bot]'
     runs-on: ubuntu-latest
     # Claude やステップがハングした場合の暴走を防ぐ
     timeout-minutes: 30
@@ -47,7 +55,41 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Run built-in /review
+      - name: Checkout custom skill source (kanade0404/skills)
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          repository: kanade0404/skills
+          # 再現性のため commit SHA で固定。更新時は
+          #   gh api repos/kanade0404/skills/commits/master --jq .sha
+          # の結果に差し替える。
+          # ※ dd4d49e の SKILL.md は frontmatter が本文と同一行に潰れており
+          #   Claude Code が skill として読み込めず /code-review が空振りしていた。
+          #   frontmatter が正常な master 最新 SHA に更新済み。
+          ref: 363138744442c5f1f2b65a2414a4d8ba7e0ac264
+          path: .tmp-skills-src
+          fetch-depth: 1
+          # 後続の git 操作は無く files を copy するだけなので資格情報を残さない
+          persist-credentials: false
+
+      - name: Stage custom code-review skill into .claude/skills
+        run: |
+          set -euo pipefail
+          src=.tmp-skills-src/skills/code-review
+          # ピン留め先に skill が無ければ即失敗させる (壊れた/移動した SHA を早期検知)。
+          if [[ ! -f "${src}/SKILL.md" ]]; then
+            echo "::error::${src}/SKILL.md が見つかりません。kanade0404/skills のピン留め SHA を確認してください。"
+            exit 1
+          fi
+          mkdir -p .claude/skills
+          # 先に新しい skill をコピーしてから旧ディレクトリと差し替える
+          # (cp 失敗時に既存 skill を消してしまわない順序)。
+          rm -rf .claude/skills/code-review.new
+          cp -R "${src}" .claude/skills/code-review.new
+          rm -rf .claude/skills/code-review
+          mv .claude/skills/code-review.new .claude/skills/code-review
+          rm -rf .tmp-skills-src
+
+      - name: Run custom code-review skill
         id: claude-review
         # レビューは助言。根本対策 (github_token 明示) で異常終了は解消済みだが、
         # 万一 action 側の一時障害等で落ちても PR の CI を失敗扱いにしない保険。
@@ -60,20 +102,122 @@ jobs:
           # identical-content 検証 (OIDC) を回避できる。GITHUB_TOKEN は自動付与され
           # 追加 secret は不要。Anthropic 認証は上の oauth_token が担うため併用可。
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          # サマリ(総評)を 1 つのコメントに集約する (pull_request イベント専用)。
-          use_sticky_comment: true
-          # 組み込み /review スラッシュコマンドを実行。github.repository / PR 番号
-          # のみ補間 (slug と整数で injection 安全)。/review が PR 差分を解析し、
-          # サマリ(総評)と該当行へのインラインコメントを出力する。
-          prompt: "/review ${{ github.repository }}/pull/${{ github.event.pull_request.number }}"
+          # サマリ投稿は LLM に任せず、後続の決定的ステップ
+          # (upsert-pr-comment.sh) が行う。ここでは Claude にサマリ本文を
+          # 固定パスのファイルへ書き出させるだけにする。
+          # 理由: action の use_sticky_comment は claude[bot] 認証専用で、
+          # github_token (= github-actions[bot]) を渡す構成では効かず run 毎に
+          # コメントが増える (公式 FAQ 記載)。代替の「マーカー検索→PATCH/POST」を
+          # LLM に gh api で毎回実行させるのは不安定なため、投稿ロジックは
+          # スクリプトへ切り出して安定化・最小権限化する。
+          # github.repository / PR 番号のみ補間（slug と整数で injection 安全）。
+          prompt: |
+            /code-review
+
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+
+            上記 PR を自作 code-review skill でレビューしてください。
+            PR の base ブランチとの差分を対象に Critical / Important / Minor の
+            三分類で findings をまとめてください。
+
+            ## レビュー結果の出力方法（厳守）
+            出力は次の 2 種類に必ず分けてください。
+
+            ### 1. サマリ（総評）— あなたの最終メッセージとして返す
+            PR 全体の総評・findings の概要・残課題を Markdown でまとめ、
+            あなたの「最終メッセージ」として返してください。この最終メッセージは
+            後続ステップが action の実行ログ (execution_file) から取り出し、
+            単一のサマリコメントとして作成/更新します。
+            ファイルへの書き込みや gh コマンドでのコメント投稿は行わないでください
+            （投稿は後続の決定的ステップが担います。二重投稿・任意ファイル書込を防ぐため）。
+            指摘が無い場合も、その旨を最終メッセージに必ず記載してください。
+
+            ### 2. 個別の指摘 — 該当行へインライン
+            具体的な指摘は必ず mcp__github_inline_comment__create_inline_comment
+            ツールを使い、該当ファイル・該当行へインラインコメントとして残してください。
+            個別行の指摘をサマリ側へ重複して列挙しないでください。
+          # Write は付与しない (任意ファイル書込によるプロンプトインジェクション面を
+          # 技術的に排除)。サマリは下記ステップが execution_file から抽出する。
           claude_args: |
-            --allowedTools "Read,Bash(git diff:*),Bash(git log:*),Bash(gh pr view:*),Bash(gh pr diff:*),mcp__github_inline_comment__create_inline_comment"
+            --allowedTools "Task,Read,Bash(git diff:*),Bash(git log:*),Bash(gh pr view:*),Bash(gh pr diff:*),mcp__github_inline_comment__create_inline_comment"
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
 
-      # continue-on-error でレビュー失敗を CI に波及させない代わりに、
+      # Claude の最終メッセージ (= サマリ) を action の実行ログから抽出する。
+      # execution_file は {"type":"result","subtype":"success","result":"..."} を
+      # 含む JSON。その .result を取り出してサマリ本文ファイルにする。
+      # Write を skill に許可せずにサマリを得るための決定的ステップ。
+      - name: Extract review summary from execution log
+        id: extract-summary
+        if: always()
+        continue-on-error: true
+        env:
+          EXEC_FILE: ${{ steps.claude-review.outputs.execution_file }}
+        run: |
+          set -euo pipefail
+          out="${RUNNER_TEMP}/claude-review-summary.md"
+          : >"${out}"
+          if [[ -z "${EXEC_FILE:-}" || ! -f "${EXEC_FILE}" ]]; then
+            echo "No execution_file (${EXEC_FILE:-unset}); summary will be empty."
+            exit 0
+          fi
+          # execution_file は JSON 配列または JSONL のいずれか。両対応で
+          # type=result の result 文字列 (= 最終メッセージ) を取り出す。
+          # jq が失敗 (壊れた JSON 等) しても CI は赤にしないが、サイレントに
+          # しないよう警告を出す (|| true で握り潰すと不具合に気づけないため)。
+          if ! jq -rs '
+            [ .[]
+              | (if type=="array" then .[] else . end)
+              | select(.type=="result" and (.result|type=="string"))
+              | .result
+            ] | last // empty
+          ' "${EXEC_FILE}" >"${out}"; then
+            echo "::warning title=summary extract failed::execution_file の解析に失敗しました。サマリは空になります。"
+            : >"${out}"
+          fi
+          # 空サマリの検知はこのステップ内で行う。後続の Warn ステップは
+          # outcome を見るが、本ステップは continue-on-error かつ jq が
+          # マッチ無し時に exit 0 (last // empty) で返るため outcome では
+          # 「サマリが空」を判定できない。ここでバイト数 0 を直接検知して警告する
+          # (execution_file のスキーマ変更やレビュー失敗を見逃さないため)。
+          if [[ ! -s "${out}" ]]; then
+            echo "::warning title=empty review summary::サマリが空です。レビュー失敗・空振り、または execution_file のスキーマ変更の可能性があります。ログを確認してください。"
+          fi
+          echo "Extracted summary bytes: $(wc -c <"${out}")"
+
+      # サマリ(総評)を単一コメントとして upsert する決定的ステップ。
+      # Claude が書き出した本文ファイルを使い、隠しマーカーで既存コメントを
+      # 探して PATCH (無ければ POST)。これで「同じコメントを更新し続ける」を
+      # LLM の手順実行に依存せず確実に実現する。
+      # レビュー本体が失敗してファイルが無い/空のときはスクリプトが no-op で抜ける。
+      - name: Upsert review summary comment
+        id: upsert-summary
+        if: always()
+        # gh api がレート制限・ネットワーク障害等で失敗しても CI を赤にしない
+        # (claude-review ステップと同じく、レビュー投稿は助言であるため)。
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        # 実行ビットの有無に依存しないよう bash 経由で起動する
+        # (checkout 後の mode 差異で Permission denied / exit 126 になるのを防ぐ)。
+        run: |
+          bash .github/scripts/upsert-pr-comment.sh "${RUNNER_TEMP}/claude-review-summary.md"
+
+      # continue-on-error で各ステップ失敗を CI に波及させない代わりに、
       # 失敗が誰にも気づかれないサイレント化を防ぐため警告として可視化する。
       # CI ステータスは緑のまま、ログ/Annotations に残る。
-      - name: Warn if review step failed
-        if: steps.claude-review.outcome == 'failure'
+      # 監視対象は「非ゼロ終了で outcome が failure になる」 claude-review と
+      # upsert-summary。extract-summary は jq がマッチ無し時に exit 0 で空を
+      # 返し outcome が failure にならないため、空サマリ検知は extract-summary
+      # ステップ内 (::warning empty review summary::) で直接行っている。
+      # always() を明示しないと暗黙の success() ガートで skip され得るため明示する。
+      - name: Warn if any review step failed
+        if: >-
+          always() && (
+            steps.claude-review.outcome == 'failure' ||
+            steps.upsert-summary.outcome == 'failure'
+          )
         run: |
-          echo "::warning title=Claude Code Review failed::レビュー step が失敗しました (CI は継続)。OAuth トークン期限切れや action 障害の可能性があります。ログを確認してください。"
+          echo "::warning title=Claude Code Review degraded::レビュー関連 step のいずれかが失敗しました (CI は継続)。review=${{ steps.claude-review.outcome }} extract=${{ steps.extract-summary.outcome }} upsert=${{ steps.upsert-summary.outcome }}。OAuth 期限切れ・API レート制限・action 障害などの可能性があります。ログを確認してください。"
