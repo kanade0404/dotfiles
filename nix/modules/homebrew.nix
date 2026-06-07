@@ -5,10 +5,11 @@
       autoUpdate = true;
       cleanup = "zap"; # Remove formulae/casks not listed here
       upgrade = true;
-      # Homebrew 5.1+ requires --force (or --force-cleanup / $HOMEBREW_ASK) for
-      # `brew bundle install --cleanup`. nix-darwin (現在の pin) はこのフラグを
-      # 付与しないため、非対話で zap させるために明示的に渡す。
-      extraFlags = [ "--force" ];
+      # Homebrew 5.1+ では `brew bundle install --cleanup` の cleanup 実行に
+      # --force-cleanup / --force / $HOMEBREW_ASK のいずれかが必須。--force は
+      # install/upgrade 側も --overwrite 動作になり危険なため、cleanup の確認回避
+      # だけを目的に --force-cleanup を使う (nix-darwin の現 pin は付与しないため明示)。
+      extraFlags = [ "--force-cleanup" ];
     };
 
     taps = [
