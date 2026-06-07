@@ -5,6 +5,10 @@
       autoUpdate = true;
       cleanup = "zap"; # Remove formulae/casks not listed here
       upgrade = true;
+      # Homebrew 5.1+ requires --force (or --force-cleanup / $HOMEBREW_ASK) for
+      # `brew bundle install --cleanup`. nix-darwin (現在の pin) はこのフラグを
+      # 付与しないため、非対話で zap させるために明示的に渡す。
+      extraFlags = [ "--force" ];
     };
 
     taps = [
@@ -28,7 +32,7 @@
       "chromedriver"
       "chromium"
       "discord"
-      "docker"
+      "docker-desktop" # renamed from "docker"
       "dropbox"
       "firefox"
       "font-fira-code"
@@ -36,7 +40,7 @@
       "gimp"
       "google-chrome"
       "gyazo"
-      "handbrake"
+      "handbrake-app" # renamed from "handbrake"
       "jetbrains-toolbox"
       "karabiner-elements"
       "licecap"
