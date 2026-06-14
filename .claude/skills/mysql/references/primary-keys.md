@@ -29,7 +29,7 @@ CREATE TABLE users (
   UNIQUE KEY idx_public_id (public_id)
 );
 -- UUID_TO_BIN(uuid, 1) reorders UUIDv1 bytes to be roughly time-sorted (reduces fragmentation)
--- MySQL's UUID() returns UUIDv1 (time-based), never random; UUID_TO_BIN(uuid, 1) reorders v1 bytes for better index locality.
+-- MySQL's UUID() returns UUIDv1 (time-based), not random. For time-ordered IDs, use app-generated UUIDv7/ULID/Snowflake.
 INSERT INTO users (public_id) VALUES (UUID_TO_BIN(?, 1)); -- app provides UUID string
 ```
 

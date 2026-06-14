@@ -51,10 +51,9 @@ function loadExpectedSkills(): Set<string> | null {
 
 const expectedSkills = loadExpectedSkills();
 
-// この path の skill が現 install のスコープ内か。設定を解決できないときは
-// 安全側 (in-scope = 欠落時 throw) に倒し、退行を握りつぶさない。
-// path の skill が現 install のスコープ内か。呼び出し元の isRequiredTarget が
-// startsWith(curatedPrefix) を保証するため curated path 前提で受ける。
+// この path の skill が現 install のスコープ内か。呼び出し元 isRequiredTarget が
+// startsWith(curatedPrefix) を保証するため curated path 前提で受ける。設定を解決
+// できないときは安全側 (in-scope = 欠落時 throw) に倒し、退行を握りつぶさない。
 function skillInScope(path: string) {
   // 設定を解決できない (rulesync.jsonc 無し / パース失敗 / sources[].skills が 0 件) ときは
   // expectedSkills=null となり、安全側 (in-scope = 欠落時 throw) に倒して退行を握りつぶさない。
@@ -82,6 +81,21 @@ type Replacement = {
 
 // Bun.file().exists() はディレクトリに対して常に false を返すため node:fs を使う。
 const curatedRootExists = existsSync(".rulesync/skills/.curated");
+
+// 取得対象 (expectedSkills) のうち curated に無い skill を検出して fail する。
+// isRequiredTarget 経由のガードは patch 対象を持つ skill しか守れないため、
+// 置換対象を持たない skill (linear-issue-driven-development / pr-conflict-resolver 等) の
+// 取得欠落 (fetch 失敗等) はここで明示検証して握りつぶさない。
+if (curatedRootExists && expectedSkills) {
+  const missing = [...expectedSkills].filter(
+    (name) => !existsSync(curatedPrefix + name),
+  );
+  if (missing.length > 0) {
+    throw new Error(
+      `configured skills missing from curated install: ${missing.join(", ")}`,
+    );
+  }
+}
 
 function isRequiredTarget(path: string) {
   return (
@@ -270,8 +284,10 @@ for (const root of generatedRoots) {
 
   await patchFile(`${root}/mysql/references/primary-keys.md`, [
     {
+      // 事実訂正のみ: MySQL の UUID() は v1 (time-based) を返し random ではない。
+      // 直上行が既に UUID_TO_BIN(uuid, 1) の説明を持つため再掲はしない。
       from: "-- MySQL's UUID() returns UUIDv4 (random). For time-ordered IDs, use app-generated UUIDv7/ULID/Snowflake.",
-      to: "-- MySQL's UUID() returns UUIDv1 (time-based), never random; UUID_TO_BIN(uuid, 1) reorders v1 bytes for better index locality.",
+      to: "-- MySQL's UUID() returns UUIDv1 (time-based), not random. For time-ordered IDs, use app-generated UUIDv7/ULID/Snowflake.",
     },
   ]);
 
