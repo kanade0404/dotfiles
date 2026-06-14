@@ -86,7 +86,9 @@ const curatedRootExists = existsSync(".rulesync/skills/.curated");
 // isRequiredTarget 経由のガードは patch 対象を持つ skill しか守れないため、
 // 置換対象を持たない skill (linear-issue-driven-development / pr-conflict-resolver 等) の
 // 取得欠落 (fetch 失敗等) はここで明示検証して握りつぶさない。
-if (curatedRootExists && expectedSkills) {
+// curatedRootExists でゲートしないのは、install が完全に失敗して .curated 自体が
+// 無い場合 (全 skill 欠落) も漏れなく fail させるため。
+if (expectedSkills) {
   const missing = [...expectedSkills].filter(
     (name) => !existsSync(curatedPrefix + name),
   );
@@ -131,18 +133,27 @@ function replacementAlreadyApplied(path: string, text: string, replacement: Repl
   return count > 0;
 }
 
-async function patchFile(path: string, replacements: Replacement[]) {
+// patch 対象の本文を読む。欠落時はスコープ内なら upstream 破損として throw、
+// スコープ外 (claude の未取得 skill 等) は null を返してスキップさせる。
+// 欠落ガードを isRequiredTarget に一本化し、各 patch 関数での重複を避ける。
+async function readPatchTarget(path: string): Promise<string | null> {
   const file = Bun.file(path);
   if (!(await file.exists())) {
-    // スコープ内 (= 取得済みのはず) なのに欠落していれば upstream 破損として throw。
-    // スコープ外 (claude の未取得 skill 等) は黙ってスキップ。判定は isRequiredTarget に一本化。
     if (isRequiredTarget(path)) {
       throw new Error(`patch target not found: ${path}`);
     }
+    return null;
+  }
+  return file.text();
+}
+
+async function patchFile(path: string, replacements: Replacement[]) {
+  const initial = await readPatchTarget(path);
+  if (initial === null) {
     return;
   }
 
-  let text = await file.text();
+  let text = initial;
   let changed = false;
   for (const replacement of replacements) {
     const { from, to } = replacement;
@@ -160,15 +171,11 @@ async function patchFile(path: string, replacements: Replacement[]) {
 }
 
 async function patchPostgresQueryPatterns(path: string) {
-  const file = Bun.file(path);
-  if (!(await file.exists())) {
-    if (isRequiredTarget(path)) {
-      throw new Error(`patch target not found: ${path}`);
-    }
+  const text = await readPatchTarget(path);
+  if (text === null) {
     return;
   }
 
-  let text = await file.text();
   // Upstream examples can become userss/orderss after pluralization patches; normalize only those generated typos.
   const normalized = text
     .replace(/\busers{2,}\b/g, "users")
