@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
+import { parse as parseJsonc } from "jsonc-parser";
 
 const generatedRoots = [
   ".rulesync/skills/.curated",
@@ -12,33 +13,42 @@ const curatedPrefix = ".rulesync/skills/.curated/";
 //   - target スコープ外で未取得 (claude の pr-review-respond 等) → 黙ってスキップ
 //   - スコープ内なのに欠落 (upstream 破損)               → 従来通り throw
 // を区別する。スコープ外と「想定外欠落」を取り違えてエラーを握りつぶさない。
-function loadExpectedSkills(): Set<string> {
-  const set = new Set<string>();
+// 設定を解決できない (ファイル無し / パース失敗 / 0 件) ときは null を返し、
+// 後段で「全 skill をスコープ内」とみなして欠落時に throw する安全側へ倒す。
+type RulesyncConfig = { sources?: { skills?: string[] }[] };
+
+function loadExpectedSkills(): Set<string> | null {
   if (!existsSync("rulesync.jsonc")) {
-    return set;
+    return null;
   }
-  const text = readFileSync("rulesync.jsonc", "utf8");
-  for (const arr of text.matchAll(/"skills"\s*:\s*\[([^\]]*)\]/g)) {
-    for (const m of arr[1].matchAll(/"([^"]+)"/g)) {
-      set.add(m[1]);
+  let cfg: RulesyncConfig | undefined;
+  try {
+    cfg = parseJsonc(readFileSync("rulesync.jsonc", "utf8")) as RulesyncConfig;
+  } catch {
+    return null;
+  }
+  const set = new Set<string>();
+  for (const source of cfg?.sources ?? []) {
+    for (const name of source?.skills ?? []) {
+      set.add(name);
     }
   }
-  return set;
+  return set.size > 0 ? set : null;
 }
 
 const expectedSkills = loadExpectedSkills();
 
-// この path の skill が現 install のスコープ内か。設定を読めない/空のときは
-// 後方互換でディスク上の存在判定にフォールバックする。
+// この path の skill が現 install のスコープ内か。設定を解決できないときは
+// 安全側 (in-scope = 欠落時 throw) に倒し、退行を握りつぶさない。
 function skillInScope(path: string) {
   if (!path.startsWith(curatedPrefix)) {
     return true;
   }
-  const name = path.slice(curatedPrefix.length).split("/")[0];
-  if (expectedSkills.size > 0) {
-    return expectedSkills.has(name);
+  if (!expectedSkills) {
+    return true;
   }
-  return existsSync(curatedPrefix + name);
+  const name = path.slice(curatedPrefix.length).split("/")[0];
+  return expectedSkills.has(name);
 }
 
 const patches = [
@@ -56,7 +66,8 @@ type Replacement = {
   allowMultipleApplied?: boolean;
 };
 
-const curatedRootExists = await Bun.file(".rulesync/skills/.curated").exists();
+// Bun.file().exists() はディレクトリに対して常に false を返すため node:fs を使う。
+const curatedRootExists = existsSync(".rulesync/skills/.curated");
 
 function isRequiredTarget(path: string) {
   return (
@@ -277,6 +288,9 @@ for (const root of generatedRoots) {
     { from: "CREATE TABLE order (\n", to: "CREATE TABLE orders (\n", allowMultipleApplied: true },
     { from: "CREATE INDEX order_customer_id_idx ON order (customer_id);", to: "CREATE INDEX orders_customer_id_idx ON orders (customer_id);" },
     { from: "e.g., `order_status_check`", to: "e.g., `orders_status_check`" },
+    // CREATE TABLE 例を予約語回避で複数形にしているので、命名規則の記述も複数形に揃える
+    // (singular のままだと例と矛盾する、というレビュー指摘への対応)。
+    { from: "- Tables: singular snake_case (`user_account`, `order_item`)", to: "- Tables: plural snake_case (`users`, `order_items`)" },
   ]);
 
   await patchFile(`${root}/research-practices/assets/research-report-template.md`, [
