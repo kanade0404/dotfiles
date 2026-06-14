@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 
 const generatedRoots = [
   ".rulesync/skills/.curated",
@@ -6,14 +6,38 @@ const generatedRoots = [
 
 const curatedPrefix = ".rulesync/skills/.curated/";
 
-// curated 配下の patch 対象は「その skill がこの install で取得されているとき」だけ必須にする。
-// codex (全 skill) では従来通り存在チェックに引っかかれば throw、claude (4 skill サブセット) では
-// 取得していない skill (pr-review-respond 等) の patch を黙ってスキップできるようにするための判定。
-function skillPresentSync(path: string) {
+// この install で「スコープ内」の skill 名集合を rulesync.jsonc (cwd 相対) の
+// sources[].skills から導出する。codex は repo 直下、claude は rulesync-claude/ を
+// cwd に走り、どちらも ./rulesync.jsonc を読む。これにより
+//   - target スコープ外で未取得 (claude の pr-review-respond 等) → 黙ってスキップ
+//   - スコープ内なのに欠落 (upstream 破損)               → 従来通り throw
+// を区別する。スコープ外と「想定外欠落」を取り違えてエラーを握りつぶさない。
+function loadExpectedSkills(): Set<string> {
+  const set = new Set<string>();
+  if (!existsSync("rulesync.jsonc")) {
+    return set;
+  }
+  const text = readFileSync("rulesync.jsonc", "utf8");
+  for (const arr of text.matchAll(/"skills"\s*:\s*\[([^\]]*)\]/g)) {
+    for (const m of arr[1].matchAll(/"([^"]+)"/g)) {
+      set.add(m[1]);
+    }
+  }
+  return set;
+}
+
+const expectedSkills = loadExpectedSkills();
+
+// この path の skill が現 install のスコープ内か。設定を読めない/空のときは
+// 後方互換でディスク上の存在判定にフォールバックする。
+function skillInScope(path: string) {
   if (!path.startsWith(curatedPrefix)) {
     return true;
   }
   const name = path.slice(curatedPrefix.length).split("/")[0];
+  if (expectedSkills.size > 0) {
+    return expectedSkills.has(name);
+  }
   return existsSync(curatedPrefix + name);
 }
 
@@ -38,7 +62,7 @@ function isRequiredTarget(path: string) {
   return (
     curatedRootExists &&
     path.startsWith(".rulesync/skills/.curated/") &&
-    skillPresentSync(path)
+    skillInScope(path)
   );
 }
 
@@ -68,10 +92,12 @@ function replacementAlreadyApplied(path: string, text: string, replacement: Repl
   return count > 0;
 }
 
-async function patchFile(path: string, replacements: Replacement[], required = false) {
+async function patchFile(path: string, replacements: Replacement[]) {
   const file = Bun.file(path);
   if (!(await file.exists())) {
-    if (required && skillPresentSync(path)) {
+    // スコープ内 (= 取得済みのはず) なのに欠落していれば upstream 破損として throw。
+    // スコープ外 (claude の未取得 skill 等) は黙ってスキップ。判定は isRequiredTarget に一本化。
+    if (isRequiredTarget(path)) {
       throw new Error(`patch target not found: ${path}`);
     }
     return;
@@ -94,10 +120,10 @@ async function patchFile(path: string, replacements: Replacement[], required = f
   }
 }
 
-async function patchPostgresQueryPatterns(path: string, required: boolean) {
+async function patchPostgresQueryPatterns(path: string) {
   const file = Bun.file(path);
   if (!(await file.exists())) {
-    if (required && skillPresentSync(path)) {
+    if (isRequiredTarget(path)) {
       throw new Error(`patch target not found: ${path}`);
     }
     return;
@@ -123,7 +149,7 @@ async function patchPostgresQueryPatterns(path: string, required: boolean) {
     { from: 'cursor.execute("SELECT id, name FROM user WHERE id = ANY(%s)", (list(user_ids),))', to: 'cursor.execute("SELECT id, name FROM users WHERE id = ANY(%s)", (list(user_ids),))' },
     { from: '# cursor.execute("SELECT id, name FROM user WHERE id IN %s", (tuple(user_ids),))', to: '# cursor.execute("SELECT id, name FROM users WHERE id IN %s", (tuple(user_ids),))' },
     { from: "SELECT id, name FROM user u\nWHERE EXISTS (SELECT 1 FROM order o WHERE o.user_id = u.id AND o.total > 100);", to: "SELECT id, name FROM users u\nWHERE EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.id AND o.total > 100);" },
-  ], required);
+  ]);
 }
 
 for (const path of patches) {
@@ -197,14 +223,13 @@ for (const path of shellcheckPatches) {
 }
 
 for (const root of generatedRoots) {
-  const required = root.startsWith(".rulesync/skills/.curated") && curatedRootExists;
   await patchFile(`${root}/pr-review-respond/scripts/prr`, [
     { from: 'exec "$SCRIPT_DIR/fetch_threads.sh" "$@"', to: 'exec bash "$SCRIPT_DIR/fetch_threads.sh" "$@"' },
     { from: 'exec "$SCRIPT_DIR/reply_thread.sh" "$@"', to: 'exec bash "$SCRIPT_DIR/reply_thread.sh" "$@"' },
     { from: 'exec "$SCRIPT_DIR/resolve_thread.sh" "$@"', to: 'exec bash "$SCRIPT_DIR/resolve_thread.sh" "$@"' },
     { from: 'exec "$SCRIPT_DIR/post_summary.sh" "$@"', to: 'exec bash "$SCRIPT_DIR/post_summary.sh" "$@"' },
     { from: 'exec "$SCRIPT_DIR/wait_ci.sh" "$@"', to: 'exec bash "$SCRIPT_DIR/wait_ci.sh" "$@"' },
-  ], required);
+  ]);
 
   await patchFile(`${root}/pr-review-respond/SKILL.md`, [
     {
@@ -216,59 +241,59 @@ for (const root of generatedRoots) {
     { from: 'bash "${CLAUDE_SKILL_DIR}/scripts/prr" resolve <PR> <root-comment-id> [body-file]', to: 'bash <skill-dir>/scripts/prr resolve <PR> <root-comment-id> [body-file]' },
     { from: 'bash "${CLAUDE_SKILL_DIR}/scripts/prr" summary <PR> <body-file>', to: 'bash <skill-dir>/scripts/prr summary <PR> <body-file>' },
     { from: 'bash "${CLAUDE_SKILL_DIR}/scripts/prr" wait-ci <PR>', to: 'bash <skill-dir>/scripts/prr wait-ci <PR>' },
-  ], required);
+  ]);
 
   await patchFile(`${root}/mysql/references/primary-keys.md`, [
     {
       from: "-- MySQL's UUID() returns UUIDv4 (random). For time-ordered IDs, use app-generated UUIDv7/ULID/Snowflake.",
-      to: "-- MySQL's UUID() returns UUIDv1 (time-based). UUID_TO_BIN(uuid, 1) reorders UUIDv1 bytes for better locality.\n-- For random IDs, use UUID_TO_BIN(UUID(), 0) or app-generated UUIDv4; for ordered IDs, prefer app-generated UUIDv7/ULID/Snowflake.",
+      to: "-- MySQL's UUID() returns UUIDv1 (time-based), never random; UUID_TO_BIN(uuid, 1) reorders its bytes for better index locality.\n-- For random IDs, use app-generated UUIDv4. For time-ordered IDs, prefer app-generated UUIDv7/ULID/Snowflake.",
     },
-  ], required);
+  ]);
 
   await patchFile(`${root}/mysql/references/row-locking-gotchas.md`, [
     {
       from: "description: Gap locks, next-key locks, and surprise escalation",
       to: "description: Gap locks and next-key locks; InnoDB does not automatically escalate row locks",
     },
-  ], required);
+  ]);
 
   await patchFile(`${root}/postgres/references/indexing.md`, [
     { from: "CREATE INDEX order_status_created_idx ON order (status, created_at);", to: "CREATE INDEX orders_status_created_idx ON orders (status, created_at);" },
     { from: "CREATE INDEX order_active_idx ON order (customer_id)", to: "CREATE INDEX orders_active_idx ON orders (customer_id)" },
     { from: "CREATE INDEX metadata_idx ON order USING GIN (metadata);", to: "CREATE INDEX orders_metadata_idx ON orders USING GIN (metadata);" },
-  ], required);
+  ]);
 
   await patchFile(`${root}/postgres/references/partitioning.md`, [
     { from: "CREATE TABLE order (\n", to: "CREATE TABLE orders (\n", allowMultipleApplied: true },
     { from: "CREATE TABLE order_us PARTITION OF order FOR VALUES IN ('us');", to: "CREATE TABLE orders_us PARTITION OF orders FOR VALUES IN ('us');" },
     { from: "CREATE TABLE order_eu PARTITION OF order FOR VALUES IN ('eu');", to: "CREATE TABLE orders_eu PARTITION OF orders FOR VALUES IN ('eu');" },
     { from: "CREATE TABLE order_default PARTITION OF order DEFAULT;", to: "CREATE TABLE orders_default PARTITION OF orders DEFAULT;" },
-  ], required);
+  ]);
 
-  await patchPostgresQueryPatterns(`${root}/postgres/references/query-patterns.md`, required);
+  await patchPostgresQueryPatterns(`${root}/postgres/references/query-patterns.md`);
 
   await patchFile(`${root}/postgres/references/schema-design.md`, [
     { from: "CREATE TABLE user (\n", to: "CREATE TABLE users (\n" },
     { from: "CREATE TABLE order (\n", to: "CREATE TABLE orders (\n", allowMultipleApplied: true },
     { from: "CREATE INDEX order_customer_id_idx ON order (customer_id);", to: "CREATE INDEX orders_customer_id_idx ON orders (customer_id);" },
     { from: "e.g., `order_status_check`", to: "e.g., `orders_status_check`" },
-  ], required);
+  ]);
 
   await patchFile(`${root}/research-practices/assets/research-report-template.md`, [
     { from: ".claude/skills/research-practices/", to: ".codex/skills/research-practices/" },
-  ], required);
+  ]);
 
   await patchFile(`${root}/skill-builder/SKILL.md`, [
     { from: "`.claude/skills/<name>/SKILL.md` または top-level `<name>/SKILL.md`", to: "`.codex/skills/<name>/SKILL.md` または rulesync source `skills/<name>/SKILL.md`" },
     { from: "- consumer プロジェクト形式: `.claude/skills/<name>/SKILL.md`", to: "- consumer プロジェクト形式: `.codex/skills/<name>/SKILL.md`" },
     { from: "`evals/<skill>-trigger-results-<date>.json` + description 改訂案", to: "`evals/<skill>-trigger-results-<date>.jsonl` (JSON Lines) + description 改訂案" },
-  ], required);
+  ]);
 
   await patchFile(`${root}/test-review/references/ai-generated.md`, [
     { from: "フォールバックの順序、タイブレーク", to: "フォールバックの順序、同点時の優先順" },
-  ], required);
+  ]);
 
   await patchFile(`${root}/test-review/references/data-stack.md`, [
     { from: "モデルの升バンプ", to: "モデルのメジャーバンプ" },
-  ], required);
+  ]);
 }
