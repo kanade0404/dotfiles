@@ -1,11 +1,11 @@
 import { existsSync, readFileSync } from "node:fs";
 import { parse as parseJsonc, type ParseError } from "jsonc-parser";
 
-const generatedRoots = [
-  ".rulesync/skills/.curated",
-];
-
 const curatedPrefix = ".rulesync/skills/.curated/";
+
+// generatedRoots[0] は curatedPrefix と同一ディレクトリ (末尾スラッシュ無し)。
+// 二重定義でズレないよう curatedPrefix から導出する。
+const generatedRoots = [curatedPrefix.replace(/\/$/, "")];
 
 // この install で「スコープ内」の skill 名集合を rulesync.jsonc (cwd 相対) の
 // sources[].skills から導出する。codex は repo 直下、claude は rulesync-claude/ を
@@ -89,8 +89,10 @@ const curatedRootExists = existsSync(".rulesync/skills/.curated");
 // curatedRootExists でゲートしないのは、install が完全に失敗して .curated 自体が
 // 無い場合 (全 skill 欠落) も漏れなく fail させるため。
 if (expectedSkills) {
+  // ディレクトリだけでなく SKILL.md の存在まで確認する。install が中途終了して
+  // 空ディレクトリだけ残ったケースも欠落として検出するため。
   const missing = [...expectedSkills].filter(
-    (name) => !existsSync(curatedPrefix + name),
+    (name) => !existsSync(`${curatedPrefix}${name}/SKILL.md`),
   );
   if (missing.length > 0) {
     throw new Error(
