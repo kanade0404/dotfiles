@@ -36,6 +36,16 @@ else
 fi
 eval "$(/opt/homebrew/bin/brew shellenv)"
 
+# ---- サードパーティ tap の信頼 (Homebrew 5.1+) ----
+# 新しい Homebrew は非公式 tap の formula/cask を読み込む前に明示的な信頼を要求する
+# (HOMEBREW_REQUIRE_TAP_TRUST)。未信頼だと darwin-rebuild の brew bundle が
+# "Refusing to load formula ... from untrusted tap" で失敗するため、ここで trust する。
+# nix/modules/homebrew.nix の taps と一致させること。
+log "サードパーティ tap を信頼登録"
+for tap in ariga/tap microsoft/apm; do
+  brew trust "$tap"
+done
+
 # ---- Nix experimental features (一時ユーザー設定) ----
 # darwin-rebuild 初回は flakes/nix-command が必須。bootstrap 完了後は /etc/nix/nix.conf が
 # nix-darwin によって管理されるので、このユーザー設定は冗長になる。
