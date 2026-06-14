@@ -6,7 +6,7 @@
   // (tdd / code-review など superpowers 等の有効プラグインと重複するものを持ち込まないため)。
   // 生成は `bun run rulesync:skills:claude` (package.json) から実行し、出力は親ディレクトリ
   // (リポジトリ直下) の .claude/skills/ へ書き出す。
-  "$schema": "https://github.com/dyoshikawa/rulesync/releases/download/v8.24.1/config-schema.json",
+  "$schema": "https://github.com/dyoshikawa/rulesync/releases/download/v8.28.1/config-schema.json",
   "targets": ["claudecode"],
   "features": ["skills"],
   "sources": [

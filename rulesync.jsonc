@@ -1,5 +1,5 @@
 {
-  "$schema": "https://github.com/dyoshikawa/rulesync/releases/download/v8.24.1/config-schema.json",
+  "$schema": "https://github.com/dyoshikawa/rulesync/releases/download/v8.28.1/config-schema.json",
   "targets": ["codexcli"],
   "features": ["skills"],
   "sources": [
