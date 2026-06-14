@@ -30,7 +30,10 @@ function loadExpectedSkills(): Set<string> | null {
     if (errors.length > 0) {
       return null;
     }
-  } catch {
+  } catch (e) {
+    // パース以外の予期しない失敗 (readFileSync の権限エラー等) も安全側 (null) に
+    // 倒すが、デバッグのため原因はログに残す。
+    console.error(`failed to load rulesync.jsonc for skill scope: ${e}`);
     return null;
   }
   const set = new Set<string>();
@@ -47,11 +50,13 @@ const expectedSkills = loadExpectedSkills();
 // この path の skill が現 install のスコープ内か。設定を解決できないときは
 // 安全側 (in-scope = 欠落時 throw) に倒し、退行を握りつぶさない。
 function skillInScope(path: string) {
-  // 防御的ガード: 現状 isRequiredTarget からのみ呼ばれ curated path 前提だが、
-  // 別コンテキストから直接呼ばれても安全なよう curated 配下以外は対象外扱いにする。
+  // 防御的ガード: 現状 isRequiredTarget が先に startsWith を確認するため到達しないが、
+  // 別コンテキストから直接呼ばれた場合、curated 配下でないパスは「スコープ対象の
+  // skill ではない」ので out-of-scope (false) を返す。
   if (!path.startsWith(curatedPrefix)) {
-    return true;
+    return false;
   }
+  // 設定を解決できない場合は安全側 (in-scope = 欠落時 throw) に倒す。
   if (!expectedSkills) {
     return true;
   }
@@ -265,7 +270,7 @@ for (const root of generatedRoots) {
   await patchFile(`${root}/mysql/references/primary-keys.md`, [
     {
       from: "-- MySQL's UUID() returns UUIDv4 (random). For time-ordered IDs, use app-generated UUIDv7/ULID/Snowflake.",
-      to: "-- MySQL's UUID() returns UUIDv1 (time-based), never random; UUID_TO_BIN(uuid, 1) reorders v1 bytes for better index locality.\n-- The swap flag is v1-only: store app-generated UUIDv4 (random) or UUIDv7/ULID/Snowflake (time-ordered) as-is via UUID_TO_BIN(uuid, 0).",
+      to: "-- MySQL's UUID() returns UUIDv1 (time-based), never random; UUID_TO_BIN(uuid, 1) reorders v1 bytes for better index locality.",
     },
   ]);
 

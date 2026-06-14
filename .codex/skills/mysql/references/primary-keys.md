@@ -30,7 +30,6 @@ CREATE TABLE users (
 );
 -- UUID_TO_BIN(uuid, 1) reorders UUIDv1 bytes to be roughly time-sorted (reduces fragmentation)
 -- MySQL's UUID() returns UUIDv1 (time-based), never random; UUID_TO_BIN(uuid, 1) reorders v1 bytes for better index locality.
--- The swap flag is v1-only: store app-generated UUIDv4 (random) or UUIDv7/ULID/Snowflake (time-ordered) as-is via UUID_TO_BIN(uuid, 0).
 INSERT INTO users (public_id) VALUES (UUID_TO_BIN(?, 1)); -- app provides UUID string
 ```
 
