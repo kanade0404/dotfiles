@@ -47,6 +47,8 @@ const expectedSkills = loadExpectedSkills();
 // この path の skill が現 install のスコープ内か。設定を解決できないときは
 // 安全側 (in-scope = 欠落時 throw) に倒し、退行を握りつぶさない。
 function skillInScope(path: string) {
+  // 防御的ガード: 現状 isRequiredTarget からのみ呼ばれ curated path 前提だが、
+  // 別コンテキストから直接呼ばれても安全なよう curated 配下以外は対象外扱いにする。
   if (!path.startsWith(curatedPrefix)) {
     return true;
   }
@@ -78,7 +80,7 @@ const curatedRootExists = existsSync(".rulesync/skills/.curated");
 function isRequiredTarget(path: string) {
   return (
     curatedRootExists &&
-    path.startsWith(".rulesync/skills/.curated/") &&
+    path.startsWith(curatedPrefix) &&
     skillInScope(path)
   );
 }
@@ -263,7 +265,7 @@ for (const root of generatedRoots) {
   await patchFile(`${root}/mysql/references/primary-keys.md`, [
     {
       from: "-- MySQL's UUID() returns UUIDv4 (random). For time-ordered IDs, use app-generated UUIDv7/ULID/Snowflake.",
-      to: "-- MySQL's UUID() returns UUIDv1 (time-based), never random; UUID_TO_BIN(uuid, 1) reorders its bytes for better index locality.\n-- For random IDs, use app-generated UUIDv4. For time-ordered IDs, prefer app-generated UUIDv7/ULID/Snowflake.",
+      to: "-- MySQL's UUID() returns UUIDv1 (time-based), never random; UUID_TO_BIN(uuid, 1) reorders v1 bytes for better index locality.\n-- The swap flag is v1-only: store app-generated UUIDv4 (random) or UUIDv7/ULID/Snowflake (time-ordered) as-is via UUID_TO_BIN(uuid, 0).",
     },
   ]);
 
@@ -297,6 +299,12 @@ for (const root of generatedRoots) {
     // CREATE TABLE 例を予約語回避で複数形にしているので、命名規則の記述も複数形に揃える
     // (singular のままだと例と矛盾する、というレビュー指摘への対応)。
     { from: "- Tables: singular snake_case (`user_account`, `order_item`)", to: "- Tables: plural snake_case (`users`, `order_items`)" },
+    // FK 例が存在しない singular table (customer) を参照し、かつ plural 命名規則とも
+    // 矛盾していたため、参照先 customers テーブルを定義し plural に揃えて self-contained にする。
+    {
+      from: "CREATE TABLE orders (\n  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,\n  customer_id BIGINT NOT NULL REFERENCES customer(id) ON DELETE CASCADE\n);",
+      to: "CREATE TABLE customers (\n  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY\n);\nCREATE TABLE orders (\n  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,\n  customer_id BIGINT NOT NULL REFERENCES customers(id) ON DELETE CASCADE\n);",
+    },
   ]);
 
   await patchFile(`${root}/research-practices/assets/research-report-template.md`, [
