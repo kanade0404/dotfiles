@@ -1,14 +1,8 @@
 ---
-description: PostgreSQL best practices, query optimization, connection troubleshooting, and performance improvement. Load when working with Postgres databases.
-license: MIT
-metadata:
-    author: planetscale
-    github-path: skills/postgres
-    github-ref: refs/heads/main
-    github-repo: https://github.com/planetscale/database-skills
-    github-tree-sha: d88c9e1d9ef50949b8ce4fde20629a31378afe8e
-    version: 1.0.0
 name: postgres
+description: >-
+  PostgreSQL best practices, query optimization, connection troubleshooting, and
+  performance improvement. Load when working with Postgres databases.
 ---
 # PlanetScale Postgres
 

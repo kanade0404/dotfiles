@@ -44,16 +44,19 @@ CREATE TABLE orders (
 - Suggestion: use `ON DELETE CASCADE` or `ON DELETE SET NULL` explicitly
 
 ```sql
+CREATE TABLE customers (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY
+);
 CREATE TABLE orders (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  customer_id BIGINT NOT NULL REFERENCES customer(id) ON DELETE CASCADE
+  customer_id BIGINT NOT NULL REFERENCES customers(id) ON DELETE CASCADE
 );
 CREATE INDEX orders_customer_id_idx ON orders (customer_id);
 ```
 
 ## Naming Conventions
 
-- Tables: singular snake_case (`user_account`, `order_item`)
+- Tables: plural snake_case (`users`, `order_items`)
 - Columns: singular snake_case (`created_at`, `user_id`)
 - Indexes: `{table}_{column}_idx`
 - Constraints: `{table}_{column}_{type}` (e.g., `orders_status_check`)

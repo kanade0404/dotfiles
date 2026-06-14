@@ -1,6 +1,68 @@
-const generatedRoots = [
-  ".rulesync/skills/.curated",
-];
+import { existsSync, readFileSync } from "node:fs";
+import { parse as parseJsonc, type ParseError } from "jsonc-parser";
+
+const curatedPrefix = ".rulesync/skills/.curated/";
+
+// generatedRoots[0] は curatedPrefix と同一ディレクトリ (末尾スラッシュ無し)。
+// 二重定義でズレないよう curatedPrefix から導出する。
+const generatedRoots = [curatedPrefix.replace(/\/$/, "")];
+
+// この install で「スコープ内」の skill 名集合を rulesync.jsonc (cwd 相対) の
+// sources[].skills から導出する。codex は repo 直下、claude は rulesync-claude/ を
+// cwd に走り、どちらも ./rulesync.jsonc を読む。これにより
+//   - target スコープ外で未取得 (claude の pr-review-respond 等) → 黙ってスキップ
+//   - スコープ内なのに欠落 (upstream 破損)               → 従来通り throw
+// を区別する。スコープ外と「想定外欠落」を取り違えてエラーを握りつぶさない。
+// 設定を解決できない (ファイル無し / パース失敗 / 0 件) ときは null を返し、
+// 後段で「全 skill をスコープ内」とみなして欠落時に throw する安全側へ倒す。
+type RulesyncConfig = { sources?: { skills?: string[] }[] };
+
+function loadExpectedSkills(): Set<string> | null {
+  if (!existsSync("rulesync.jsonc")) {
+    return null;
+  }
+  let cfg: RulesyncConfig | undefined;
+  try {
+    // jsonc-parser の parse() は fault-tolerant で malformed でも throw しない。
+    // errors 配列を渡し、構文エラーがあれば解決不能として null を返す (安全側へ倒す)。
+    const errors: ParseError[] = [];
+    cfg = parseJsonc(readFileSync("rulesync.jsonc", "utf8"), errors) as RulesyncConfig;
+    if (errors.length > 0) {
+      return null;
+    }
+  } catch (e) {
+    // パース以外の予期しない失敗 (readFileSync の権限エラー等) も安全側 (null) に
+    // 倒すが、デバッグのため原因はログに残す。
+    console.error(`failed to load rulesync.jsonc for skill scope: ${e}`);
+    return null;
+  }
+  const set = new Set<string>();
+  for (const source of cfg?.sources ?? []) {
+    for (const name of source?.skills ?? []) {
+      set.add(name);
+    }
+  }
+  // 0 件 (sources 無し / skills 空) は「スコープを特定できない」とみなして null を返し、
+  // skillInScope 側で安全側 (in-scope = 欠落時 throw) に倒す。実運用で sources[].skills が
+  // 空になることは想定しないが、空集合で全 skill を out-of-scope (skip) にして patch を
+  // 黙って飛ばすより安全。
+  return set.size > 0 ? set : null;
+}
+
+const expectedSkills = loadExpectedSkills();
+
+// この path の skill が現 install のスコープ内か。呼び出し元 isRequiredTarget が
+// startsWith(curatedPrefix) を保証するため curated path 前提で受ける。設定を解決
+// できないときは安全側 (in-scope = 欠落時 throw) に倒し、退行を握りつぶさない。
+function skillInScope(path: string) {
+  // 設定を解決できない (rulesync.jsonc 無し / パース失敗 / sources[].skills が 0 件) ときは
+  // expectedSkills=null となり、安全側 (in-scope = 欠落時 throw) に倒して退行を握りつぶさない。
+  if (!expectedSkills) {
+    return true;
+  }
+  const name = path.slice(curatedPrefix.length).split("/")[0];
+  return expectedSkills.has(name);
+}
 
 const patches = [
   ".rulesync/skills/.curated/pr-review-respond/SKILL.md",
@@ -17,10 +79,34 @@ type Replacement = {
   allowMultipleApplied?: boolean;
 };
 
-const curatedRootExists = await Bun.file(".rulesync/skills/.curated").exists();
+// Bun.file().exists() はディレクトリに対して常に false を返すため node:fs を使う。
+const curatedRootExists = existsSync(".rulesync/skills/.curated");
+
+// 取得対象 (expectedSkills) のうち curated に無い skill を検出して fail する。
+// isRequiredTarget 経由のガードは patch 対象を持つ skill しか守れないため、
+// 置換対象を持たない skill (linear-issue-driven-development / pr-conflict-resolver 等) の
+// 取得欠落 (fetch 失敗等) はここで明示検証して握りつぶさない。
+// curatedRootExists でゲートしないのは、install が完全に失敗して .curated 自体が
+// 無い場合 (全 skill 欠落) も漏れなく fail させるため。
+if (expectedSkills) {
+  // ディレクトリだけでなく SKILL.md の存在まで確認する。install が中途終了して
+  // 空ディレクトリだけ残ったケースも欠落として検出するため。
+  const missing = [...expectedSkills].filter(
+    (name) => !existsSync(`${curatedPrefix}${name}/SKILL.md`),
+  );
+  if (missing.length > 0) {
+    throw new Error(
+      `configured skills missing from curated install: ${missing.join(", ")}`,
+    );
+  }
+}
 
 function isRequiredTarget(path: string) {
-  return curatedRootExists && path.startsWith(".rulesync/skills/.curated/");
+  return (
+    curatedRootExists &&
+    path.startsWith(curatedPrefix) &&
+    skillInScope(path)
+  );
 }
 
 function countOccurrences(text: string, needle: string) {
@@ -49,16 +135,27 @@ function replacementAlreadyApplied(path: string, text: string, replacement: Repl
   return count > 0;
 }
 
-async function patchFile(path: string, replacements: Replacement[], required = false) {
+// patch 対象の本文を読む。欠落時はスコープ内なら upstream 破損として throw、
+// スコープ外 (claude の未取得 skill 等) は null を返してスキップさせる。
+// 欠落ガードを isRequiredTarget に一本化し、各 patch 関数での重複を避ける。
+async function readPatchTarget(path: string): Promise<string | null> {
   const file = Bun.file(path);
   if (!(await file.exists())) {
-    if (required) {
+    if (isRequiredTarget(path)) {
       throw new Error(`patch target not found: ${path}`);
     }
+    return null;
+  }
+  return file.text();
+}
+
+async function patchFile(path: string, replacements: Replacement[]) {
+  const initial = await readPatchTarget(path);
+  if (initial === null) {
     return;
   }
 
-  let text = await file.text();
+  let text = initial;
   let changed = false;
   for (const replacement of replacements) {
     const { from, to } = replacement;
@@ -75,16 +172,12 @@ async function patchFile(path: string, replacements: Replacement[], required = f
   }
 }
 
-async function patchPostgresQueryPatterns(path: string, required: boolean) {
-  const file = Bun.file(path);
-  if (!(await file.exists())) {
-    if (required) {
-      throw new Error(`patch target not found: ${path}`);
-    }
+async function patchPostgresQueryPatterns(path: string) {
+  const text = await readPatchTarget(path);
+  if (text === null) {
     return;
   }
 
-  let text = await file.text();
   // Upstream examples can become userss/orderss after pluralization patches; normalize only those generated typos.
   const normalized = text
     .replace(/\busers{2,}\b/g, "users")
@@ -104,19 +197,15 @@ async function patchPostgresQueryPatterns(path: string, required: boolean) {
     { from: 'cursor.execute("SELECT id, name FROM user WHERE id = ANY(%s)", (list(user_ids),))', to: 'cursor.execute("SELECT id, name FROM users WHERE id = ANY(%s)", (list(user_ids),))' },
     { from: '# cursor.execute("SELECT id, name FROM user WHERE id IN %s", (tuple(user_ids),))', to: '# cursor.execute("SELECT id, name FROM users WHERE id IN %s", (tuple(user_ids),))' },
     { from: "SELECT id, name FROM user u\nWHERE EXISTS (SELECT 1 FROM order o WHERE o.user_id = u.id AND o.total > 100);", to: "SELECT id, name FROM users u\nWHERE EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.id AND o.total > 100);" },
-  ], required);
+  ]);
 }
 
 for (const path of patches) {
-  const file = Bun.file(path);
-  if (!(await file.exists())) {
-    if (isRequiredTarget(path)) {
-      throw new Error(`patch target not found: ${path}`);
-    }
+  const text = await readPatchTarget(path);
+  if (text === null) {
     continue;
   }
 
-  const text = await file.text();
   const match = text.match(/^---\n([\s\S]*?)\n---/);
   if (!match) {
     continue;
@@ -144,15 +233,12 @@ for (const path of patches) {
 }
 
 for (const path of shellcheckPatches) {
-  const file = Bun.file(path);
-  if (!(await file.exists())) {
-    if (isRequiredTarget(path)) {
-      throw new Error(`patch target not found: ${path}`);
-    }
+  const initial = await readPatchTarget(path);
+  if (initial === null) {
     continue;
   }
 
-  let text = await file.text();
+  let text = initial;
   if (!text.includes("export NO_COLOR=1 CLICOLOR=0 CLICOLOR_FORCE=0 GH_NO_UPDATE_NOTIFIER=1")) {
     text = text.replace(
       "set -euo pipefail\n",
@@ -178,14 +264,13 @@ for (const path of shellcheckPatches) {
 }
 
 for (const root of generatedRoots) {
-  const required = root.startsWith(".rulesync/skills/.curated") && curatedRootExists;
   await patchFile(`${root}/pr-review-respond/scripts/prr`, [
     { from: 'exec "$SCRIPT_DIR/fetch_threads.sh" "$@"', to: 'exec bash "$SCRIPT_DIR/fetch_threads.sh" "$@"' },
     { from: 'exec "$SCRIPT_DIR/reply_thread.sh" "$@"', to: 'exec bash "$SCRIPT_DIR/reply_thread.sh" "$@"' },
     { from: 'exec "$SCRIPT_DIR/resolve_thread.sh" "$@"', to: 'exec bash "$SCRIPT_DIR/resolve_thread.sh" "$@"' },
     { from: 'exec "$SCRIPT_DIR/post_summary.sh" "$@"', to: 'exec bash "$SCRIPT_DIR/post_summary.sh" "$@"' },
     { from: 'exec "$SCRIPT_DIR/wait_ci.sh" "$@"', to: 'exec bash "$SCRIPT_DIR/wait_ci.sh" "$@"' },
-  ], required);
+  ]);
 
   await patchFile(`${root}/pr-review-respond/SKILL.md`, [
     {
@@ -197,59 +282,70 @@ for (const root of generatedRoots) {
     { from: 'bash "${CLAUDE_SKILL_DIR}/scripts/prr" resolve <PR> <root-comment-id> [body-file]', to: 'bash <skill-dir>/scripts/prr resolve <PR> <root-comment-id> [body-file]' },
     { from: 'bash "${CLAUDE_SKILL_DIR}/scripts/prr" summary <PR> <body-file>', to: 'bash <skill-dir>/scripts/prr summary <PR> <body-file>' },
     { from: 'bash "${CLAUDE_SKILL_DIR}/scripts/prr" wait-ci <PR>', to: 'bash <skill-dir>/scripts/prr wait-ci <PR>' },
-  ], required);
+  ]);
 
   await patchFile(`${root}/mysql/references/primary-keys.md`, [
     {
+      // 事実訂正のみ: MySQL の UUID() は v1 (time-based) を返し random ではない。
+      // 直上行が既に UUID_TO_BIN(uuid, 1) の説明を持つため再掲はしない。
       from: "-- MySQL's UUID() returns UUIDv4 (random). For time-ordered IDs, use app-generated UUIDv7/ULID/Snowflake.",
-      to: "-- MySQL's UUID() returns UUIDv1 (time-based). UUID_TO_BIN(uuid, 1) reorders UUIDv1 bytes for better locality.\n-- For random IDs, use UUID_TO_BIN(UUID(), 0) or app-generated UUIDv4; for ordered IDs, prefer app-generated UUIDv7/ULID/Snowflake.",
+      to: "-- MySQL's UUID() returns UUIDv1 (time-based), not random. For time-ordered IDs, use app-generated UUIDv7/ULID/Snowflake.",
     },
-  ], required);
+  ]);
 
   await patchFile(`${root}/mysql/references/row-locking-gotchas.md`, [
     {
       from: "description: Gap locks, next-key locks, and surprise escalation",
       to: "description: Gap locks and next-key locks; InnoDB does not automatically escalate row locks",
     },
-  ], required);
+  ]);
 
   await patchFile(`${root}/postgres/references/indexing.md`, [
     { from: "CREATE INDEX order_status_created_idx ON order (status, created_at);", to: "CREATE INDEX orders_status_created_idx ON orders (status, created_at);" },
     { from: "CREATE INDEX order_active_idx ON order (customer_id)", to: "CREATE INDEX orders_active_idx ON orders (customer_id)" },
     { from: "CREATE INDEX metadata_idx ON order USING GIN (metadata);", to: "CREATE INDEX orders_metadata_idx ON orders USING GIN (metadata);" },
-  ], required);
+  ]);
 
   await patchFile(`${root}/postgres/references/partitioning.md`, [
     { from: "CREATE TABLE order (\n", to: "CREATE TABLE orders (\n", allowMultipleApplied: true },
     { from: "CREATE TABLE order_us PARTITION OF order FOR VALUES IN ('us');", to: "CREATE TABLE orders_us PARTITION OF orders FOR VALUES IN ('us');" },
     { from: "CREATE TABLE order_eu PARTITION OF order FOR VALUES IN ('eu');", to: "CREATE TABLE orders_eu PARTITION OF orders FOR VALUES IN ('eu');" },
     { from: "CREATE TABLE order_default PARTITION OF order DEFAULT;", to: "CREATE TABLE orders_default PARTITION OF orders DEFAULT;" },
-  ], required);
+  ]);
 
-  await patchPostgresQueryPatterns(`${root}/postgres/references/query-patterns.md`, required);
+  await patchPostgresQueryPatterns(`${root}/postgres/references/query-patterns.md`);
 
   await patchFile(`${root}/postgres/references/schema-design.md`, [
     { from: "CREATE TABLE user (\n", to: "CREATE TABLE users (\n" },
     { from: "CREATE TABLE order (\n", to: "CREATE TABLE orders (\n", allowMultipleApplied: true },
     { from: "CREATE INDEX order_customer_id_idx ON order (customer_id);", to: "CREATE INDEX orders_customer_id_idx ON orders (customer_id);" },
     { from: "e.g., `order_status_check`", to: "e.g., `orders_status_check`" },
-  ], required);
+    // CREATE TABLE 例を予約語回避で複数形にしているので、命名規則の記述も複数形に揃える
+    // (singular のままだと例と矛盾する、というレビュー指摘への対応)。
+    { from: "- Tables: singular snake_case (`user_account`, `order_item`)", to: "- Tables: plural snake_case (`users`, `order_items`)" },
+    // FK 例が存在しない singular table (customer) を参照し、かつ plural 命名規則とも
+    // 矛盾していたため、参照先 customers テーブルを定義し plural に揃えて self-contained にする。
+    {
+      from: "CREATE TABLE orders (\n  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,\n  customer_id BIGINT NOT NULL REFERENCES customer(id) ON DELETE CASCADE\n);",
+      to: "CREATE TABLE customers (\n  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY\n);\nCREATE TABLE orders (\n  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,\n  customer_id BIGINT NOT NULL REFERENCES customers(id) ON DELETE CASCADE\n);",
+    },
+  ]);
 
   await patchFile(`${root}/research-practices/assets/research-report-template.md`, [
     { from: ".claude/skills/research-practices/", to: ".codex/skills/research-practices/" },
-  ], required);
+  ]);
 
   await patchFile(`${root}/skill-builder/SKILL.md`, [
     { from: "`.claude/skills/<name>/SKILL.md` または top-level `<name>/SKILL.md`", to: "`.codex/skills/<name>/SKILL.md` または rulesync source `skills/<name>/SKILL.md`" },
     { from: "- consumer プロジェクト形式: `.claude/skills/<name>/SKILL.md`", to: "- consumer プロジェクト形式: `.codex/skills/<name>/SKILL.md`" },
     { from: "`evals/<skill>-trigger-results-<date>.json` + description 改訂案", to: "`evals/<skill>-trigger-results-<date>.jsonl` (JSON Lines) + description 改訂案" },
-  ], required);
+  ]);
 
   await patchFile(`${root}/test-review/references/ai-generated.md`, [
     { from: "フォールバックの順序、タイブレーク", to: "フォールバックの順序、同点時の優先順" },
-  ], required);
+  ]);
 
   await patchFile(`${root}/test-review/references/data-stack.md`, [
     { from: "モデルの升バンプ", to: "モデルのメジャーバンプ" },
-  ], required);
+  ]);
 }

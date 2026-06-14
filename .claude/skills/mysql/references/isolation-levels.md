@@ -41,10 +41,8 @@ Converts all plain SELECTs to `SELECT ... FOR SHARE` **if autocommit is disabled
 Dirty reads with no valid production use case.
 
 ## Decision Guide
-
 | Scenario | Recommendation |
 |---|---|
 | General OLTP / check-then-insert / reports | **REPEATABLE READ** (default) |
 | Bulk import or gap-lock deadlocks | **READ COMMITTED** (per-session), benchmark first |
 | Need serializability | Explicit `FOR UPDATE` at REPEATABLE READ; SERIALIZABLE only as last resort |
-

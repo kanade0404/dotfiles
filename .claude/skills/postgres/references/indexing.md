@@ -19,19 +19,18 @@ Put equality columns first, then range/sort columns:
 
 ```sql
 -- WHERE status = 'active' AND created_at > '2026-01-01'
-CREATE INDEX order_status_created_idx ON order (status, created_at);
+CREATE INDEX orders_status_created_idx ON orders (status, created_at);
 ```
 
 A composite index on `(a, b)` supports queries on `a` + `b` and `a` alone, but not `b` alone.
 
 ## Partial Indexes
 
-Index a subset of rows by adding a WHERE predicate. Use when queries
-frequently target a well-defined subset (e.g. `status = 'active'`); also
-helpful when a full index would be too large to maintain.
+Reduce index size by filtering to common query patterns.
+Only use if index size is problematic but the index is needed for performance.
 
 ```sql
-CREATE INDEX order_active_idx ON order (customer_id)
+CREATE INDEX orders_active_idx ON orders (customer_id)
   WHERE status = 'active';
 ```
 
@@ -49,7 +48,7 @@ Consider creating covering indexes for commonly executed query patterns that ret
 | BRIN | Large sequential/time-series | Append-only logs, events (requires physical row order correlation) |
 
 ```sql
-CREATE INDEX metadata_idx ON order USING GIN (metadata);       -- JSONB
+CREATE INDEX orders_metadata_idx ON orders USING GIN (metadata);       -- JSONB
 CREATE INDEX event_created_idx ON event USING BRIN (created_at); -- time-series
 ```
 

@@ -32,15 +32,17 @@ sudo darwin-rebuild switch --flake "$DOTFILES_DIR/nix"
 # Nix 管理外ファイルの symlink 再作成 (.config/, .local/bin/, .claude/ 等変更時)
 DOTFILES="$DOTFILES_DIR" bash "$DOTFILES_DIR/install.sh"
 
-# Codex skills を rulesync で更新して ~/.codex/skills に反映
-bun run rulesync:skills
+# Codex / Claude skills を rulesync で生成して ~/.codex/skills・~/.claude/skills に反映
+bun run rulesync:skills         # Codex (.codex/skills)
+bun run rulesync:skills:claude  # Claude (.claude/skills, 隔離 pipeline rulesync-claude/)
 DOTFILES="$DOTFILES_DIR" bash "$DOTFILES_DIR/install.sh"
 
-# upstream の skill 参照を更新してから再生成
+# skills 配列の追加/削除や upstream skill 参照の更新時は :update で再解決
 bun run rulesync:skills:update
+bun run rulesync:skills:claude:update
 ```
 
-`rulesync` を upgrade するときは、`package.json` の devDependency と `rulesync.jsonc` の `$schema` URL を同じバージョンに更新する。
+`rulesync` を upgrade するときは、`package.json` の devDependency と、`rulesync.jsonc` / `rulesync-claude/rulesync.jsonc` の `$schema` URL を同じバージョンに更新する。
 
 ### worktree から適用する場合
 
@@ -104,9 +106,10 @@ install.sh               # Nix 管理外ファイルの symlink 作成
 | Shell / Git / tmux | `nix/home.nix` | `darwin-rebuild switch` |
 | Neovim | `.config/nvim/` | `install.sh` |
 | Ghostty | `.config/ghostty/` | `install.sh` |
-| Codex skills | `rulesync.jsonc` → `.codex/skills/` | `bun run rulesync:skills` + `install.sh` |
+| Codex skills | `rulesync.jsonc` → `.codex/skills/` | `bun run rulesync:skills:update` + `install.sh` |
+| Claude skills | `rulesync-claude/rulesync.jsonc` → `.claude/skills/` | `bun run rulesync:skills:claude:update` + `install.sh` |
 | Codex settings/rules/hooks/commands | `.codex/` | `install.sh` |
-| Claude Code | `.claude/` | `install.sh` |
+| Claude Code settings/hooks/commands | `.claude/` | `install.sh` |
 
 ## Claude Code Hooks
 

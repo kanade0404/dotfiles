@@ -1,0 +1,24 @@
+{
+  // Claude Code 用 skill を生成する隔離パイプライン。
+  // codex 用 (リポジトリ直下の rulesync.jsonc) とは別ディレクトリ・別 lock で運用し、
+  // 互いの rulesync.lock / .rulesync キャッシュを汚さない。
+  // Claude には codex のフルセット (17 skill) を入れず、自作 + DB の 4 skill だけにスコープする
+  // (tdd / code-review など superpowers 等の有効プラグインと重複するものを持ち込まないため)。
+  // 生成は `bun run rulesync:skills:claude` (package.json) から実行し、出力は親ディレクトリ
+  // (リポジトリ直下) の .claude/skills/ へ書き出す。
+  "$schema": "https://github.com/dyoshikawa/rulesync/releases/download/v8.28.1/config-schema.json",
+  "targets": ["claudecode"],
+  "features": ["skills"],
+  "sources": [
+    {
+      "source": "https://github.com/kanade0404/skills.git",
+      "transport": "git",
+      "skills": ["pr-conflict-resolver", "linear-issue-driven-development"]
+    },
+    {
+      "source": "https://github.com/planetscale/database-skills.git",
+      "transport": "git",
+      "skills": ["mysql", "postgres"]
+    }
+  ]
+}

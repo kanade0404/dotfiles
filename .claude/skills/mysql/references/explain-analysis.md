@@ -19,7 +19,6 @@ EXPLAIN ANALYZE SELECT ...;            -- actual execution (8.0.18+, runs the qu
 Target `ref` or better. `ALL` on >1000 rows almost always needs an index.
 
 ## Key Extra Flags
-
 | Flag | Meaning | Action |
 |---|---|---|
 | `Using index` | Covering index (optimal) | None |

@@ -6,10 +6,13 @@
     "test": "bun test",
     "lint:md": "markdownlint-cli2 \"**/*.md\"",
     "rulesync:skills": "bun run rulesync install --mode rulesync && bun scripts/patch-rulesync-skill-frontmatter.ts && bun run rulesync generate --targets codexcli --features skills",
-    "rulesync:skills:update": "bun run rulesync install --mode rulesync --update && bun scripts/patch-rulesync-skill-frontmatter.ts && bun run rulesync generate --targets codexcli --features skills"
+    "rulesync:skills:update": "bun run rulesync install --mode rulesync --update && bun scripts/patch-rulesync-skill-frontmatter.ts && bun run rulesync generate --targets codexcli --features skills",
+    "rulesync:skills:claude": "root=\"$PWD\" && cd rulesync-claude && ../node_modules/.bin/rulesync install --mode rulesync && bun ../scripts/patch-rulesync-skill-frontmatter.ts && ../node_modules/.bin/rulesync generate --targets claudecode --features skills --output-roots \"$root\"",
+    "rulesync:skills:claude:update": "root=\"$PWD\" && cd rulesync-claude && ../node_modules/.bin/rulesync install --mode rulesync --update && bun ../scripts/patch-rulesync-skill-frontmatter.ts && ../node_modules/.bin/rulesync generate --targets claudecode --features skills --output-roots \"$root\""
   },
   "devDependencies": {
     "@types/bun": "latest",
+    "jsonc-parser": "3.3.1",
     "markdownlint-cli2": "0.22.1",
     "rulesync": "8.28.1"
   },
