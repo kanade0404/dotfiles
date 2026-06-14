@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { parse as parseJsonc } from "jsonc-parser";
+import { parse as parseJsonc, type ParseError } from "jsonc-parser";
 
 const generatedRoots = [
   ".rulesync/skills/.curated",
@@ -23,7 +23,13 @@ function loadExpectedSkills(): Set<string> | null {
   }
   let cfg: RulesyncConfig | undefined;
   try {
-    cfg = parseJsonc(readFileSync("rulesync.jsonc", "utf8")) as RulesyncConfig;
+    // jsonc-parser の parse() は fault-tolerant で malformed でも throw しない。
+    // errors 配列を渡し、構文エラーがあれば解決不能として null を返す (安全側へ倒す)。
+    const errors: ParseError[] = [];
+    cfg = parseJsonc(readFileSync("rulesync.jsonc", "utf8"), errors) as RulesyncConfig;
+    if (errors.length > 0) {
+      return null;
+    }
   } catch {
     return null;
   }
