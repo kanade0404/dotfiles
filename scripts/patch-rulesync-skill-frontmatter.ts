@@ -201,15 +201,11 @@ async function patchPostgresQueryPatterns(path: string) {
 }
 
 for (const path of patches) {
-  const file = Bun.file(path);
-  if (!(await file.exists())) {
-    if (isRequiredTarget(path)) {
-      throw new Error(`patch target not found: ${path}`);
-    }
+  const text = await readPatchTarget(path);
+  if (text === null) {
     continue;
   }
 
-  const text = await file.text();
   const match = text.match(/^---\n([\s\S]*?)\n---/);
   if (!match) {
     continue;
@@ -237,15 +233,12 @@ for (const path of patches) {
 }
 
 for (const path of shellcheckPatches) {
-  const file = Bun.file(path);
-  if (!(await file.exists())) {
-    if (isRequiredTarget(path)) {
-      throw new Error(`patch target not found: ${path}`);
-    }
+  const initial = await readPatchTarget(path);
+  if (initial === null) {
     continue;
   }
 
-  let text = await file.text();
+  let text = initial;
   if (!text.includes("export NO_COLOR=1 CLICOLOR=0 CLICOLOR_FORCE=0 GH_NO_UPDATE_NOTIFIER=1")) {
     text = text.replace(
       "set -euo pipefail\n",
