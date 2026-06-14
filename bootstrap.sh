@@ -42,9 +42,13 @@ eval "$(/opt/homebrew/bin/brew shellenv)"
 # "Refusing to load formula ... from untrusted tap" で失敗するため、ここで trust する。
 # nix/modules/homebrew.nix の taps と一致させること。
 log "サードパーティ tap を信頼登録"
-for tap in ariga/tap microsoft/apm; do
-  brew trust "$tap"
-done
+if brew help trust >/dev/null 2>&1; then
+  for tap in ariga/tap microsoft/apm; do
+    brew trust "$tap"
+  done
+else
+  warn "この Homebrew では 'brew trust' が無いため tap trust 登録をスキップ (5.2/6.0 で必須化予定)"
+fi
 
 # ---- Nix experimental features (一時ユーザー設定) ----
 # darwin-rebuild 初回は flakes/nix-command が必須。bootstrap 完了後は /etc/nix/nix.conf が
