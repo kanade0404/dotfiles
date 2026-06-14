@@ -42,6 +42,10 @@ function loadExpectedSkills(): Set<string> | null {
       set.add(name);
     }
   }
+  // 0 件 (sources 無し / skills 空) は「スコープを特定できない」とみなして null を返し、
+  // skillInScope 側で安全側 (in-scope = 欠落時 throw) に倒す。実運用で sources[].skills が
+  // 空になることは想定しないが、空集合で全 skill を out-of-scope (skip) にして patch を
+  // 黙って飛ばすより安全。
   return set.size > 0 ? set : null;
 }
 
@@ -49,14 +53,11 @@ const expectedSkills = loadExpectedSkills();
 
 // この path の skill が現 install のスコープ内か。設定を解決できないときは
 // 安全側 (in-scope = 欠落時 throw) に倒し、退行を握りつぶさない。
+// path の skill が現 install のスコープ内か。呼び出し元の isRequiredTarget が
+// startsWith(curatedPrefix) を保証するため curated path 前提で受ける。
 function skillInScope(path: string) {
-  // 防御的ガード: 現状 isRequiredTarget が先に startsWith を確認するため到達しないが、
-  // 別コンテキストから直接呼ばれた場合、curated 配下でないパスは「スコープ対象の
-  // skill ではない」ので out-of-scope (false) を返す。
-  if (!path.startsWith(curatedPrefix)) {
-    return false;
-  }
-  // 設定を解決できない場合は安全側 (in-scope = 欠落時 throw) に倒す。
+  // 設定を解決できない (rulesync.jsonc 無し / パース失敗 / sources[].skills が 0 件) ときは
+  // expectedSkills=null となり、安全側 (in-scope = 欠落時 throw) に倒して退行を握りつぶさない。
   if (!expectedSkills) {
     return true;
   }
