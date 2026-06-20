@@ -36,6 +36,29 @@ else
 fi
 eval "$(/opt/homebrew/bin/brew shellenv)"
 
+# ---- サードパーティ tap の信頼 (Homebrew 5.1+) ----
+# 新しい Homebrew は非公式 tap の formula/cask を読み込む前に明示的な信頼を要求する
+# (HOMEBREW_REQUIRE_TAP_TRUST)。未信頼だと darwin-rebuild の brew bundle が
+# "Refusing to load formula ... from untrusted tap" で失敗する。信頼対象は
+# nix/modules/homebrew.nix の taps を nix eval で動的取得し、二重管理を避ける。
+if brew help trust >/dev/null 2>&1; then
+  log "サードパーティ tap を信頼登録"
+  taps=$(nix eval --raw \
+    "$DOTFILES_DIR/nix#darwinConfigurations.$FLAKE_ATTR.config.homebrew.taps" \
+    --apply 'ts: builtins.concatStringsSep "\n" (map (t: t.name) ts)') \
+    || die "homebrew.nix の taps 取得に失敗しました (nix eval)"
+  while IFS= read -r tap; do
+    [ -n "$tap" ] || continue
+    # darwin-rebuild より前に呼ぶため tap 未取得で失敗しうるが、trust は名前を
+    # JSON へ記録するだけなので通常は成功する。失敗しても中断せず警告に留める。
+    brew trust "$tap" \
+      || warn "brew trust $tap が失敗 (tap 未取得の可能性。darwin-rebuild 後に再実行可)"
+  done <<< "$taps"
+else
+  warn "この Homebrew では 'brew trust' が無いため tap trust 登録をスキップします。"
+  warn "Homebrew 5.1+ では後続の darwin-rebuild が untrusted tap エラーで失敗する可能性があります。"
+fi
+
 # ---- Nix experimental features (一時ユーザー設定) ----
 # darwin-rebuild 初回は flakes/nix-command が必須。bootstrap 完了後は /etc/nix/nix.conf が
 # nix-darwin によって管理されるので、このユーザー設定は冗長になる。
