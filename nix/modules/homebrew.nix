@@ -20,6 +20,7 @@
     # Formulae that stay in Homebrew (not available or problematic in nixpkgs)
     brews = [
       "ariga/tap/atlas"
+      "herdr" # Agent multiplexer for the terminal (not in nixpkgs)
       "microsoft/apm/apm" # Agent Package Manager (not in nixpkgs)
       "php"
       "rbenv"
