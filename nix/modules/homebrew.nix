@@ -13,8 +13,8 @@
     };
 
     taps = [
-      "ariga/tap"
-      "microsoft/apm"
+      { name = "ariga/tap"; trusted = true; }
+      { name = "microsoft/apm"; trusted = true; }
     ];
 
     # Formulae that stay in Homebrew (not available or problematic in nixpkgs)
