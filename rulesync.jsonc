@@ -1,6 +1,6 @@
 {
   "$schema": "https://github.com/dyoshikawa/rulesync/releases/download/v8.28.1/config-schema.json",
-  "targets": ["codexcli"],
+  "targets": ["codexcli", "opencode"],
   "features": ["skills"],
   "sources": [
     {
