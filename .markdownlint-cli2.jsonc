@@ -20,8 +20,7 @@
     // claude 用隔離パイプラインの cache (codex と同じく lint 対象外)
     "rulesync-claude/.rulesync/**",
     ".agents/skills/**",
-    ".codex/skills/**",
-    // .claude/skills/ も .codex/skills/ と同様 rulesync 生成物 (source は別 repo / upstream)。
+    // .claude/skills/ も .agents/skills/ と同様 rulesync 生成物 (source は別 repo / upstream)。
     // 著者管理する source 側で扱うべきもので、生成コピーは lint 対象外にする。
     ".claude/skills/**",
     ".claude/plans/**",

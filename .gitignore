@@ -15,8 +15,10 @@ rulesync-claude/.rulesync/
 .claude/settings.local.json
 .claude/*.local.md
 
-# Claude Code プラグインの自動ダウンロード実体 (node_modules 相当)
-.agents/
+# Claude Code プラグインの自動ダウンロード実体 (node_modules 相当)。
+# ただし .agents/skills/ は rulesync が生成する Codex 用 skill (コミット対象) なので除外しない
+.agents/*
+!.agents/skills/
 
 # Serena MCP server プロジェクト状態 (ローカル固有)
 .serena/
