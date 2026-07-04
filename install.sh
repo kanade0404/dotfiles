@@ -132,6 +132,37 @@ if [ -d "$DOTFILES/.claude/skills" ] && [ "$(ls -A "$DOTFILES/.claude/skills" 2>
   done
 fi
 
+echo "==> Linking OpenCode user settings"
+# opencode は ~/.config/opencode/ を global config として読む。
+# skills は ~/.config/opencode/skills/<name>/SKILL.md を探索する (project の
+# .opencode/skills/ と .agents/skills/ 、~/.claude/skills/ も fallback で読む)。
+# rulesync で生成した .opencode/skills/ を global へ symlink し、どの cwd でも
+# フルセットが使えるようにする。
+if [ -d "$HOME/.config/opencode/skills" ]; then
+  for existing in "$HOME/.config/opencode/skills/"*; do
+    [ -L "$existing" ] || continue
+    link_target="$(readlink "$existing")"
+    case "$link_target" in
+      "$DOTFILES/.opencode/skills/"*)
+        [ -e "$link_target" ] || rm -f "$existing"
+      ;;
+    esac
+  done
+fi
+if [ -d "$DOTFILES/.opencode/skills" ] && [ "$(ls -A "$DOTFILES/.opencode/skills" 2>/dev/null)" ]; then
+  mkdir -p "$HOME/.config/opencode/skills"
+  for d in "$DOTFILES/.opencode/skills/"*/; do
+    if [ -d "$d" ]; then
+      target="$HOME/.config/opencode/skills/$(basename "$d")"
+      if [ -e "$target" ] && [ ! -L "$target" ]; then
+        echo "Error: $target exists and is not a symlink. Move it aside before re-running install.sh." >&2
+        exit 1
+      fi
+      ln -sfn "${d%/}" "$target"
+    fi
+  done
+fi
+
 echo "==> Installing git hooks (lefthook)"
 if command -v lefthook >/dev/null 2>&1 && [ -d "$DOTFILES/.git" ]; then
   (cd "$DOTFILES" && lefthook install)
