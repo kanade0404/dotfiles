@@ -3,21 +3,21 @@
   "sources": {
     "kanade0404/skills": {
       "requestedRef": "master",
-      "resolvedRef": "8a263413a0d18425c5d3f3e3b21de910217c4ed4",
-      "resolvedAt": "2026-06-06T12:43:35.975Z",
+      "resolvedRef": "26ef6556f594c6fb26cb57cc218c45b0b0ffa4f5",
+      "resolvedAt": "2026-07-04T23:55:29.355Z",
       "skills": {
         "linear-issue-driven-development": {
           "integrity": "sha256-b3c842fe5dafad853fd057617773bd8d1df44d95b7f56fda9c31b8a21c46d93b"
         },
         "pr-conflict-resolver": {
-          "integrity": "sha256-d73ffc83b2acc47128b722aef68d0169dfbebe1c5b413bb488e3355820ef2b6a"
+          "integrity": "sha256-5e813484c840040d7eb5545a7bfc7a3c57898badbf94d505fbb85f43832c58ea"
         }
       }
     },
     "planetscale/database-skills": {
       "requestedRef": "main",
-      "resolvedRef": "b156f4ca73c03d0350438bfd042331aaef6eec77",
-      "resolvedAt": "2026-06-06T12:43:37.295Z",
+      "resolvedRef": "8942f83c3a6c9557868169b965bba5536cde5e91",
+      "resolvedAt": "2026-07-04T23:55:30.560Z",
       "skills": {
         "mysql": {
           "integrity": "sha256-1f408c1fecb77a0e33576de9189bda48cd67e7c0784208c10105280d8b872302"

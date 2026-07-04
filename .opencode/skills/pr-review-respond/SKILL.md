@@ -1,7 +1,7 @@
 ---
 name: pr-review-respond
 description: >-
-  PR に投稿された自動レビュー (CodeRabbit / Devin)
+  "PR に投稿された自動レビュー (CodeRabbit / Devin)
   と人間レビュアーのコメントを取得し、各指摘の妥当性を検証したうえで対応するスキル。VALID は修正コミットを当てて該当スレッドに「Fixed in
   <SHA>」と返信、INVALID_PUSH は根拠付きの pushback コメントを残し resolve しない、VALID_DEFER は issue
   化して参照、DUPLICATE は既存対応スレッドを指す。最後に PR へ集約サマリコメントを 1 件投稿し「何を・どう対応した／なぜ対応しなかったか」を
@@ -12,7 +12,7 @@ description: >-
   Devin を呼び出す) ことはしない — 既にレビュー済みの PR に後追いで対応するスキル。GitHub API 呼び出しは同梱の単一エントリ
   `scripts/prr` (subcommand: `fetch` / `reply` / `resolve` / `summary` /
   `wait-ci`) に集約しており、`allowed-tools` で `Bash(bash *prr *)` を auto-grant するため
-  consumer 側で permission を追加する必要は無い。
+  consumer 側で permission を追加する必要は無い。"
 ---
 # PR Review Respond
 
