@@ -114,6 +114,38 @@ ctx = data.get('context_window', {}).get('used_percentage')
 if ctx is not None:
     parts.append(fmt_bar('ctx', ctx))
 
+# compact-prep 連携: session_id ポインタ + context 閾値警告 marker
+# (get-session-id.sh / userpromptsubmit-compact-prep-reminder.sh が読む)
+# fail-safe: どの書き込みが失敗しても statusline 本体は止めない
+_session_id = data.get('session_id') or ''
+_tmpdir = os.environ.get('TMPDIR') or '/tmp'
+if _session_id:
+    # session_id -> cwd ポインタ (get-session-id.sh 用)。毎ターン更新して mtime を新しく保つ
+    try:
+        _ptr_dir = os.path.join(_tmpdir, 'claude-session-id')
+        os.makedirs(_ptr_dir, exist_ok=True)
+        with open(os.path.join(_ptr_dir, _session_id), 'w') as _fh:
+            _fh.write((cwd or '') + '\n')
+    except OSError:
+        pass
+
+    # 閾値超で compact-prep 警告 marker を書く（cooldown 中でなければ）
+    COMPACT_WARN_THRESHOLD = 60
+    try:
+        _int_pct = int(ctx) if ctx is not None else -1
+    except (TypeError, ValueError):
+        _int_pct = -1
+    if _int_pct >= COMPACT_WARN_THRESHOLD:
+        try:
+            _warned = os.path.join(_tmpdir, 'claude-compact-warned', _session_id)
+            if not os.path.exists(_warned):
+                _ctx_warn_dir = os.path.join(_tmpdir, 'claude-compact-warn')
+                os.makedirs(_ctx_warn_dir, exist_ok=True)
+                with open(os.path.join(_ctx_warn_dir, _session_id), 'w') as _fh:
+                    _fh.write(f'{_int_pct}\n')
+        except OSError:
+            pass
+
 # 4. Hourly (5h) limit
 five_obj = data.get('rate_limits', {}).get('five_hour', {})
 five = five_obj.get('used_percentage')

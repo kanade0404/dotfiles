@@ -116,6 +116,13 @@ for target in "$HOME/.claude/hooks" "$HOME/.codex/hooks"; do
     [ -f "$f" ] && ln -sf "$f" "$target/lib/$(basename "$f")"
   done
 done
+# scripts: symlink helper scripts (e.g. get-session-id.sh, compact-prep skill が使用)
+if [ -d "$DOTFILES/.claude/scripts" ] && [ "$(ls -A "$DOTFILES/.claude/scripts" 2>/dev/null)" ]; then
+  mkdir -p "$HOME/.claude/scripts"
+  for f in "$DOTFILES/.claude/scripts/"*; do
+    [ -f "$f" ] && ln -sf "$f" "$HOME/.claude/scripts/$(basename "$f")"
+  done
+fi
 # commands: symlink directory if it has content
 if [ -d "$DOTFILES/.claude/commands" ] && [ "$(ls -A "$DOTFILES/.claude/commands" 2>/dev/null)" ]; then
   mkdir -p "$HOME/.claude/commands"

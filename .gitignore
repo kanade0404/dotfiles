@@ -4,6 +4,10 @@ Thumbs.db
 .bundle
 node_modules/
 
+# Python bytecode cache (.claude/statusline.py 等)
+__pycache__/
+*.pyc
+
 # rulesync が生成する cache。bun run rulesync:skills で再生成可能
 .rulesync/skills/.curated/
 # claude 用隔離パイプラインの cache (rulesync-claude/rulesync.lock は追跡する)

@@ -1,0 +1,12 @@
+{
+  "$comment": "compact-prep ハーネスの hooks 登録断片。global (~/.claude/settings.json) には入れず、有効化したいプロジェクトの <project>/.claude/settings.json にこの hooks ブロックをマージする（project scope）。スクリプト実体は install.sh が ~/.claude/hooks・~/.claude/scripts へ symlink 済みなので、この登録だけでそのプロジェクトで機能する。詳細は同ディレクトリの README.md を参照。",
+  "hooks": {
+    "PostCompact": [
+      { "matcher": "", "hooks": [{ "type": "command", "command": "~/.claude/hooks/compaction-recovery.sh" }] }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [{ "type": "command", "command": "~/.claude/hooks/userpromptsubmit-compaction-recovery.sh" }] },
+      { "hooks": [{ "type": "command", "command": "~/.claude/hooks/userpromptsubmit-compact-prep-reminder.sh" }] }
+    ]
+  }
+}
