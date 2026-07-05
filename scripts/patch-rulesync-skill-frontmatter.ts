@@ -7,49 +7,104 @@ const curatedPrefix = ".rulesync/skills/.curated/";
 // 二重定義でズレないよう curatedPrefix から導出する。
 const generatedRoots = [curatedPrefix.replace(/\/$/, "")];
 
-// この install で「スコープ内」の skill 名集合を rulesync.jsonc (cwd 相対) の
-// sources[].skills から導出する。codex は repo 直下、claude は rulesync-claude/ を
-// cwd に走り、どちらも ./rulesync.jsonc を読む。これにより
+// rulesync.jsonc (cwd 相対) を jsonc-parser で読み、loadExpectedSkills / isCodexTarget の
+// 両方で共用する。codex は repo 直下、claude は rulesync-claude/ を cwd に走り、どちらも
+// ./rulesync.jsonc を読む。ファイル無し / パース失敗時は null を返し、呼び出し側それぞれの
+// 安全側デフォルトに解釈を委ねる (下記コメント参照)。
+type RulesyncConfig = { targets?: string[]; sources?: { skills?: string[] }[] };
+
+function loadRulesyncConfig(): RulesyncConfig | null {
+  if (!existsSync("rulesync.jsonc")) {
+    return null;
+  }
+  try {
+    // jsonc-parser の parse() は fault-tolerant で malformed でも throw しない。
+    // errors 配列を渡し、構文エラーがあれば解決不能として null を返す (安全側へ倒す)。
+    const errors: ParseError[] = [];
+    const cfg = parseJsonc(readFileSync("rulesync.jsonc", "utf8"), errors) as RulesyncConfig;
+    if (errors.length > 0) {
+      return null;
+    }
+    return cfg;
+  } catch (e) {
+    // パース以外の予期しない失敗 (readFileSync の権限エラー等) も安全側 (null) に
+    // 倒すが、デバッグのため原因はログに残す。
+    console.error(`failed to load rulesync.jsonc: ${e}`);
+    return null;
+  }
+}
+
+const rulesyncConfig = loadRulesyncConfig();
+
+// この install で「スコープ内」の skill 名集合を rulesyncConfig.sources[].skills から導出する。
+// これにより
 //   - target スコープ外で未取得 (claude の pr-review-respond 等) → 黙ってスキップ
 //   - スコープ内なのに欠落 (upstream 破損)               → 従来通り throw
 // を区別する。スコープ外と「想定外欠落」を取り違えてエラーを握りつぶさない。
 // 設定を解決できない (ファイル無し / パース失敗 / 0 件) ときは null を返し、
 // 後段で「全 skill をスコープ内」とみなして欠落時に throw する安全側へ倒す。
-type RulesyncConfig = { sources?: { skills?: string[] }[] };
-
 function loadExpectedSkills(): Set<string> | null {
-  if (!existsSync("rulesync.jsonc")) {
-    return null;
-  }
-  let cfg: RulesyncConfig | undefined;
-  try {
-    // jsonc-parser の parse() は fault-tolerant で malformed でも throw しない。
-    // errors 配列を渡し、構文エラーがあれば解決不能として null を返す (安全側へ倒す)。
-    const errors: ParseError[] = [];
-    cfg = parseJsonc(readFileSync("rulesync.jsonc", "utf8"), errors) as RulesyncConfig;
-    if (errors.length > 0) {
-      return null;
-    }
-  } catch (e) {
-    // パース以外の予期しない失敗 (readFileSync の権限エラー等) も安全側 (null) に
-    // 倒すが、デバッグのため原因はログに残す。
-    console.error(`failed to load rulesync.jsonc for skill scope: ${e}`);
-    return null;
-  }
   const set = new Set<string>();
-  for (const source of cfg?.sources ?? []) {
+  for (const source of rulesyncConfig?.sources ?? []) {
     for (const name of source?.skills ?? []) {
       set.add(name);
     }
   }
-  // 0 件 (sources 無し / skills 空) は「スコープを特定できない」とみなして null を返し、
-  // skillInScope 側で安全側 (in-scope = 欠落時 throw) に倒す。実運用で sources[].skills が
-  // 空になることは想定しないが、空集合で全 skill を out-of-scope (skip) にして patch を
-  // 黙って飛ばすより安全。
-  return set.size > 0 ? set : null;
+  if (set.size > 0) {
+    return set;
+  }
+  // 現在は rulesync.jsonc の sources[].skills を省略し全 skill を取得する運用のため、
+  // 明示列挙は通常 0 件になる。その場合は rulesync.lock の skills 一覧を期待値として
+  // 読む — こうしないと後段の欠落検証 (configured skills missing ...) が丸ごと無効化
+  // され、patch 対象を持たない skill の fetch/cache 事故による欠落が silently drop
+  // される (レビュー指摘への対応)。
+  const fromLock = loadExpectedSkillsFromLock();
+  if (fromLock && fromLock.size > 0) {
+    return fromLock;
+  }
+  // lock も解決できないときは null を返し、skillInScope 側で安全側
+  // (in-scope = 欠落時 throw) に倒す。空集合で全 skill を out-of-scope (skip) にして
+  // patch を黙って飛ばすより安全側に倒している。
+  return null;
+}
+
+// rulesync.lock (cwd 相対) から「lock 済み skill 名」の集合を導出する。
+// lock 構造: { sources: { "<owner>/<repo>": { skills: { "<name>": { integrity } } } } }
+// ファイル無し / パース失敗時は null (呼び出し側で従来の安全側デフォルトへ)。
+type RulesyncLock = { sources?: Record<string, { skills?: Record<string, unknown> }> };
+
+function loadExpectedSkillsFromLock(): Set<string> | null {
+  if (!existsSync("rulesync.lock")) {
+    return null;
+  }
+  try {
+    const lock = JSON.parse(readFileSync("rulesync.lock", "utf8")) as RulesyncLock;
+    const set = new Set<string>();
+    for (const source of Object.values(lock.sources ?? {})) {
+      for (const name of Object.keys(source?.skills ?? {})) {
+        set.add(name);
+      }
+    }
+    return set;
+  } catch (e) {
+    console.error(`failed to load rulesync.lock for skill scope: ${e}`);
+    return null;
+  }
 }
 
 const expectedSkills = loadExpectedSkills();
+
+// codex 向けパス書き換え patch (.codex/skills/ 等) は codexcli target のパイプラインにのみ
+// 意味を持つ。以前はここを判別せず無条件適用していたため、claudecode パイプライン
+// (rulesync-claude/ 経由) 実行時にも codex 向け patch が適用され、.claude/skills/ の生成物
+// (research-practices / skill-builder) に本来存在しない `.codex/skills` 表記が混入していた。
+// rulesyncConfig.targets に "codexcli" が含まれるかで判定し、設定を解決できない
+// (ファイル無し / パース失敗) 場合は「書き換えない」(false) 側に倒す — claudecode 側に
+// 誤って codex 向け patch を適用してしまう実害の方が、codexcli 側で patch を取りこぼす
+// 実害より大きいため。
+function isCodexTarget(): boolean {
+  return rulesyncConfig?.targets?.includes("codexcli") ?? false;
+}
 
 // この path の skill が現 install のスコープ内か。呼び出し元 isRequiredTarget が
 // startsWith(curatedPrefix) を保証するため curated path 前提で受ける。設定を解決
@@ -272,17 +327,24 @@ for (const root of generatedRoots) {
     { from: 'exec "$SCRIPT_DIR/wait_ci.sh" "$@"', to: 'exec bash "$SCRIPT_DIR/wait_ci.sh" "$@"' },
   ]);
 
-  await patchFile(`${root}/pr-review-respond/SKILL.md`, [
-    {
-      from: 'すべて `bash "${CLAUDE_SKILL_DIR}/scripts/prr" <subcommand> <args>` で呼び出す:',
-      to: 'すべて、Codex が表示したこの skill ディレクトリから `scripts/prr` を解決し、`bash <skill-dir>/scripts/prr <subcommand> <args>` で呼び出す:',
-    },
-    { from: 'bash "${CLAUDE_SKILL_DIR}/scripts/prr" fetch <PR>', to: 'bash <skill-dir>/scripts/prr fetch <PR>' },
-    { from: 'bash "${CLAUDE_SKILL_DIR}/scripts/prr" reply <PR> <root-comment-id> <body-file>', to: 'bash <skill-dir>/scripts/prr reply <PR> <root-comment-id> <body-file>' },
-    { from: 'bash "${CLAUDE_SKILL_DIR}/scripts/prr" resolve <PR> <root-comment-id> [body-file]', to: 'bash <skill-dir>/scripts/prr resolve <PR> <root-comment-id> [body-file]' },
-    { from: 'bash "${CLAUDE_SKILL_DIR}/scripts/prr" summary <PR> <body-file>', to: 'bash <skill-dir>/scripts/prr summary <PR> <body-file>' },
-    { from: 'bash "${CLAUDE_SKILL_DIR}/scripts/prr" wait-ci <PR>', to: 'bash <skill-dir>/scripts/prr wait-ci <PR>' },
-  ]);
+  // pr-review-respond の呼び出し手順は upstream 原文が Claude Code の
+  // `${CLAUDE_SKILL_DIR}` 前提で書かれており、Claude 側ではそのまま正しい。
+  // CLAUDE_SKILL_DIR 環境変数を持たない Codex 向けの `<skill-dir>` 書き換えは
+  // codexcli パイプライン限定にする (無条件適用すると Claude 生成物で実パス解決が
+  // 曖昧になりプレースホルダを直接実行する誤誘導が起きる、というレビュー指摘への対応)。
+  if (isCodexTarget()) {
+    await patchFile(`${root}/pr-review-respond/SKILL.md`, [
+      {
+        from: 'すべて `bash "${CLAUDE_SKILL_DIR}/scripts/prr" <subcommand> <args>` で呼び出す:',
+        to: 'すべて、Codex が表示したこの skill ディレクトリから `scripts/prr` を解決し、`bash <skill-dir>/scripts/prr <subcommand> <args>` で呼び出す:',
+      },
+      { from: 'bash "${CLAUDE_SKILL_DIR}/scripts/prr" fetch <PR>', to: 'bash <skill-dir>/scripts/prr fetch <PR>' },
+      { from: 'bash "${CLAUDE_SKILL_DIR}/scripts/prr" reply <PR> <root-comment-id> <body-file>', to: 'bash <skill-dir>/scripts/prr reply <PR> <root-comment-id> <body-file>' },
+      { from: 'bash "${CLAUDE_SKILL_DIR}/scripts/prr" resolve <PR> <root-comment-id> [body-file]', to: 'bash <skill-dir>/scripts/prr resolve <PR> <root-comment-id> [body-file]' },
+      { from: 'bash "${CLAUDE_SKILL_DIR}/scripts/prr" summary <PR> <body-file>', to: 'bash <skill-dir>/scripts/prr summary <PR> <body-file>' },
+      { from: 'bash "${CLAUDE_SKILL_DIR}/scripts/prr" wait-ci <PR>', to: 'bash <skill-dir>/scripts/prr wait-ci <PR>' },
+    ]);
+  }
 
   await patchFile(`${root}/mysql/references/primary-keys.md`, [
     {
@@ -331,13 +393,29 @@ for (const root of generatedRoots) {
     },
   ]);
 
-  await patchFile(`${root}/research-practices/assets/research-report-template.md`, [
-    { from: ".claude/skills/research-practices/", to: ".codex/skills/research-practices/" },
-  ]);
+  // research-practices の upstream 原文は `.claude/skills/research-practices/` であり、
+  // Claude 側ではそのまま正しいパスなので claudecode パイプラインには適用しない。
+  // codexcli パイプラインでのみ `.agents/skills/research-practices/` に書き換える
+  // (rulesync 9.1.1 が codexcli target の skills を .agents/skills に出力するため)。
+  if (isCodexTarget()) {
+    await patchFile(`${root}/research-practices/assets/research-report-template.md`, [
+      { from: ".claude/skills/research-practices/", to: ".agents/skills/research-practices/" },
+    ]);
+  }
 
+  // skill-builder の consumer プロジェクト形式の説明も同様に codex 向けパス書き換えを
+  // codexcli パイプライン限定にする。claudecode パイプラインでは upstream 原文
+  // (`.claude/skills/<name>/SKILL.md`) をそのまま使う。
+  if (isCodexTarget()) {
+    await patchFile(`${root}/skill-builder/SKILL.md`, [
+      { from: "`.claude/skills/<name>/SKILL.md` または top-level `<name>/SKILL.md`", to: "`.agents/skills/<name>/SKILL.md` または rulesync source `skills/<name>/SKILL.md`" },
+      { from: "- consumer プロジェクト形式: `.claude/skills/<name>/SKILL.md`", to: "- consumer プロジェクト形式: `.agents/skills/<name>/SKILL.md`" },
+    ]);
+  }
+
+  // evals ファイル拡張子の文言修正 (.json → .jsonl) はパスと無関係な事実訂正なので
+  // codexcli / claudecode 両ターゲット共通で適用する。
   await patchFile(`${root}/skill-builder/SKILL.md`, [
-    { from: "`.claude/skills/<name>/SKILL.md` または top-level `<name>/SKILL.md`", to: "`.codex/skills/<name>/SKILL.md` または rulesync source `skills/<name>/SKILL.md`" },
-    { from: "- consumer プロジェクト形式: `.claude/skills/<name>/SKILL.md`", to: "- consumer プロジェクト形式: `.codex/skills/<name>/SKILL.md`" },
     { from: "`evals/<skill>-trigger-results-<date>.json` + description 改訂案", to: "`evals/<skill>-trigger-results-<date>.jsonl` (JSON Lines) + description 改訂案" },
   ]);
 

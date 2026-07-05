@@ -57,23 +57,40 @@ if [ -d "$DOTFILES/.codex/commands" ] && [ "$(ls -A "$DOTFILES/.codex/commands" 
     [ -f "$f" ] && ln -sf "$f" "$HOME/.codex/commands/$(basename "$f")"
   done
 fi
-# skills: symlink each generated skill directory (1 skill = 1 dir with SKILL.md + assets)
+# skills: .codex/skills から .agents/skills へ移行済みのため旧リンクを掃除する。
+# .codex/skills は repo から削除され全て陳腐化するので、リンク先の存在に関わらず
+# $DOTFILES/.codex/skills/ 配下を指す symlink は無条件で削除する。
 if [ -d "$HOME/.codex/skills" ]; then
   for existing in "$HOME/.codex/skills/"*; do
     [ -L "$existing" ] || continue
     link_target="$(readlink "$existing")"
     case "$link_target" in
       "$DOTFILES/.codex/skills/"*)
+        rm -f "$existing"
+      ;;
+    esac
+  done
+  rmdir "$HOME/.codex/skills" 2>/dev/null || true
+fi
+# skills: symlink each generated skill directory (1 skill = 1 dir with SKILL.md + assets)
+# rulesync 9.1.1 は codexcli target の skills を .agents/skills (cwd相対) に出力し、
+# Codex CLI 本体も project skills を .agents/skills から読むため、生成先をここに合わせる。
+if [ -d "$HOME/.agents/skills" ]; then
+  for existing in "$HOME/.agents/skills/"*; do
+    [ -L "$existing" ] || continue
+    link_target="$(readlink "$existing")"
+    case "$link_target" in
+      "$DOTFILES/.agents/skills/"*)
         [ -e "$link_target" ] || rm -f "$existing"
       ;;
     esac
   done
 fi
-if [ -d "$DOTFILES/.codex/skills" ] && [ "$(ls -A "$DOTFILES/.codex/skills" 2>/dev/null)" ]; then
-  mkdir -p "$HOME/.codex/skills"
-  for d in "$DOTFILES/.codex/skills/"*/; do
+if [ -d "$DOTFILES/.agents/skills" ] && [ "$(ls -A "$DOTFILES/.agents/skills" 2>/dev/null)" ]; then
+  mkdir -p "$HOME/.agents/skills"
+  for d in "$DOTFILES/.agents/skills/"*/; do
     if [ -d "$d" ]; then
-      target="$HOME/.codex/skills/$(basename "$d")"
+      target="$HOME/.agents/skills/$(basename "$d")"
       if [ -e "$target" ] && [ ! -L "$target" ]; then
         echo "Error: $target exists and is not a symlink. Move it aside before re-running install.sh." >&2
         exit 1

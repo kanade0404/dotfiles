@@ -3,72 +3,105 @@
   "sources": {
     "kanade0404/skills": {
       "requestedRef": "master",
-      "resolvedRef": "363138744442c5f1f2b65a2414a4d8ba7e0ac264",
-      "resolvedAt": "2026-05-30T08:40:45.052Z",
+      "resolvedRef": "8e2a247b4c73454cdaeab81d05f8751204ca631a",
+      "resolvedAt": "2026-07-04T23:32:32.948Z",
       "skills": {
         "adr-writer": {
-          "integrity": "sha256-2dc6bbe927830b7c4b9140abf89b4497ea85c6701984d8be6c2fe1df44a51de5"
+          "integrity": "sha256-556e39bdc959977c08251a5b4cc5633a31d8fc1fe1569a42a5eeb59e6e99a0d3"
         },
         "ci-self-heal": {
-          "integrity": "sha256-c46feb0c19c3299f0241748a090dd31e2da13bc4abe1f9009a83ab1431765459"
+          "integrity": "sha256-619ef15cbb8cbeef2ab1a29686588d4d810d8e0a4624c74d7b5ac04ff71ed573"
         },
         "code-review": {
-          "integrity": "sha256-f6ec087fed7d5b9643985fa220eee4e622543e89a78165324acd16598f5aee7a"
+          "integrity": "sha256-f85f858b16da2d63103f4ebeb8a869041270c449a0f62f553844174e50c0cf03"
+        },
+        "commit": {
+          "integrity": "sha256-61b66f8656de2b90fed4435876445bb82a3f13edd05649f3c8d8ecf38e407742"
         },
         "design": {
-          "integrity": "sha256-4abc4af286ab41674b074069d157f7075a9478d67102398820655bb34bdc2450"
+          "integrity": "sha256-a1613953ece5e919c1b3f7f7e11a179b54422fa7b9ac9cf663a5a3e98b4bd72f"
         },
         "design-review": {
-          "integrity": "sha256-e12f06ca49cd6465a91ee25e687000f9cc467f23fd9957e8a06553efc0b558b4"
+          "integrity": "sha256-a96fb09f3e0e85a9974c8466bfd3fe7dd7b14c9d976891e070437f8a9a3e258b"
         },
         "empirical-prompt-tuning": {
-          "integrity": "sha256-09c619ee18b9ebbea8c52709824ffb8d63c55ef94dd0e016e52f5f184582f055"
+          "integrity": "sha256-c3bc43ff815415da4f1abe8325bd31d3332397378c74b2451e1c4bdcd2d8c6a9"
+        },
+        "feature-loop": {
+          "integrity": "sha256-c6556ce82b9f74cd509ec4edbc0a190c32b2b9ed9194d2fda46e6f09acd1ba6d"
         },
         "grill-with-docs": {
           "integrity": "sha256-d2f4b9abc9c7bd94ab37a5c6aee00daf1afd91d90ee842ab48712c84bcf7e163"
         },
+        "harness-distribution": {
+          "integrity": "sha256-ab88e7ea5f38cf09a879e3cc806e10252852ac12e00b459e88c28b1a379c56fc"
+        },
+        "issue-driven-development": {
+          "integrity": "sha256-560a6205aa77f29a06a67da155f7036cc15cec92e086b8c4dc820675b225e3d6"
+        },
+        "linear-issue-driven-development": {
+          "integrity": "sha256-b3c842fe5dafad853fd057617773bd8d1df44d95b7f56fda9c31b8a21c46d93b"
+        },
+        "pr-conflict-resolver": {
+          "integrity": "sha256-5e813484c840040d7eb5545a7bfc7a3c57898badbf94d505fbb85f43832c58ea"
+        },
+        "pr-monitor": {
+          "integrity": "sha256-e2c3e8d0eba2948c7fd7751936678612a01bdac01172c8b1aa828d3fc706d3de"
+        },
         "pr-review-respond": {
-          "integrity": "sha256-f325b47e90e875fbf8052ab97071758fc28bc2cc8ab13c5404de92c78a8c7813"
+          "integrity": "sha256-8a898b18579120d4153e9bf937c15f6f00b7065bb63e095d5daa4b1c0a900282"
         },
         "product-discovery": {
-          "integrity": "sha256-5311f711ff99b56537beeffda1b41cdede0a81603390b676c41e0180dfae20bf"
+          "integrity": "sha256-dec3905e318b9f813dbb96c989f1470d7df235529318b1b30325ee40b0408582"
         },
         "research-practices": {
-          "integrity": "sha256-aadee3a00264383e111acefa9e5e1cba2bb0745a666eefa3e12f1d359a716d4e"
+          "integrity": "sha256-7cad700048d8b03dedb7e5a3f9cda9a2269ea891b86313a2aec9daa06a73d176"
+        },
+        "retro": {
+          "integrity": "sha256-83ff5b692a8a4e08c50ce1d75d17f497aaf352efd35a5d00c55129e341a6d5b8"
+        },
+        "session-retro": {
+          "integrity": "sha256-1986bae567b926601c8577cf7e2e587d6660a3d916bc0af9a0892c972129d29e"
         },
         "shipping": {
-          "integrity": "sha256-a12f7ec2c78428dbedb2c1dee656343e6c90c13ef22ddb5ad0767530a04abcb0"
+          "integrity": "sha256-6944bb10e31935b9c3d8dceb1cf4e5c72765e7eb0674cbb8d5d2261175b1892c"
         },
         "skill-builder": {
-          "integrity": "sha256-63ab17d9d422174842e39b98e59f61ee522c51199fb932600b3e210735a08eea"
+          "integrity": "sha256-36665532d5bd9fbe68d10059b0d792bbee83a17a99c439c5fe9c26045bc26e98"
         },
         "software-design": {
-          "integrity": "sha256-7521486b477629578111b090a012c41118b895e9749a472025df7a3cb69906d5"
+          "integrity": "sha256-bb20e6797f72e724db3c4092832a85efff0058870ef96121b73064338cf318fb"
         },
         "tdd": {
-          "integrity": "sha256-d77b0daebc823a2a62e73139e6dd6ec06cce9ad2b51bdb097ae300146004f7cd"
+          "integrity": "sha256-af78705bc6cbdaacb16ae5cfcd991ec3a2be97621ba29d620321bb43e4a7d3de"
         },
         "test-review": {
           "integrity": "sha256-cff490ab76f83b4b12c7ebb1f0a4fd338b3ae03c86035a9bc22cadd47dbfb6c5"
         },
         "tidy-first": {
-          "integrity": "sha256-cd3dc209290590f0dc0da7310ea8e3d63a40cfcb765fba89b8c19bcd700946ac"
+          "integrity": "sha256-16354826b618f6cd4a81df0b99d6646932e8d03dc35fa42f1bd7cb8c6888a029"
         },
         "verify-done": {
-          "integrity": "sha256-74944b00cfb1bb7c1b9e8af86e0251db6bed56330d1de2db21ed444786cd95da"
+          "integrity": "sha256-0c6e9eb4c5515f7ff756ab2c5e31ba28034a361383b4bfda685e12f766956873"
         }
       }
     },
     "planetscale/database-skills": {
       "requestedRef": "main",
-      "resolvedRef": "b156f4ca73c03d0350438bfd042331aaef6eec77",
-      "resolvedAt": "2026-05-30T08:40:46.398Z",
+      "resolvedRef": "8942f83c3a6c9557868169b965bba5536cde5e91",
+      "resolvedAt": "2026-07-04T23:32:34.296Z",
       "skills": {
         "mysql": {
           "integrity": "sha256-1f408c1fecb77a0e33576de9189bda48cd67e7c0784208c10105280d8b872302"
         },
+        "neki": {
+          "integrity": "sha256-153bc7359ff0473dc54221806da47c968b988af850e002f3012446dc56fc9854"
+        },
         "postgres": {
           "integrity": "sha256-78782765f1ae00b777d815082a3ad5ec9d1d1cc3ffffa2b143e8a51b994c7a09"
+        },
+        "vitess": {
+          "integrity": "sha256-428e8c9eed94888a195139f5ceb817be353e90d40671e41c0a4f7567a420f75e"
         }
       }
     }

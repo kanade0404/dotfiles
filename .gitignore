@@ -14,9 +14,13 @@ rulesync-claude/.rulesync/
 .claude/worktrees/
 .claude/settings.local.json
 .claude/*.local.md
+# pr-monitor skill の監視状態ファイル (ローカル固有、リポを汚さない前提のパス)
+.claude/.pr-monitor/
 
-# Claude Code プラグインの自動ダウンロード実体 (node_modules 相当)
-.agents/
+# Claude Code プラグインの自動ダウンロード実体 (node_modules 相当)。
+# ただし .agents/skills/ は rulesync が生成する Codex 用 skill (コミット対象) なので除外しない
+.agents/*
+!.agents/skills/
 
 # Serena MCP server プロジェクト状態 (ローカル固有)
 .serena/

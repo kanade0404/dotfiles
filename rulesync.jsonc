@@ -1,35 +1,15 @@
 {
-  "$schema": "https://github.com/dyoshikawa/rulesync/releases/download/v8.28.1/config-schema.json",
+  "$schema": "https://github.com/dyoshikawa/rulesync/releases/download/v9.1.1/config-schema.json",
   "targets": ["codexcli", "opencode"],
   "features": ["skills"],
   "sources": [
     {
       "source": "https://github.com/kanade0404/skills.git",
-      "transport": "git",
-      "skills": [
-        "adr-writer",
-        "ci-self-heal",
-        "code-review",
-        "design",
-        "design-review",
-        "empirical-prompt-tuning",
-        "grill-with-docs",
-        "pr-review-respond",
-        "product-discovery",
-        "research-practices",
-        "shipping",
-        "skill-builder",
-        "software-design",
-        "tdd",
-        "test-review",
-        "tidy-first",
-        "verify-done"
-      ]
+      "transport": "git"
     },
     {
       "source": "https://github.com/planetscale/database-skills.git",
-      "transport": "git",
-      "skills": ["mysql", "postgres"]
+      "transport": "git"
     }
   ]
 }
