@@ -322,6 +322,9 @@
         # Helper scripts
         export PATH="$HOME/.local/bin:$PATH"
 
+        # OrbStack (docker / kubectl CLI) — MCP サーバー (terraform, aws-core) が docker run を使う
+        export PATH="$HOME/.orbstack/bin:$PATH"
+
         # Homebrew (Apple Silicon) — casks / formulae (rbenv 等) への PATH を通す
         if [ -x /opt/homebrew/bin/brew ]; then
           eval "$(/opt/homebrew/bin/brew shellenv)"
@@ -335,6 +338,16 @@
 
         # mactex
         eval "$(/usr/libexec/path_helper)"
+
+        # Claude Code plugin MCP 用の環境変数
+        # terraform MCP (hashicorp plugin): TFE 未使用のためダミー値で必須チェックを通す
+        # (public レジストリ検索は token なしで動作する)
+        export TFE_ADDRESS="https://app.terraform.io"
+        export TFE_TOKEN=""
+        # github plugin: gh CLI (keyring) の認証 token を再利用 (secret をファイルに置かない)
+        if [ -z "''${GITHUB_PERSONAL_ACCESS_TOKEN:-}" ] && command -v gh >/dev/null 2>&1; then
+          export GITHUB_PERSONAL_ACCESS_TOKEN="$(gh auth token 2>/dev/null)"
+        fi
 
         # Kiro
         [[ "$TERM_PROGRAM" == "kiro" ]] && . "$(kiro --locate-shell-integration-path zsh)"

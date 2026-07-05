@@ -20,6 +20,10 @@
     # Editor
     neovim
 
+    # LSP servers (Claude Code typescript-lsp plugin / Neovim で利用)
+    typescript
+    typescript-language-server
+
     # Fuzzy finder & TUI tools
     fzf
     lazygit
