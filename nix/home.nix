@@ -322,6 +322,10 @@
         # Helper scripts
         export PATH="$HOME/.local/bin:$PATH"
 
+        # OrbStack (docker / kubectl CLI) — MCP サーバー (terraform, aws-core) が docker run を使う
+        # 注: 後段の brew shellenv が /opt/homebrew/bin を前置するため実効優先度は Homebrew > OrbStack (意図どおり)
+        export PATH="$HOME/.orbstack/bin:$PATH"
+
         # Homebrew (Apple Silicon) — casks / formulae (rbenv 等) への PATH を通す
         if [ -x /opt/homebrew/bin/brew ]; then
           eval "$(/opt/homebrew/bin/brew shellenv)"
@@ -335,6 +339,19 @@
 
         # mactex
         eval "$(/usr/libexec/path_helper)"
+
+        # Claude Code plugin MCP 用の環境変数
+        # terraform MCP (hashicorp plugin): TFE 未使用のためダミー値で必須チェックを通す
+        # (public レジストリ検索は token なしで動作する)。既存値があれば上書きしない
+        [ -n "''${TFE_ADDRESS:-}" ] || export TFE_ADDRESS="https://app.terraform.io"
+        [ -n "''${TFE_TOKEN+x}" ] || export TFE_TOKEN=""
+        # github plugin: gh CLI (keyring) の認証 token を再利用 (secret をファイルに置かない)
+        # 取得失敗時は未定義のままにし、空文字 export で fallback 処理を殺さない
+        if [ -z "''${GITHUB_PERSONAL_ACCESS_TOKEN:-}" ] && command -v gh >/dev/null 2>&1; then
+          _gh_token="$(gh auth token 2>/dev/null)"
+          [ -n "$_gh_token" ] && export GITHUB_PERSONAL_ACCESS_TOKEN="$_gh_token"
+          unset _gh_token
+        fi
 
         # Kiro
         [[ "$TERM_PROGRAM" == "kiro" ]] && . "$(kiro --locate-shell-integration-path zsh)"
