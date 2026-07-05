@@ -292,6 +292,7 @@
     ],
     "defaultMode": "auto"
   },
+  "model": "claude-fable-5[1m]",
   "hooks": {
     "SessionStart": [
       {
@@ -332,7 +333,6 @@
     "ralph-loop@claude-plugins-official": true,
     "typescript-lsp@claude-plugins-official": true,
     "security-guidance@claude-plugins-official": true,
-    "commit-commands@claude-plugins-official": true,
     "claude-md-management@claude-plugins-official": true,
     "serena@claude-plugins-official": true,
     "pr-review-toolkit@claude-plugins-official": true,
@@ -350,6 +350,14 @@
     "deploy-on-aws@claude-plugins-official": true,
     "coderabbit@claude-plugins-official": true,
     "terraform-code-generation@hashicorp": true
+  },
+  "extraKnownMarketplaces": {
+    "cloudflare": {
+      "source": {
+        "source": "github",
+        "repo": "cloudflare/skills"
+      }
+    }
   },
   "effortLevel": "xhigh",
   "plansDirectory": "./.claude/plans",
