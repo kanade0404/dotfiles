@@ -50,12 +50,46 @@ function loadExpectedSkills(): Set<string> | null {
       set.add(name);
     }
   }
-  // 0 件 (sources 無し / skills 空) は「スコープを特定できない」とみなして null を返し、
-  // skillInScope 側で安全側 (in-scope = 欠落時 throw) に倒す。現在は rulesync.jsonc の
-  // sources[].skills を省略し全 skill を取得する運用のため、空集合 (= null = 全 skill
-  // in-scope) が通常動作である。空集合で全 skill を out-of-scope (skip) にして patch を
-  // 黙って飛ばすより安全側に倒している。
-  return set.size > 0 ? set : null;
+  if (set.size > 0) {
+    return set;
+  }
+  // 現在は rulesync.jsonc の sources[].skills を省略し全 skill を取得する運用のため、
+  // 明示列挙は通常 0 件になる。その場合は rulesync.lock の skills 一覧を期待値として
+  // 読む — こうしないと後段の欠落検証 (configured skills missing ...) が丸ごと無効化
+  // され、patch 対象を持たない skill の fetch/cache 事故による欠落が silently drop
+  // される (レビュー指摘への対応)。
+  const fromLock = loadExpectedSkillsFromLock();
+  if (fromLock && fromLock.size > 0) {
+    return fromLock;
+  }
+  // lock も解決できないときは null を返し、skillInScope 側で安全側
+  // (in-scope = 欠落時 throw) に倒す。空集合で全 skill を out-of-scope (skip) にして
+  // patch を黙って飛ばすより安全側に倒している。
+  return null;
+}
+
+// rulesync.lock (cwd 相対) から「lock 済み skill 名」の集合を導出する。
+// lock 構造: { sources: { "<owner>/<repo>": { skills: { "<name>": { integrity } } } } }
+// ファイル無し / パース失敗時は null (呼び出し側で従来の安全側デフォルトへ)。
+type RulesyncLock = { sources?: Record<string, { skills?: Record<string, unknown> }> };
+
+function loadExpectedSkillsFromLock(): Set<string> | null {
+  if (!existsSync("rulesync.lock")) {
+    return null;
+  }
+  try {
+    const lock = JSON.parse(readFileSync("rulesync.lock", "utf8")) as RulesyncLock;
+    const set = new Set<string>();
+    for (const source of Object.values(lock.sources ?? {})) {
+      for (const name of Object.keys(source?.skills ?? {})) {
+        set.add(name);
+      }
+    }
+    return set;
+  } catch (e) {
+    console.error(`failed to load rulesync.lock for skill scope: ${e}`);
+    return null;
+  }
 }
 
 const expectedSkills = loadExpectedSkills();
@@ -293,17 +327,24 @@ for (const root of generatedRoots) {
     { from: 'exec "$SCRIPT_DIR/wait_ci.sh" "$@"', to: 'exec bash "$SCRIPT_DIR/wait_ci.sh" "$@"' },
   ]);
 
-  await patchFile(`${root}/pr-review-respond/SKILL.md`, [
-    {
-      from: 'すべて `bash "${CLAUDE_SKILL_DIR}/scripts/prr" <subcommand> <args>` で呼び出す:',
-      to: 'すべて、Codex が表示したこの skill ディレクトリから `scripts/prr` を解決し、`bash <skill-dir>/scripts/prr <subcommand> <args>` で呼び出す:',
-    },
-    { from: 'bash "${CLAUDE_SKILL_DIR}/scripts/prr" fetch <PR>', to: 'bash <skill-dir>/scripts/prr fetch <PR>' },
-    { from: 'bash "${CLAUDE_SKILL_DIR}/scripts/prr" reply <PR> <root-comment-id> <body-file>', to: 'bash <skill-dir>/scripts/prr reply <PR> <root-comment-id> <body-file>' },
-    { from: 'bash "${CLAUDE_SKILL_DIR}/scripts/prr" resolve <PR> <root-comment-id> [body-file]', to: 'bash <skill-dir>/scripts/prr resolve <PR> <root-comment-id> [body-file]' },
-    { from: 'bash "${CLAUDE_SKILL_DIR}/scripts/prr" summary <PR> <body-file>', to: 'bash <skill-dir>/scripts/prr summary <PR> <body-file>' },
-    { from: 'bash "${CLAUDE_SKILL_DIR}/scripts/prr" wait-ci <PR>', to: 'bash <skill-dir>/scripts/prr wait-ci <PR>' },
-  ]);
+  // pr-review-respond の呼び出し手順は upstream 原文が Claude Code の
+  // `${CLAUDE_SKILL_DIR}` 前提で書かれており、Claude 側ではそのまま正しい。
+  // CLAUDE_SKILL_DIR 環境変数を持たない Codex 向けの `<skill-dir>` 書き換えは
+  // codexcli パイプライン限定にする (無条件適用すると Claude 生成物で実パス解決が
+  // 曖昧になりプレースホルダを直接実行する誤誘導が起きる、というレビュー指摘への対応)。
+  if (isCodexTarget()) {
+    await patchFile(`${root}/pr-review-respond/SKILL.md`, [
+      {
+        from: 'すべて `bash "${CLAUDE_SKILL_DIR}/scripts/prr" <subcommand> <args>` で呼び出す:',
+        to: 'すべて、Codex が表示したこの skill ディレクトリから `scripts/prr` を解決し、`bash <skill-dir>/scripts/prr <subcommand> <args>` で呼び出す:',
+      },
+      { from: 'bash "${CLAUDE_SKILL_DIR}/scripts/prr" fetch <PR>', to: 'bash <skill-dir>/scripts/prr fetch <PR>' },
+      { from: 'bash "${CLAUDE_SKILL_DIR}/scripts/prr" reply <PR> <root-comment-id> <body-file>', to: 'bash <skill-dir>/scripts/prr reply <PR> <root-comment-id> <body-file>' },
+      { from: 'bash "${CLAUDE_SKILL_DIR}/scripts/prr" resolve <PR> <root-comment-id> [body-file]', to: 'bash <skill-dir>/scripts/prr resolve <PR> <root-comment-id> [body-file]' },
+      { from: 'bash "${CLAUDE_SKILL_DIR}/scripts/prr" summary <PR> <body-file>', to: 'bash <skill-dir>/scripts/prr summary <PR> <body-file>' },
+      { from: 'bash "${CLAUDE_SKILL_DIR}/scripts/prr" wait-ci <PR>', to: 'bash <skill-dir>/scripts/prr wait-ci <PR>' },
+    ]);
+  }
 
   await patchFile(`${root}/mysql/references/primary-keys.md`, [
     {

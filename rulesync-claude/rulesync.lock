@@ -3,8 +3,8 @@
   "sources": {
     "kanade0404/skills": {
       "requestedRef": "master",
-      "resolvedRef": "8e2a247b4c73454cdaeab81d05f8751204ca631a",
-      "resolvedAt": "2026-07-04T23:32:39.806Z",
+      "resolvedRef": "8d68a6c2fdffbeeda841951415527db1492253cf",
+      "resolvedAt": "2026-07-05T01:28:08.503Z",
       "skills": {
         "adr-writer": {
           "integrity": "sha256-556e39bdc959977c08251a5b4cc5633a31d8fc1fe1569a42a5eeb59e6e99a0d3"
@@ -89,7 +89,7 @@
     "planetscale/database-skills": {
       "requestedRef": "main",
       "resolvedRef": "8942f83c3a6c9557868169b965bba5536cde5e91",
-      "resolvedAt": "2026-07-04T23:32:41.156Z",
+      "resolvedAt": "2026-07-05T01:28:09.836Z",
       "skills": {
         "mysql": {
           "integrity": "sha256-1f408c1fecb77a0e33576de9189bda48cd67e7c0784208c10105280d8b872302"
