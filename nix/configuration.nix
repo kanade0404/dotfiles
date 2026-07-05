@@ -21,8 +21,8 @@
     neovim
 
     # LSP servers (Claude Code typescript-lsp plugin / Neovim で利用)
-    typescript
     typescript-language-server
+    typescript # tsc CLI 用 (LSP は同梱 typescript を fallback 利用するため plugin 動作には必須でない)
 
     # Fuzzy finder & TUI tools
     fzf
