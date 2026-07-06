@@ -127,6 +127,21 @@ fi
 # ~/.claude/skills へのグローバル symlink 配布はしない。
 # 各 repo は rulesync fetch (kanade0404/skills を @<tag> で固定取得) で
 # 自分の .claude/skills/ を用意する。
+# 旧バージョンの install.sh が作成した ~/.claude/skills 配下の symlink は
+# 陳腐化するので、リンク先の存在に関わらず無条件で削除する
+# (.codex/skills → .agents/skills 移行時の掃除ブロックと同型)。
+if [ -d "$HOME/.claude/skills" ]; then
+  for existing in "$HOME/.claude/skills/"*; do
+    [ -L "$existing" ] || continue
+    link_target="$(readlink "$existing")"
+    case "$link_target" in
+      "$DOTFILES/.claude/skills/"*)
+        rm -f "$existing"
+      ;;
+    esac
+  done
+  rmdir "$HOME/.claude/skills" 2>/dev/null || true
+fi
 
 echo "==> Linking OpenCode user settings"
 # opencode は ~/.config/opencode/ を global config として読む。
