@@ -123,31 +123,10 @@ if [ -d "$DOTFILES/.claude/commands" ] && [ "$(ls -A "$DOTFILES/.claude/commands
     [ -f "$f" ] && ln -sf "$f" "$HOME/.claude/commands/$(basename "$f")"
   done
 fi
-# skills: symlink each skill directory (1 skill = 1 dir with SKILL.md + assets)
-if [ -d "$HOME/.claude/skills" ]; then
-  for existing in "$HOME/.claude/skills/"*; do
-    [ -L "$existing" ] || continue
-    link_target="$(readlink "$existing")"
-    case "$link_target" in
-      "$DOTFILES/.claude/skills/"*)
-        [ -e "$link_target" ] || rm -f "$existing"
-      ;;
-    esac
-  done
-fi
-if [ -d "$DOTFILES/.claude/skills" ] && [ "$(ls -A "$DOTFILES/.claude/skills" 2>/dev/null)" ]; then
-  mkdir -p "$HOME/.claude/skills"
-  for d in "$DOTFILES/.claude/skills/"*/; do
-    if [ -d "$d" ]; then
-      target="$HOME/.claude/skills/$(basename "$d")"
-      if [ -e "$target" ] && [ ! -L "$target" ]; then
-        echo "Error: $target exists and is not a symlink. Move it aside before re-running install.sh." >&2
-        exit 1
-      fi
-      ln -sfn "${d%/}" "$target"
-    fi
-  done
-fi
+# skills: project (各 repo の .claude/skills) を正とする方針のため、
+# ~/.claude/skills へのグローバル symlink 配布はしない。
+# 各 repo は rulesync fetch (kanade0404/skills を @<tag> で固定取得) で
+# 自分の .claude/skills/ を用意する。
 
 echo "==> Linking OpenCode user settings"
 # opencode は ~/.config/opencode/ を global config として読む。

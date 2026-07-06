@@ -12,7 +12,8 @@
   "sources": [
     {
       "source": "https://github.com/kanade0404/skills.git",
-      "transport": "git"
+      "transport": "git",
+      "ref": "v0.6.0"
     },
     {
       "source": "https://github.com/planetscale/database-skills.git",
