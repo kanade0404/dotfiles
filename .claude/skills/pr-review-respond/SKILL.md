@@ -5,11 +5,13 @@ description: >-
   と人間レビュアーのコメントを取得し、各指摘の妥当性を検証したうえで対応するスキル。VALID は修正コミットを当てて該当スレッドに「Fixed in
   <SHA>」と返信、INVALID_PUSH は根拠付きの pushback コメントを残し resolve しない、VALID_DEFER は issue
   化して参照、DUPLICATE は既存対応スレッドを指す。最後に PR へ集約サマリコメントを 1 件投稿し「何を・どう対応した／なぜ対応しなかったか」を
-  1 箇所で追えるようにする。`gh pr create` 直後・「レビュー対応して」「コメント見て対応して」「コードラビット対応」「Devin
-  の指摘片付けて」「PR のコメント全部捌いて」のような要請、CodeRabbit / Devin / 人間レビュアーが新規コメントを残した時、PR を
-  merge する前に未解決スレッドを確認したい時、いずれでも必ず起動すること。レビュアー判別はコメント author と本文を読んで行い、bot
-  suffix のような表面的なルールは持たない。本スキルは「読む・直す・返信する・サマリ投稿する」までで、レビュー自体を実行する (CodeRabbit や
-  Devin を呼び出す) ことはしない — 既にレビュー済みの PR に後追いで対応するスキル。GitHub API 呼び出しは同梱の単一エントリ
+  1 箇所で追えるようにする。`gh pr create` 直後・**既存 PR ブランチへ push した直後 (レビュー対応後の再 push
+  を含む)**・「レビュー対応して」「コメント見て対応して」「コードラビット対応」「Devin の指摘片付けて」「PR のコメント全部捌いて」「push
+  したのでスレッド対応して」のような要請、CodeRabbit / Devin / 人間レビュアーが新規コメントを残した時
+  (監視やイベントでの検知を含む)、PR を merge する前に未解決スレッドを確認したい時、いずれでも必ず起動すること。未解決スレッドが残る PR
+  を離れる前に必ず一度起動する。レビュアー判別はコメント author と本文を読んで行い、bot suffix
+  のような表面的なルールは持たない。本スキルは「読む・直す・返信する・サマリ投稿する」までで、レビュー自体を実行する (CodeRabbit や Devin
+  を呼び出す) ことはしない — 既にレビュー済みの PR に後追いで対応するスキル。GitHub API 呼び出しは同梱の単一エントリ
   `scripts/prr` (subcommand: `fetch` / `reply` / `resolve` / `summary` /
   `wait-ci`) に集約しており、`allowed-tools` で `Bash(bash *prr *)` を auto-grant するため
   consumer 側で permission を追加する必要は無い。"
@@ -136,6 +138,8 @@ Refs: https://github.com/<owner>/<repo>/pull/<n>#discussion_r<id>
 ```
 
 これにより返信時に `<SHA>` を貼ればトレースが完結する。
+
+- 修正が **既存テストの assertion / 期待値そのものを書き換える**場合 (新規テスト追加ではなく、緩い・誤った assertion の訂正)、Phase D で「Fixed in `<SHA>`」を返信する **前に** `test-mutation-gate` を必ず通す。レビュー起点のテスト修正が本当に検出力を持つかを機械的に裏取りするため。BLOCK なら修正をやり直し、返信しない。
 
 **Devin の re-review は commit push に任せる**。`@devin` メンションでの再依頼はしない（push を検知して自動再評価するため）。
 
