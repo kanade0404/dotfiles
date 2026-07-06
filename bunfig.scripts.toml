@@ -1,0 +1,8 @@
+[test]
+# scripts/ 配下の *.test.ts 用の別 root。既定の bunfig.toml (root = ".claude/hooks/lib")
+# は dot-directory (.claude) 起点のため、"." に広げると bun のディレクトリ走査が
+# dot-prefix ディレクトリをスキップしてしまい .claude/hooks/lib 側のテストが逆に
+# 見えなくなる (bun test の既定挙動として確認済み)。単一 root では両方を同時に
+# カバーできないため、CI では `bun test` (既定 root) と
+# `bun test --config=bunfig.scripts.toml` (この root) の 2 回実行で両方をカバーする。
+root = "scripts"
