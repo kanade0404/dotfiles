@@ -11,53 +11,76 @@ import { applyEdits, findNodeAtLocation, modify, parseTree } from "jsonc-parser"
 // 冪等性: "ref" が既存なら値を上書き、未設定なら "transport" の直後に新規追加される
 // (jsonc-parser の modify がプロパティ位置を解決する)。どちらの状態から実行しても
 // 同じ結果に収束する。
-const SKILLS_SOURCE_URL = "https://github.com/kanade0404/skills.git";
+//
+// assertValidTag / updateSkillsRef はファイル I/O を持たない純粋関数として切り出して
+// あり、scripts/update-skills-ref.test.ts から直接ユニットテストできる (実ファイルへの
+// 書き込みは import.meta.main ブロックの CLI 実行部にのみ閉じる)。
+export const SKILLS_SOURCE_URL = "https://github.com/kanade0404/skills.git";
 
 const targetFiles = ["rulesync.jsonc", "rulesync-claude/rulesync.jsonc"];
 
-const tag = process.env.SKILLS_TAG;
-if (!tag) {
-  throw new Error("SKILLS_TAG is not set");
-}
 // reusable workflow 側は `^v[0-9]+\.[0-9]+\.[0-9]+$` にマッチするタグしか解決しない
 // 契約だが、pin 書き換え先が想定外の値になる事故を防ぐため、このスクリプト単体でも
 // 同じ形式を強制する (安全側チェックの二重化)。
-if (!/^v\d+\.\d+\.\d+$/.test(tag)) {
-  throw new Error(`unexpected SKILLS_TAG format: ${tag}`);
+export function assertValidTag(tag: string | undefined): asserts tag is string {
+  if (!tag) {
+    throw new Error("SKILLS_TAG is not set");
+  }
+  if (!/^v\d+\.\d+\.\d+$/.test(tag)) {
+    throw new Error(`unexpected SKILLS_TAG format: ${tag}`);
+  }
 }
 
-for (const file of targetFiles) {
-  if (!existsSync(file)) {
-    throw new Error(`missing rulesync config: ${file}`);
-  }
-
-  const text = readFileSync(file, "utf8");
+// jsonc テキストを受け取り、sources[] のうち source === sourceUrl な要素の "ref" を
+// tag へ書き換えたテキストを返す。ファイルには一切触れない (呼び出し側の責務)。
+export function updateSkillsRef(
+  text: string,
+  tag: string,
+  sourceUrl: string = SKILLS_SOURCE_URL,
+): string {
   const root = parseTree(text);
   if (!root) {
-    throw new Error(`failed to parse ${file}`);
+    throw new Error("failed to parse jsonc text");
   }
 
   const sourcesNode = findNodeAtLocation(root, ["sources"]);
   if (!sourcesNode || sourcesNode.type !== "array" || !sourcesNode.children) {
-    throw new Error(`"sources" array not found in ${file}`);
+    throw new Error('"sources" array not found');
   }
 
   const index = sourcesNode.children.findIndex((child) => {
     const sourceNode = findNodeAtLocation(child, ["source"]);
-    return sourceNode?.value === SKILLS_SOURCE_URL;
+    return sourceNode?.value === sourceUrl;
   });
   if (index < 0) {
-    throw new Error(`source ${SKILLS_SOURCE_URL} not found in ${file}`);
+    throw new Error(`source ${sourceUrl} not found`);
   }
 
   const edits = modify(text, ["sources", index, "ref"], tag, {
     formattingOptions: { insertSpaces: true, tabSize: 2, eol: "\n" },
   });
-  const updated = applyEdits(text, edits);
-  if (updated !== text) {
-    writeFileSync(file, updated);
-    console.log(`updated ${file}: sources[${index}].ref = ${tag}`);
-  } else {
-    console.log(`${file} already up to date (${tag})`);
+  return applyEdits(text, edits);
+}
+
+// CLI エントリポイント。`bun scripts/update-skills-ref.ts` として実行されたときのみ
+// 実ファイルを読み書きする (import.meta.main ガードにより、テストからの import では
+// 副作用を起こさない)。
+if (import.meta.main) {
+  const tag = process.env.SKILLS_TAG;
+  assertValidTag(tag);
+
+  for (const file of targetFiles) {
+    if (!existsSync(file)) {
+      throw new Error(`missing rulesync config: ${file}`);
+    }
+
+    const text = readFileSync(file, "utf8");
+    const updated = updateSkillsRef(text, tag);
+    if (updated !== text) {
+      writeFileSync(file, updated);
+      console.log(`updated ${file}: ref = ${tag}`);
+    } else {
+      console.log(`${file} already up to date (${tag})`);
+    }
   }
 }
