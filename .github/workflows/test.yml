@@ -15,7 +15,9 @@ jobs:
         with:
           bun-version: latest
       - run: bun install --frozen-lockfile
-      - run: bun test
+      # package.json の "test" 経由で呼ぶ (bunfig.toml root と bunfig.scripts.toml root の
+      # 2 config を両方回す。理由は bunfig.scripts.toml のコメント参照)。
+      - run: bun run test
 
   typecheck:
     name: tsc --noEmit
