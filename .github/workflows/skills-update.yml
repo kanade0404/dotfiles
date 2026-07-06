@@ -40,7 +40,15 @@ jobs:
     uses: kanade0404/skills/.github/workflows/consumer-update.yml@7c97f2647bfed8d81e365c538d3fb621b583ca95
     with:
       update_command: |
-        curl -fsSL https://bun.sh/install | bash
+        # bun.sh/install (bun.sh の可変な web エンドポイント) は使わない。このジョブは
+        # contents: write / pull-requests: write を持ち、actions/checkout 済みの push 権限
+        # 付き git 資格情報がローカルに残った状態でこのスクリプトを実行するため、
+        # bun.sh/install が改ざん/MITM された場合そのまま write 権限のあるリポジトリへの
+        # push/exfiltrate 経路になりうる (PR #111 のレビュー指摘)。install script は
+        # oven-sh/bun の pin 済み commit から取得し、インストールする bun のバージョンも
+        # 明示指定することで trust surface を縮める。バージョンを上げる際は install.sh の
+        # commit と "bun-v<X.Y.Z>" を両方更新する。
+        curl -fsSL https://raw.githubusercontent.com/oven-sh/bun/48ff9eb2fdab9269c63889d4093f26f442a40c72/src/runtime/cli/install.sh | bash -s "bun-v1.3.14"
         export PATH="$HOME/.bun/bin:$PATH"
         bun install --frozen-lockfile
         bun scripts/update-skills-ref.ts
