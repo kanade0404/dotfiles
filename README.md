@@ -116,6 +116,10 @@ install.sh               # Nix 管理外ファイルの symlink 作成
 `kanade0404/skills` の取得元は `rulesync.jsonc` / `rulesync-claude/rulesync.jsonc` の
 `ref` で `v0.6.0` に固定している ([skills 側 CLAUDE.md](https://github.com/kanade0404/skills/blob/master/CLAUDE.md)
 の契約: consumer は `@<tag>` 固定取得)。upstream の master 追従はしない。
+現在の固定タグは常に上記 2 ファイルの `ref` フィールドが正 (このドキュメントの記述は
+更新が遅れうる)。`planetscale/database-skills` には `ref` を付けていないが、これは
+upstream にタグが存在しないためで、実際の取得内容は `rulesync.lock` /
+`rulesync-claude/rulesync.lock` の `resolvedRef` (commit SHA) で固定されている。
 
 ## Claude Code Hooks
 
