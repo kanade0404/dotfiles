@@ -1,0 +1,48 @@
+name: skills update
+
+# kanade0404/skills の新リリースタグへ rulesync pin を追随させる (pull 型)。実体は
+# skills 側の reusable workflow (consumer-update.yml, kanade0404/skills#63)。新タグを
+# 検知すると pin 更新 + 生成物再生成の PR が自動で立つ (merge は人間)。急ぐ場合は
+# workflow_dispatch。
+#
+# 前提: kanade0404/dotfiles#109 (rulesync.jsonc / rulesync-claude/rulesync.jsonc の
+# kanade0404/skills source に "ref": "v0.6.0" を追加する PR) が先に merge されている
+# こと。#109 merge 前は書き換え対象の "ref" フィールドがまだ存在しないため、
+# scripts/update-skills-ref.ts が新規追加として動作はするが、pin 運用としての完成は
+# #109 の merge をもって成立する。#109 merge 後は次の新規タグ (v0.6.1 以降) から
+# このワークフローが自動で pin を更新していく。
+#
+# 注意: reusable workflow は caller token の権限を downgrade しかできないため、
+# permissions はここで明示する。GITHUB_TOKEN が作る PR は他 workflow (CI) を
+# トリガしない — PR 上で CI を回したい場合は repo secret に fine-grained PAT
+# (contents / pull-requests: write) を登録し、下の job に
+#   secrets:
+#     pr_token: ${{ secrets.<SECRET名> }}
+# を追加する。
+#
+# また、GITHUB_TOKEN での PR 作成には repository 設定 "Allow GitHub Actions to
+# create and approve pull requests" の有効化が別途必要 (Settings > Actions >
+# General)。未確認の場合はこの PR のレビュー時に確認すること。
+
+on:
+  schedule:
+    - cron: '35 20 * * *' # 05:35 JST daily
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update:
+    # write 権限を渡す reusable は SHA pin (追随は本 workflow 自身の更新 PR か
+    # Renovate 等の bump PR 経由)。kanade0404/skills#63 の merge commit。
+    uses: kanade0404/skills/.github/workflows/consumer-update.yml@7c97f2647bfed8d81e365c538d3fb621b583ca95
+    with:
+      update_command: |
+        curl -fsSL https://bun.sh/install | bash
+        export PATH="$HOME/.bun/bin:$PATH"
+        bun install --frozen-lockfile
+        bun scripts/update-skills-ref.ts
+        bun run rulesync:skills:update
+        bun run rulesync:skills:claude:update
