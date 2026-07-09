@@ -347,6 +347,12 @@
         "source": "github",
         "repo": "cloudflare/skills"
       }
+    },
+    "openai-codex": {
+      "source": {
+        "source": "github",
+        "repo": "openai/codex-plugin-cc"
+      }
     }
   },
   "effortLevel": "xhigh",
