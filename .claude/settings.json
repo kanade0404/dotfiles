@@ -349,6 +349,7 @@
       }
     }
   },
+  "model": "claude-fable-5[1m]",
   "effortLevel": "xhigh",
   "plansDirectory": "./.claude/plans",
   "autoMemoryEnabled": false,
