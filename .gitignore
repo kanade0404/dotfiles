@@ -29,7 +29,3 @@ rulesync-claude/.rulesync/
 # LOOP_OPS_TOKEN / gh 送信が無い環境で .cache/test-mutation-gate/ に落ちるため、
 # 未追跡ファイルで worktree を汚さないよう ignore する。
 .cache/
-
-
-# APM dependencies
-apm_modules/

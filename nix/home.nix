@@ -303,9 +303,6 @@
           source "$HOME/sdk/google-cloud-sdk/completion.zsh.inc"
         fi
 
-        # JetBrains Toolbox
-        export PATH="$PATH:$HOME/Library/Application Support/JetBrains/Toolbox/scripts"
-
         # dotnet / fsharp
         export PATH="$HOME/.dotnet:$PATH"
 
