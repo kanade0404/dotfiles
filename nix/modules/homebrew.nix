@@ -14,14 +14,12 @@
 
     taps = [
       { name = "ariga/tap"; trusted = true; }
-      { name = "microsoft/apm"; trusted = true; }
     ];
 
     # Formulae that stay in Homebrew (not available or problematic in nixpkgs)
     brews = [
       "ariga/tap/atlas"
       "herdr" # Agent multiplexer for the terminal (not in nixpkgs)
-      "microsoft/apm/apm" # Agent Package Manager (not in nixpkgs)
       "php"
       "rbenv"
       "ruby-build"
@@ -38,13 +36,9 @@
       "firefox"
       "font-fira-code"
       "font-fira-code-nerd-font"
-      "gimp"
       "google-chrome"
       "gyazo"
-      "handbrake-app" # renamed from "handbrake"
-      "jetbrains-toolbox"
       "karabiner-elements"
-      "licecap"
       "mactex-no-gui"
       "notion"
       "obsidian"
@@ -54,11 +48,8 @@
       "secretive"
       "slack"
       "spotify"
-      "sublime-text"
       "temurin@21"
       "the-unarchiver"
-      "transmit"
-      "tunnelblick"
       "utm"
       "visual-studio-code"
       "warp"
