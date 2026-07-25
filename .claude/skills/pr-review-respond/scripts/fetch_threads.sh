@@ -45,6 +45,12 @@ set -euo pipefail
 
 export NO_COLOR=1 CLICOLOR=0 CLICOLOR_FORCE=0 GH_NO_UPDATE_NOTIFIER=1
 
+# 直接実行にも耐えるよう、dispatcher (prr) 頼みにせず自前でも色強制を無効化する
+export NO_COLOR=1
+export CLICOLOR_FORCE=0
+unset GH_FORCE_TTY
+export GH_PAGER=cat
+
 if [ "$#" -ne 1 ]; then
   echo "usage: $0 <pr-number>" >&2
   exit 2

@@ -340,9 +340,11 @@ for (const root of generatedRoots) {
       },
       { from: 'bash "${CLAUDE_SKILL_DIR}/scripts/prr" fetch <PR>', to: 'bash <skill-dir>/scripts/prr fetch <PR>' },
       { from: 'bash "${CLAUDE_SKILL_DIR}/scripts/prr" reply <PR> <root-comment-id> <body-file>', to: 'bash <skill-dir>/scripts/prr reply <PR> <root-comment-id> <body-file>' },
-      { from: 'bash "${CLAUDE_SKILL_DIR}/scripts/prr" resolve <PR> <root-comment-id> [body-file]', to: 'bash <skill-dir>/scripts/prr resolve <PR> <root-comment-id> [body-file]' },
+      { from: 'bash "${CLAUDE_SKILL_DIR}/scripts/prr" resolve <PR> <root-comment-id> <classification> <vendor> [body-file]', to: 'bash <skill-dir>/scripts/prr resolve <PR> <root-comment-id> <classification> <vendor> [body-file]' },
       { from: 'bash "${CLAUDE_SKILL_DIR}/scripts/prr" summary <PR> <body-file>', to: 'bash <skill-dir>/scripts/prr summary <PR> <body-file>' },
       { from: 'bash "${CLAUDE_SKILL_DIR}/scripts/prr" wait-ci <PR>', to: 'bash <skill-dir>/scripts/prr wait-ci <PR>' },
+      { from: 'bash "${CLAUDE_SKILL_DIR}/scripts/prr" defer <PR> <thread-url> "<title>" <body-file>', to: 'bash <skill-dir>/scripts/prr defer <PR> <thread-url> "<title>" <body-file>' },
+      { from: 'bash "${CLAUDE_SKILL_DIR}/scripts/prr" escalate <PR> <reason> <body-file>', to: 'bash <skill-dir>/scripts/prr escalate <PR> <reason> <body-file>' },
     ]);
   }
 

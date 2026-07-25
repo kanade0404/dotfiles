@@ -2,9 +2,9 @@
   "lockfileVersion": 1,
   "sources": {
     "kanade0404/skills": {
-      "requestedRef": "v0.6.0",
-      "resolvedRef": "5a5f16b75ac207fdb4ff3ae9e8a5adb214c73d52",
-      "resolvedAt": "2026-07-06T12:12:38.199Z",
+      "requestedRef": "v0.9.0",
+      "resolvedRef": "d0837d5d652dc3163af111d6f096e34ec160b489",
+      "resolvedAt": "2026-07-25T05:01:04.672Z",
       "skills": {
         "adr-writer": {
           "integrity": "sha256-556e39bdc959977c08251a5b4cc5633a31d8fc1fe1569a42a5eeb59e6e99a0d3"
@@ -40,22 +40,22 @@
           "integrity": "sha256-f4596ab3b1e4b53010b9adba0605aecf9b288916ed47346adcad81def2d233b4"
         },
         "harness-distribution": {
-          "integrity": "sha256-ab88e7ea5f38cf09a879e3cc806e10252852ac12e00b459e88c28b1a379c56fc"
+          "integrity": "sha256-fa31d0806c0189ee97179d0d16651b8ef59a95950d47fbc3564854ca507052a8"
         },
         "issue-driven-development": {
-          "integrity": "sha256-482c868e3f0d61acd993f06606fe06445c03ae9ad4d3b7d01e99c1363d6af09b"
+          "integrity": "sha256-945bbcc633c3fffd85a00b736a8abe5fb8e98502a305a69d3477094ee86f2cf7"
         },
         "linear-issue-driven-development": {
-          "integrity": "sha256-b3c842fe5dafad853fd057617773bd8d1df44d95b7f56fda9c31b8a21c46d93b"
+          "integrity": "sha256-78d3a41c68354bd3432561947b3e0509b44de785ccfd8fee289e8f6796f0adc9"
         },
         "pr-conflict-resolver": {
-          "integrity": "sha256-5e813484c840040d7eb5545a7bfc7a3c57898badbf94d505fbb85f43832c58ea"
+          "integrity": "sha256-321a13f14ded394f3d574d85b47451bfb1e40f3b13db5377ddd6e08a0b1cb8fe"
         },
         "pr-monitor": {
-          "integrity": "sha256-e2c3e8d0eba2948c7fd7751936678612a01bdac01172c8b1aa828d3fc706d3de"
+          "integrity": "sha256-4124ebb00e5398310119aa7278990a031c5f6280b077320a5d7c7f9a26a02e37"
         },
         "pr-review-respond": {
-          "integrity": "sha256-e0066317b50f2b7cac17fc88535e2e280b1b0dffd335d4b0348e64b620924de1"
+          "integrity": "sha256-f0d6daa9380de6cc304dc92f4d65c066d257b212e3b66d5e576ee398f4376e21"
         },
         "product-discovery": {
           "integrity": "sha256-dec3905e318b9f813dbb96c989f1470d7df235529318b1b30325ee40b0408582"
@@ -73,7 +73,7 @@
           "integrity": "sha256-2d56a205d404504f7a28dfcc82849dfae79016b9ea2998e324b0f1544b500212"
         },
         "shipping": {
-          "integrity": "sha256-6944bb10e31935b9c3d8dceb1cf4e5c72765e7eb0674cbb8d5d2261175b1892c"
+          "integrity": "sha256-317ccec2d02bbfec022dc9e9cb712fc23160287a373da7308347e360af886447"
         },
         "skill-builder": {
           "integrity": "sha256-d742173e52478e60c054fb3285f37a86a4d3eaa435f137bece50b8fb12f2649c"
@@ -88,7 +88,7 @@
           "integrity": "sha256-079eda5dbf722f6b5ec6375d9f5d526f7261a0c21a480ab34b02d1f804041a79"
         },
         "test-mutation-gate": {
-          "integrity": "sha256-a3568e0acb8118120c06cb7ce11e5edf06ff5bf952315f64fdcad55dd9e50597"
+          "integrity": "sha256-cccdc1106f007c1c23e4940667c2d9d834908812721ada1a1ef4eb9f59c4e31a"
         },
         "test-review": {
           "integrity": "sha256-428faf447c9a87044ba0b7b1313c3eb23c6411c3cff4a9212a3d5bb9cc9fd369"
@@ -109,14 +109,14 @@
     },
     "planetscale/database-skills": {
       "requestedRef": "main",
-      "resolvedRef": "8942f83c3a6c9557868169b965bba5536cde5e91",
-      "resolvedAt": "2026-07-06T12:12:39.599Z",
+      "resolvedRef": "af0ce0cfb65cca4cc21d18ca0d9cf270ca99d488",
+      "resolvedAt": "2026-07-25T05:01:06.150Z",
       "skills": {
         "mysql": {
           "integrity": "sha256-1f408c1fecb77a0e33576de9189bda48cd67e7c0784208c10105280d8b872302"
         },
         "neki": {
-          "integrity": "sha256-153bc7359ff0473dc54221806da47c968b988af850e002f3012446dc56fc9854"
+          "integrity": "sha256-adabbd9d74e30417eeeb74a90e2464c2c2bb59609361b3e5e72994e57f6a13fd"
         },
         "postgres": {
           "integrity": "sha256-78782765f1ae00b777d815082a3ad5ec9d1d1cc3ffffa2b143e8a51b994c7a09"

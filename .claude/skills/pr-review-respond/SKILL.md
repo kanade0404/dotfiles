@@ -12,9 +12,10 @@ description: >-
   を離れる前に必ず一度起動する。レビュアー判別はコメント author と本文を読んで行い、bot suffix
   のような表面的なルールは持たない。本スキルは「読む・直す・返信する・サマリ投稿する」までで、レビュー自体を実行する (CodeRabbit や Devin
   を呼び出す) ことはしない — 既にレビュー済みの PR に後追いで対応するスキル。GitHub API 呼び出しは同梱の単一エントリ
-  `scripts/prr` (subcommand: `fetch` / `reply` / `resolve` / `summary` /
-  `wait-ci`) に集約しており、`allowed-tools` で `Bash(bash *prr *)` を auto-grant するため
-  consumer 側で permission を追加する必要は無い。"
+  `scripts/prr` (subcommand: `fetch`/`reply`/`resolve`/`summary`/`wait-ci`)
+  に集約しており、`allowed-tools` で consumer 側の追加 permission は不要。CodeRabbit 指摘の修正適用は
+  coderabbit plugin がある環境では `coderabbit:autofix` に委譲し、本スキルは
+  triage・返信・resolve・サマリに徹する。"
 allowed-tools:
   - Read
   - Write
@@ -24,6 +25,8 @@ allowed-tools:
   - Bash(git commit *)
   - Bash(git diff *)
   - Bash(git log *)
+  - Bash(git push *)
+  - Bash(git rev-parse *)
   - Bash(git status *)
   - Bash(jq *)
   - Task
@@ -37,6 +40,20 @@ CodeRabbit / Devin / 人間レビュアーが残したコメントを **盲信�
 - **verify-before-implement** — 妥当性を AI が一次判定してから手を動かす。`receiving-code-review` 系の規律を取り込む。
 - **pushback はコメントのみ** — INVALID と判定したものは根拠を書くだけで resolve しない。reviewer の最終判断余地を残す。
 - **トレーサビリティは PR 集約コメント 1 本に集約** — ローカルログは作らない。後から PR を見れば全てわかる状態にする。
+
+---
+
+## 実行環境前提
+
+本スキルは 3 つの実行環境で起動しうる。**待機や中断の扱いが環境ごとに違う**ため、起動時にどの環境かを意識する:
+
+| 環境 | 特徴 | 待機や行き詰まりの扱い |
+|---|---|---|
+| 対話ローカルセッション | 画面前に人間がいる | Phase E の `WAITING` verdict をそのまま人間に返してよい |
+| ヘッドレス subagent (`shipping` 等からの dispatch) | 呼び出し元 skill/agent がいる | `WAITING` verdict を呼び出し元に返す。呼び出し元が再開の責任を持つ |
+| CI / スケジュール起動 (無人実行) | `WAITING` を受け取る相手がいない | **`WAITING` で止めない**。`needs-human` ラベル付与 + 構造化コメント (`prr escalate`、後述) を必須のフォールバックとする |
+
+いずれの環境でも共通の規律は Phase E で扱う「待機委譲時の end_turn 禁止」。
 
 ---
 
@@ -56,7 +73,9 @@ scripts/
 ├── reply_thread.sh      # prr reply
 ├── resolve_thread.sh    # prr resolve
 ├── post_summary.sh      # prr summary
-└── wait_ci.sh           # prr wait-ci
+├── wait_ci.sh           # prr wait-ci
+├── defer_issue.sh       # prr defer
+└── escalate.sh          # prr escalate
 ```
 
 ### Subcommand 一覧
@@ -67,9 +86,11 @@ scripts/
 |---|---|
 | `prr fetch <PR>` | 全 review thread + PR 一般コメントを GraphQL + REST で取得し、vendor 判定 (`coderabbit` / `devin` / `human`) と `self_replied` フラグを付けた正規化 JSON を stdout に出力 |
 | `prr reply <PR> <comment-id> <body-file>` | 正しい `/repos/{O}/{R}/pulls/{PR}/comments/{id}/replies` エンドポイントで返信投稿。本文は file 経由で multi-line / 引用符事故を防ぐ |
-| `prr resolve <PR> <comment-id> [body-file]` | `body + @coderabbitai resolve` を投稿し thread を resolve。VALID / VALID_DEFER / DUPLICATE 専用 (INVALID_PUSH では呼ばない) |
+| `prr resolve <PR> <comment-id> <classification> <vendor> [body-file]` | vendor (`coderabbit`/`devin`/`human`、**必須・省略不可**) 別に返信本文を組み立てたうえで (coderabbit のみ `@coderabbitai resolve` を併記)、GraphQL `resolveReviewThread` mutation で全 vendor のスレッドを直接 resolve。`classification` は `VALID` / `VALID_DEFER` / `DUPLICATE` のみ許可。**`INVALID_PUSH` を渡すと非ゼロ exit で拒否する** (誤 resolve ガード、後述)。vendor を省略・誤指定すると usage を表示して非ゼロ exit で拒否する (暗黙デフォルト廃止 — 誤 vendor 判定で人間スレッドに `@coderabbitai resolve` を投稿する事故を防ぐ) |
 | `prr summary <PR> <body-file>` | 集約 Review Response Summary を **新規** issue comment として投稿 (毎回新規投稿、過去サマリは履歴として残す) |
 | `prr wait-ci <PR> [interval]` | `gh pr checks --watch` をラップし全 check 完了まで block。失敗時は exit 非ゼロで呼出側に通知 (本スキルは retry しない) |
+| `prr defer <PR> <thread-url> <title> <body-file>` | `VALID_DEFER` 判定のフォロー issue を作成し、`<issue-number> <issue-url>` を stdout に出力。本文に元スレッド URL と PR URL を自動付記する |
+| `prr escalate <PR> <reason> <body-file>` | 無人実行で `WAITING` を返す相手がいない時のフォールバック。PR に `needs-human` ラベルを付け、`body-file` を構造化コメントとして投稿する |
 
 スクリプト本体は最小依存 (`gh`, `jq`, `bash`) のみ前提。Python / Node 等は使わない。
 
@@ -127,6 +148,8 @@ bash "${CLAUDE_SKILL_DIR}/scripts/prr" fetch <PR>   # → 正規化 JSON を std
 
 `VALID` のみ対象。
 
+**CodeRabbit 起因の指摘は `coderabbit:autofix` への委譲を許容する**: CodeRabbit が投稿した `VALID` 判定の指摘について、coderabbit plugin が導入されている環境では、修正適用そのものを per-change approval 付きで安全に適用する専用スキル `coderabbit:autofix` に委譲してよい。委譲した場合でも、triage (Phase B)・返信 / resolve (Phase D)・集約サマリ (Phase E) を本スキルが持つ分担は変わらない。plugin が無い環境では従来どおり本 Phase の経路 (structural → `tidy-first` / behavioral → `tdd`) で修正する。commit への `Refs:` 付与と Phase C 終端の push 規律 (後述) は、委譲した場合も適用される。
+
 - **structural change** (純リファクタ・rename・抽出) は **behavioral change と commit を分ける**。`tidy-first` の規律を踏む。
 - **behavioral change** は失敗テストを先に書く（`test-driven-development` の規律）。
 - 各 commit message に該当スレッドの URL を `Refs:` で付ける：
@@ -143,6 +166,33 @@ Refs: https://github.com/<owner>/<repo>/pull/<n>#discussion_r<id>
 
 **Devin の re-review は commit push に任せる**。`@devin` メンションでの再依頼はしない（push を検知して自動再評価するため）。
 
+### Phase C 終端 — push (省略禁止)
+
+commit を当てただけでは GitHub 上の PR は古い HEAD のままで、CI もレビュー bot もそれを見ている。**Phase D / E に進む前に必ず push する**:
+
+```bash
+git push origin <branch>
+git rev-parse HEAD   # push した SHA を記録し、以降の "Fixed in <SHA>" 返信に使う
+```
+
+- push を省略すると `prr wait-ci` が古い HEAD の CI 結果を見て「完了」と誤判定する。Devin の自動 re-review も push が trigger のため起動しない。
+- push が rejected / diverged で失敗したら、原因 (force-push 済みの remote など) を解消してから再 push する。**push が成功したことを確認した SHA でのみ** Phase D 以降に進む。
+- 複数 commit をまとめて 1 回だけ push してよい。commit ごとの push は必須ではない。
+
+### VALID_DEFER — フォロー issue 作成
+
+`VALID_DEFER` は「妥当だがスコープ外」の判定であり、返信 (Phase D) で `Tracked in #<issue>` と書く以上、その issue は **返信より前に実在していなければならない**。
+
+```bash
+# body-file には指摘の要約 (自分の言葉で) + スコープ外と判断した理由を書く
+bash "${CLAUDE_SKILL_DIR}/scripts/prr" defer <PR> <thread-url> "<title>" <body-file>
+# stdout: "<issue-number> <issue-url>"
+```
+
+- **タイトル規約**: 指摘内容を要約した命令形 1 行 (例: `Extract retry policy into shared helper`)。skill 名等のプレフィックスは付けない。
+- **本文必須項目**: 指摘の要約、スコープ外と判断した理由 (1 文)。元スレッド URL と PR URL は `prr defer` が自動で付記する。
+- 生成された issue 番号を Phase D の返信 (`Tracked in #<issue>`) と Phase E のサマリ (`[<thread-url>] → #<issue>`) の両方に使う。
+
 ### Phase D — 返信 (reply)
 
 inline thread への返信は GitHub REST の `/replies` エンドポイントを使う必要がある (top-level review comment への返信のみ可、reply-to-reply は不可)。これも `prr` wrapper に閉じ込める。
@@ -151,21 +201,31 @@ inline thread への返信は GitHub REST の `/replies` エンドポイント�
 # 返信本文は file 経由 (multi-line / 引用符のエスケープ事故防止)
 bash "${CLAUDE_SKILL_DIR}/scripts/prr" reply <PR> <root-comment-id> <body-file>
 
-# CodeRabbit に「対応済み」を伝えて thread を resolve する場合 (VALID / VALID_DEFER / DUPLICATE のみ)
-bash "${CLAUDE_SKILL_DIR}/scripts/prr" resolve <PR> <root-comment-id> [body-file]
-# body-file を渡すとその内容 + 改行 + "@coderabbitai resolve" が投稿される
+# 対応済みスレッドを resolve する場合 (VALID / VALID_DEFER / DUPLICATE のみ)。
+# vendor は coderabbit/devin/human から必須指定 (4 番目の引数。省略・誤指定は
+# usage 表示 + 非ゼロ exit で拒否 — 暗黙デフォルトは廃止)
+bash "${CLAUDE_SKILL_DIR}/scripts/prr" resolve <PR> <root-comment-id> <classification> <vendor> [body-file]
+# classification は VALID / VALID_DEFER / DUPLICATE のいずれか。
+# INVALID_PUSH を渡すとスクリプトが非ゼロ exit で拒否する (誤 resolve ガード)。
+# vendor=coderabbit: body-file 内容 + 改行 + "@coderabbitai resolve" を返信投稿してから resolve。
+# vendor=devin/human: body-file 内容のみを返信投稿してから resolve (ディレクティブは付けない)。
+#   body-file を省略すると返信は送らず resolve のみ行う。
+# resolve 自体はいずれの vendor でも GraphQL resolveReviewThread mutation でスレッドを直接
+# resolve する (CodeRabbit のメンション頼みではない — メンションは coderabbit 向けの併記のみ)
 ```
 
 vendor 別の使い分け:
 
 | 分類 | CodeRabbit | Devin | 人間 |
 |---|---|---|---|
-| `VALID` | `prr resolve` (body: 「Fixed in `<SHA>`」) | `prr reply` (Fixed in `<SHA>`) | `prr reply` (Fixed in `<SHA>`. Ready for re-review.) |
+| `VALID` | `prr resolve` vendor=coderabbit (body: 「Fixed in `<SHA>`」、`@coderabbitai resolve` 併記) | `prr resolve` vendor=devin (body: 「Fixed in `<SHA>`」、ディレクティブ無し) | `prr resolve` vendor=human (body: 「Fixed in `<SHA>`. Ready for re-review.」、ディレクティブ無し) |
 | `INVALID_PUSH` | `prr reply` (根拠のみ、resolve しない) | `prr reply` (根拠のみ) | `prr reply` (根拠 + 質問形式) |
-| `VALID_DEFER` | `prr resolve` (body: 「Tracked in #`<issue>`」) | `prr reply` (Tracked in #`<issue>`) | `prr reply` (Tracked in #`<issue>`) |
-| `DUPLICATE` | `prr resolve` (body: 「Already addressed by `<other-thread-url>`」) | `prr reply` (Already addressed by ...) | 同左 |
+| `VALID_DEFER` | `prr resolve` vendor=coderabbit (body: 「Tracked in #`<issue>`」) | `prr resolve` vendor=devin (body: 「Tracked in #`<issue>`」) | `prr resolve` vendor=human (body: 「Tracked in #`<issue>`」) |
+| `DUPLICATE` | `prr resolve` vendor=coderabbit (body: 「Already addressed by `<other-thread-url>`」) | `prr resolve` vendor=devin (body: Already addressed by ...) | `prr resolve` vendor=human (同左) |
 
-**重要**: `INVALID_PUSH` は **どのレビュアーに対しても resolve コマンドを発行しない** (`prr reply` のみ使用)。reviewer 側に「無視された」と取られる余地を消すため。
+対応済み (修正 commit 済み / issue 化済み / 重複参照済み) のスレッドは vendor を問わず resolve し、PR の未解決スレッド数を実態に一致させる。これは `pr-monitor` の `prm` が持つ `unresolved_count` (`isResolved == false` の全スレッド数) が収束判定の前提にしている値そのものであり、CodeRabbit 以外のスレッドを resolve せず放置すると、対応済みでも `unresolved_count` が減らず収束ループが成立しない。
+
+**重要**: `INVALID_PUSH` は **どのレビュアーに対しても resolve コマンドを発行しない** (`prr reply` のみ使用)。reviewer 側に「無視された」と取られる余地を消すため。この規律は運用 (書き手の注意) だけに頼らず、`resolve_thread.sh` 自身が `classification` 引数に `INVALID_PUSH` を渡された時点で非ゼロ exit するガードとして実装されている。
 
 返信本文の最低構成 (INVALID_PUSH の例):
 
@@ -217,6 +277,27 @@ bash "${CLAUDE_SKILL_DIR}/scripts/prr" summary <PR> <body-file>
 bash "${CLAUDE_SKILL_DIR}/scripts/prr" wait-ci <PR>   # 全 check 完了まで block、fail なら ci-self-heal に渡す
 ```
 
+### 待機委譲時の規律 (end_turn 禁止)
+
+`wait-ci` はブロッキング呼び出しだが、長時間 CI を `Monitor` 等のバックグラウンド監視に委譲したくなる場面がある。**委譲した直後に end_turn してはならない** — 誰も再開しないまま放置される実例が起きている (待機委譲後 50 分放置)。
+
+- 同一ターン内で `wait-ci` (または委譲した監視) の完了 (pass/fail) まで確認できるなら、そのまま最終報告に進む。
+- 同一ターン内で完結できない場合、最終報告の代わりに **`WAITING` verdict を明示的に返す**:
+  - 現在までの進捗 (Fixed / Pushback / Deferred / Duplicate の内訳)
+  - 何を待っているか (CI の残り check / 追加レビュー等)
+  - 再開条件 (checks 完了、新規コメント等) と再開方法 (呼び出し元がポーリングするか、`pr-monitor` 等に引き継ぐか)
+  - `WAITING` を返したターンで end_turn してよいのは、「実行環境前提」表の対話ローカル / ヘッドレス subagent のように **`WAITING` を受け取る相手が存在する場合のみ**
+- 受け取る相手がいない (CI / スケジュール起動の無人実行) 場合は `WAITING` で止めない。代わりに次を実行してから終える:
+
+```bash
+# body-file は loop-escalation:v1 形式 (issue-driven-development skill と共通の規約):
+# 自由文の状況説明 + <!-- loop-escalation:v1 --> に続く JSON
+#   {"reason": "...", "detail": "...", "attempts": <n>, "session_id": "...", "next_action_hint": "..."}
+# reason は budget-exceeded / max-turns / ci-3-fail / review-5-rounds / no-progress /
+# ambiguous-issue / repo-unresolvable / conflict / security-block / other から選ぶ
+bash "${CLAUDE_SKILL_DIR}/scripts/prr" escalate <PR> <reason> <body-file>
+```
+
 ---
 
 ## 出力フォーマット
@@ -254,7 +335,7 @@ bash "${CLAUDE_SKILL_DIR}/scripts/prr" wait-ci <PR>   # 全 check 完了まで b
 
 - 本文構造が CodeRabbit walkthrough / nitpick markup を含む → `coderabbit` で固定
 - 本文に Devin 特有のシグネチャ / Confidence 表記 → `devin` で固定
-- それ以外で script の判定が曖昧な場合 → **人間として扱う** (resolve コマンドを誤って発行しないため、より安全な側に倒す)
+- それ以外で script の判定が曖昧な場合 → **人間として扱う** (`@coderabbitai resolve` メンションを誤って付与しないための安全側デフォルト。resolve 自体は vendor によらず GraphQL mutation で行うため、この判定が影響するのは「resolve するか否か」ではなく「CodeRabbit 宛のメンションを併記するか否か」だけ)
 
 PR 作者本人 (= 自分) のコメントは fetcher 側ではフィルタしない。本スキルが「自分のコメント」「自分の集約サマリ」を識別して捌く。
 
@@ -266,8 +347,10 @@ PR 作者本人 (= 自分) のコメントは fetcher 側ではフィルタし�
 
 - **集約サマリコメント 1 件** (`prr summary` 経由で PR の issue comment として投稿、毎回新規、過去サマリは履歴として残す)
 - **inline thread への返信文字列** (`prr reply` / `prr resolve` 経由、vendor 別フォーマット)
-- **修正コミット列** (commit message に `Refs: <thread-url>` を含む)
-- **ユーザ向け最終報告** (Stats / Commits / Pushback / CI / Summary URL の固定構造)
+- **修正コミット列 + push** (commit message に `Refs: <thread-url>` を含み、Phase C 終端で push 済み)
+- **フォロー issue** (`VALID_DEFER` 判定時のみ、`prr defer` 経由で作成)
+- **ユーザ向け最終報告** (Stats / Commits / Pushback / CI / Summary URL の固定構造、または `WAITING` verdict)
+- **`needs-human` ラベル + エスカレーションコメント** (無人実行で `WAITING` の受け手がいない場合のみ、`prr escalate` 経由)
 
 ### 出力しない成果物
 
@@ -285,5 +368,6 @@ PR 作者本人 (= 自分) のコメントは fetcher 側ではフィルタし�
 
 - **Devin protocol の表面追跡が必要**: Devin の出力フォーマットは更新される。本文判定の文字列マッチが滑ったら「人間扱い」に倒れるが、resolve 誤発行の害より対応漏れの害が小さいので意図通り。
 - **GraphQL `reviewThreads.isResolved` への依存**: REST だけでは resolve 判定が取れないため GraphQL 併用。`gh` 認証スコープに graphql 必須。
+- **`resolveReviewThread` mutation は書き込み権限が必要**: 読み取り専用の `gh` 認証や外部フォークからの実行では失敗する。自分の PR / write 権限のあるリポジトリで動かす前提。
 - **`gh pr checks --watch` の長時間ブロック**: 大規模 CI で 30 分超を想定。バックグラウンド実行 + 通知に切り替える運用余地あり。
 - **multi-PR 並走の分離**: 1 セッション内で複数 PR を同時に捌く運用は想定していない。PR ごとに 1 セッション。
