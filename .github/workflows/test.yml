@@ -40,16 +40,25 @@ jobs:
       - name: Run shellcheck
         run: |
           set -euo pipefail
+          # 生成 skill コピー (rulesync で upstream から取得。著者管理外) は
+          # 対象外にする。.markdownlint-cli2.jsonc の ignores と同じポリシー
+          # (生成コピーは lint 対象外、source 側で担保する)。
           mapfile -d '' -t sh_files < <(
             find . \
               -path ./node_modules -prune -o \
               -path ./.git -prune -o \
+              -path ./.claude/skills -prune -o \
+              -path ./.agents/skills -prune -o \
+              -path ./.opencode/skills -prune -o \
               -type f -name '*.sh' -print0
           )
           mapfile -d '' -t shebang_files < <(
             find . \
               -path ./node_modules -prune -o \
               -path ./.git -prune -o \
+              -path ./.claude/skills -prune -o \
+              -path ./.agents/skills -prune -o \
+              -path ./.opencode/skills -prune -o \
               -type f ! -name '*.sh' -print0 |
             while IFS= read -r -d '' f; do
               if head -n1 "$f" 2>/dev/null | grep -qE "^#!.*\\b(bash|sh)\\b"; then
