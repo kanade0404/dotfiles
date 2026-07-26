@@ -25,11 +25,15 @@ function isMarkdown(name: string): boolean {
 }
 
 // skill ディレクトリ 1 つを再帰走査し、`${CLAUDE_SKILL_DIR}` を含む .md を置換する。
-// 置換が 1 つでも起きたら (references/*.md だけの場合も含む) その skill の SKILL.md に
-// 定義注記を挿入する。返り値は「この skill 配下で置換が起きたか」。
-function rewriteOneSkill(skillDir: string): boolean {
+// 置換後の .md に `<skill-dir>` が含まれる (= references/*.md だけの場合も含む) なら
+// その skill の SKILL.md に定義注記を挿入する。
+function rewriteOneSkill(skillDir: string): void {
   let skillMdPath: string | null = null;
-  let rewrote = false;
+  // 注記の要否は「この run で置換したか」ではなく post-state (置換後に .md が
+  // `<skill-dir>` を含むか) で判定する。walk は .md を見つけ次第 eager write するため、
+  // 後続ファイルで throw した run の後に原因を直して再実行すると、マーカーは既に消えて
+  // おり this-run 判定 (旧 `rewrote`) では注記が silent 欠落する (PR #153 review)。
+  let sawPlaceholder = false;
 
   const walk = (dir: string) => {
     for (const ent of readdirSync(dir, { withFileTypes: true })) {
@@ -47,34 +51,35 @@ function rewriteOneSkill(skillDir: string): boolean {
         skillMdPath = p;
       }
       const text = readFileSync(p, "utf8");
-      if (!text.includes(CLAUDE_SKILL_DIR_MARKER)) {
-        continue;
+      const md = isMarkdown(ent.name);
+      let finalText = text;
+      if (text.includes(CLAUDE_SKILL_DIR_MARKER)) {
+        if (!md) {
+          // scripts/ 等の非 .md に残った場合は doc プレースホルダ置換では正しく扱えない
+          // (実行時に解決が要る) ため、silent に壊れたパスを出荷せず fail-loud にする。
+          throw new Error(
+            `residual ${CLAUDE_SKILL_DIR_MARKER} in non-markdown codex skill file: ${p} — the ${SKILL_DIR_PLACEHOLDER} rewrite only covers .md; handle this file deliberately (Codex/OpenCode does not define CLAUDE_SKILL_DIR)`,
+          );
+        }
+        finalText = text.split(CLAUDE_SKILL_DIR_MARKER).join(SKILL_DIR_PLACEHOLDER);
+        writeFileSync(p, finalText);
       }
-      if (!isMarkdown(ent.name)) {
-        // scripts/ 等の非 .md に残った場合は doc プレースホルダ置換では正しく扱えない
-        // (実行時に解決が要る) ため、silent に壊れたパスを出荷せず fail-loud にする。
-        throw new Error(
-          `residual ${CLAUDE_SKILL_DIR_MARKER} in non-markdown codex skill file: ${p} — the ${SKILL_DIR_PLACEHOLDER} rewrite only covers .md; handle this file deliberately (Codex/OpenCode does not define CLAUDE_SKILL_DIR)`,
-        );
+      if (md && finalText.includes(SKILL_DIR_PLACEHOLDER)) {
+        sawPlaceholder = true;
       }
-      writeFileSync(
-        p,
-        text.split(CLAUDE_SKILL_DIR_MARKER).join(SKILL_DIR_PLACEHOLDER),
-      );
-      rewrote = true;
     }
   };
   walk(skillDir);
 
-  if (!rewrote) {
-    return false;
+  if (!sawPlaceholder) {
+    return;
   }
 
-  // 置換が起きたなら SKILL.md に定義注記を必ず入れる。入れられない
+  // `<skill-dir>` を出荷するなら SKILL.md に定義注記を必ず入れる。入れられない
   // (SKILL.md が無い / frontmatter 形が想定外) なら注記欠落の silent 出荷を避けて throw。
   if (skillMdPath === null) {
     throw new Error(
-      `codex skill rewrite occurred under ${skillDir} but no SKILL.md exists to host the ${SKILL_DIR_PLACEHOLDER} definition note`,
+      `codex skill under ${skillDir} contains ${SKILL_DIR_PLACEHOLDER} but has no SKILL.md to host the definition note`,
     );
   }
   const skillMd = readFileSync(skillMdPath, "utf8");
@@ -87,7 +92,6 @@ function rewriteOneSkill(skillDir: string): boolean {
     }
     writeFileSync(skillMdPath, noted);
   }
-  return true;
 }
 
 // codex 生成物の root (例 .rulesync/skills/.curated) 直下の各 skill を処理する。

@@ -104,4 +104,37 @@ describe("rewriteCodexSkillDir", () => {
     expect(() => rewriteCodexSkillDir(root)).not.toThrow();
     expect(readFileSync(readme, "utf8")).not.toContain(CLAUDE_SKILL_DIR_MARKER);
   });
+
+  test("置換が起きたのに SKILL.md が無ければ throw する", () => {
+    const dir = makeSkill("no-skill-md");
+    mkdirSync(join(dir, "references"), { recursive: true });
+    writeFileSync(join(dir, "references", "g.md"), `"${CLAUDE_SKILL_DIR_MARKER}/scripts/x"\n`);
+
+    expect(() => rewriteCodexSkillDir(root)).toThrow(/no SKILL\.md/);
+  });
+
+  test("eager write 後に別ファイルで throw → 原因解消後の再実行で注記が入る (post-state 判定)", () => {
+    const dir = makeSkill("partial");
+    const skillMd = join(dir, "SKILL.md");
+    writeFileSync(skillMd, `${FRONTMATTER}\nbash "${CLAUDE_SKILL_DIR_MARKER}/scripts/prm"\n`);
+    mkdirSync(join(dir, "scripts"), { recursive: true });
+    const sh = join(dir, "scripts", "x.sh");
+    writeFileSync(sh, `p="${CLAUDE_SKILL_DIR_MARKER}"\n`);
+
+    // 1 回目: .sh の残留で throw する。SKILL.md は eager write 済み (マーカー→placeholder)
+    // だが、注記はまだ入っていない可能性がある。
+    expect(() => rewriteCodexSkillDir(root)).toThrow(/non-markdown/);
+    // 原因を解消 (script 側のマーカーを除去)。
+    writeFileSync(sh, `p="/resolved/at/runtime"\n`);
+    // 2 回目: マーカーは SKILL.md に既に無いが、placeholder は残っているので注記が入る。
+    expect(() => rewriteCodexSkillDir(root)).not.toThrow();
+    expect(readFileSync(skillMd, "utf8")).toContain(SKILL_DIR_NOTE_MARKER);
+  });
+
+  test("マーカーと placeholder の literal 値が契約通り (self-consistent assertion 回避)", () => {
+    // 定数値がタイポで変わってもテストが通る self-consistent assertion を避け、
+    // 契約 (Claude Code が定義する実在の環境変数名 / 置換後のプレースホルダ) を literal で固定。
+    expect(CLAUDE_SKILL_DIR_MARKER).toBe("${CLAUDE_SKILL_DIR}");
+    expect(SKILL_DIR_PLACEHOLDER).toBe("<skill-dir>");
+  });
 });

@@ -78,7 +78,7 @@ jobs:
     name: no residual CLAUDE_SKILL_DIR
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7.0.1
       - name: Assert committed codex/opencode skill copies have no ${CLAUDE_SKILL_DIR}
         run: |
           set -euo pipefail
@@ -87,8 +87,23 @@ jobs:
           # 他経路では検出されない。patch スクリプトの fail-loud throw は再生成時のみ
           # 効くので、PR CI 側にも残留ガードを置く (PR #153 review)。Codex/OpenCode は
           # 同変数を定義せず、残ると同梱スクリプトのパスが解決できないため。
+          #
+          # git grep は「対象 dir が存在しない/追跡ファイル 0」でも no-match と同じ
+          # exit 1 を返すため、生成先が空/消えると guard が silent に無効化される。
+          # 先に dir 存在を assert して防ぐ (PR #153 review)。
+          for d in .agents/skills .opencode/skills .claude/skills; do
+            test -d "$d" || { echo "::error::expected generated skill dir missing: $d"; exit 1; }
+          done
+          # 1) codex/opencode 生成物に ${CLAUDE_SKILL_DIR} が残っていないこと。
           if git grep -n -F '${CLAUDE_SKILL_DIR}' -- .agents/skills .opencode/skills; then
             echo '::error::residual ${CLAUDE_SKILL_DIR} in generated codex/opencode skill copies. Regenerate: bun run rulesync:skills:update && bun run rulesync:skills:claude:update'
             exit 1
           fi
-          echo 'OK: no residual ${CLAUDE_SKILL_DIR} in .agents/.opencode skill copies'
+          # 2) 逆方向: codex 専用の <skill-dir> 定義注記が Claude 側 (.claude/skills) に
+          #    漏れていないこと (codex patch が claude パイプラインに漏れる class の再発検出)。
+          #    Claude 側は ${CLAUDE_SKILL_DIR} を保持するのが正で、注記が入ってはいけない。
+          if git grep -n -F '本文中の `<skill-dir>` は' -- .claude/skills; then
+            echo '::error::codex-only <skill-dir> definition note leaked into .claude/skills (claude copies must keep ${CLAUDE_SKILL_DIR})'
+            exit 1
+          fi
+          echo 'OK: no residual marker in codex copies, no codex note leak into claude copies'
