@@ -1,5 +1,6 @@
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { parse as parseJsonc, type ParseError } from "jsonc-parser";
+import { rewriteCodexSkillDir } from "./rewrite-codex-skill-dir.ts";
 
 const curatedPrefix = ".rulesync/skills/.curated/";
 
@@ -294,24 +295,15 @@ for (const path of shellcheckPatches) {
   }
 
   let text = initial;
+  // NO_COLOR 等の export は挙動変更 (gh の色付き出力が jq を壊すのを防ぐ) なので保持する。
+  // SC2016 disable コメント注入はかつて「生成コピーが CI で shellcheck される」前提の
+  // 対処だったが、生成コピー (.claude/.agents/.opencode/skills) は shellcheck 対象外に
+  // なり、curated cache (.rulesync/skills/.curated) も gitignore で CI に存在しないため
+  // 消費者がいなくなった。dead code を残さず削除する (PR #153 review)。
   if (!text.includes("export NO_COLOR=1 CLICOLOR=0 CLICOLOR_FORCE=0 GH_NO_UPDATE_NOTIFIER=1")) {
     text = text.replace(
       "set -euo pipefail\n",
       "set -euo pipefail\n\nexport NO_COLOR=1 CLICOLOR=0 CLICOLOR_FORCE=0 GH_NO_UPDATE_NOTIFIER=1\n",
-    );
-  }
-
-  if (!text.includes("# shellcheck disable=SC2016\n  resp=$(gh api graphql")) {
-    text = text.replace(
-      "  resp=$(gh api graphql",
-      "  # shellcheck disable=SC2016\n  resp=$(gh api graphql",
-    );
-  }
-
-  if (!text.includes("# shellcheck disable=SC2016\nvendor_filter='")) {
-    text = text.replace(
-      "\nvendor_filter='",
-      "\n# shellcheck disable=SC2016\nvendor_filter='",
     );
   }
 
@@ -340,13 +332,13 @@ for (const root of generatedRoots) {
   // 配下を再帰走査し、`bash "..."` / `python3 "..."` / prose 内の裸参照など形を問わず
   // 全 .md を一括置換することで、今後スクリプトを持つ skill が増えても追従不要にする。
   //
-  // さらに 2 つの安全策 (PR #153 review) を足す:
-  //   1. 置換した SKILL.md には frontmatter 直後に `<skill-dir>` の定義注記を挿入する。
-  //      旧 per-line パッチが持っていた「<skill-dir> は何を指すか」の定義が一括置換で
-  //      失われ、プレースホルダを literal 実行する誤誘導リスクが再導入されたため。
-  //   2. .md 以外 (scripts/ 等) に `${CLAUDE_SKILL_DIR}` が残っていたら throw する。
-  //      置換対象を SKILL.md 直下に限ると references/ やスクリプトからの新規参照を
-  //      silent に取りこぼすため、列挙ではなく assertion で fail-loud にする。
+  // 実装と unit テストは ./rewrite-codex-skill-dir.ts に分離 (PR #153 review):
+  //   - 再帰走査で全 .md を置換 (SKILL.md 直下限定だと references/ 由来の参照を取りこぼす)
+  //   - 置換が起きた skill の SKILL.md に `<skill-dir>` 定義注記を挿入。旧 per-line パッチ
+  //     が持っていた定義が一括置換で失われ、プレースホルダ literal 実行の誤誘導が起きるため。
+  //     注記を置けない (SKILL.md 無し / frontmatter 想定外) 場合は fail-loud に throw する。
+  //   - .md 以外 (scripts/ 等) に残った `${CLAUDE_SKILL_DIR}` は throw (実行時解決が要るため
+  //     doc プレースホルダ置換で誤魔化さない)。
   if (isCodexTarget()) {
     // curated root 欠落は上流 (configured skills missing 検証) で明示 throw されるのが
     // 通常だが、rulesync.lock 欠落等の稀な経路では readdirSync が生 ENOENT で落ちる。
@@ -356,38 +348,6 @@ for (const root of generatedRoots) {
         `curated skills root missing: ${root} (rulesync install did not produce it; cannot rewrite \${CLAUDE_SKILL_DIR} for codex targets)`,
       );
     }
-    const marker = "${CLAUDE_SKILL_DIR}";
-    const skillDirNote =
-      "\n> **注 (Codex/OpenCode)**: 本文中の `<skill-dir>` は、この skill が配置された" +
-      "ディレクトリ (Codex が提示するパス) を指すプレースホルダ。`scripts/…` はそこから" +
-      "解決すること — `<skill-dir>` をそのまま literal 実行しない。\n";
-    const rewriteCodexSkillDir = (dir: string) => {
-      for (const ent of readdirSync(dir, { withFileTypes: true })) {
-        const p = `${dir}/${ent.name}`;
-        if (ent.isDirectory()) {
-          rewriteCodexSkillDir(p);
-          continue;
-        }
-        const text = readFileSync(p, "utf8");
-        if (!text.includes(marker)) {
-          continue;
-        }
-        if (ent.name.endsWith(".md")) {
-          let out = text.split(marker).join("<skill-dir>");
-          // SKILL.md にだけ定義注記を挿入 (再実行時の二重挿入をガード)。
-          if (ent.name === "SKILL.md" && !out.includes("本文中の `<skill-dir>` は")) {
-            out = out.replace(/^(---\n[\s\S]*?\n---\n)/, `$1${skillDirNote}`);
-          }
-          writeFileSync(p, out);
-        } else {
-          // scripts/ 等の非 .md に残った場合は、doc プレースホルダ置換では正しく扱えない
-          // (実行時に解決される必要がある) ため、silent に壊れたパスを出荷せず fail-loud。
-          throw new Error(
-            `residual ${marker} in non-markdown codex skill file: ${p} — the <skill-dir> rewrite only covers .md; handle this file's ${marker} deliberately (Codex/OpenCode does not define CLAUDE_SKILL_DIR)`,
-          );
-        }
-      }
-    };
     rewriteCodexSkillDir(root);
   }
 

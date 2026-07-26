@@ -16,6 +16,10 @@
       "ref": "v0.9.0"
     },
     {
+      // planetscale/database-skills は tag を持たず、rulesync の git transport は
+      // bare commit SHA を ref に取ると source を lock に記録できず (むしろ再現性が
+      // 壊れる) ため pin できない。main 追従のまま運用し、bump 時の drift は
+      // PR 説明で明記する運用にする (PR #153 review)。
       "source": "https://github.com/planetscale/database-skills.git",
       "transport": "git"
     }

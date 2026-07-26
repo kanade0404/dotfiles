@@ -73,3 +73,22 @@ jobs:
           fi
           printf 'Checking: %s\n' "${files[@]}"
           shellcheck "${files[@]}"
+
+  codex-skill-dir-guard:
+    name: no residual CLAUDE_SKILL_DIR
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - name: Assert committed codex/opencode skill copies have no ${CLAUDE_SKILL_DIR}
+        run: |
+          set -euo pipefail
+          # 生成コピーを shellcheck/markdownlint/CodeRabbit の対象外にしたため、
+          # コミット済み .agents/.opencode skill に ${CLAUDE_SKILL_DIR} が残留しても
+          # 他経路では検出されない。patch スクリプトの fail-loud throw は再生成時のみ
+          # 効くので、PR CI 側にも残留ガードを置く (PR #153 review)。Codex/OpenCode は
+          # 同変数を定義せず、残ると同梱スクリプトのパスが解決できないため。
+          if git grep -n -F '${CLAUDE_SKILL_DIR}' -- .agents/skills .opencode/skills; then
+            echo '::error::residual ${CLAUDE_SKILL_DIR} in generated codex/opencode skill copies. Regenerate: bun run rulesync:skills:update && bun run rulesync:skills:claude:update'
+            exit 1
+          fi
+          echo 'OK: no residual ${CLAUDE_SKILL_DIR} in .agents/.opencode skill copies'
