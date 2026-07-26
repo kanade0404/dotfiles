@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { parse as parseJsonc, type ParseError } from "jsonc-parser";
 
 const curatedPrefix = ".rulesync/skills/.curated/";
@@ -327,25 +327,29 @@ for (const root of generatedRoots) {
     { from: 'exec "$SCRIPT_DIR/wait_ci.sh" "$@"', to: 'exec bash "$SCRIPT_DIR/wait_ci.sh" "$@"' },
   ]);
 
-  // pr-review-respond の呼び出し手順は upstream 原文が Claude Code の
-  // `${CLAUDE_SKILL_DIR}` 前提で書かれており、Claude 側ではそのまま正しい。
-  // CLAUDE_SKILL_DIR 環境変数を持たない Codex 向けの `<skill-dir>` 書き換えは
-  // codexcli パイプライン限定にする (無条件適用すると Claude 生成物で実パス解決が
-  // 曖昧になりプレースホルダを直接実行する誤誘導が起きる、というレビュー指摘への対応)。
+  // skill の呼び出し手順は upstream 原文が Claude Code の `${CLAUDE_SKILL_DIR}`
+  // (Claude Code だけが定義する環境変数) 前提で書かれており、Claude 側ではそのまま
+  // 正しい。Codex/OpenCode には同変数が無く、参照が残ると同梱スクリプトのパスが
+  // 解決できず起動に失敗するため、codexcli パイプライン限定で `<skill-dir>`
+  // プレースホルダに置換する。
+  //
+  // 以前は pr-review-respond の各呼び出し行を per-line で書き換えていたが、v0.9.0 で
+  // pr-monitor / pr-conflict-resolver / issue-driven-development 等が新たにスクリプト
+  // 呼び出し行を持ち、per-line パッチが取りこぼして .agents/ .opencode/ 生成物に
+  // `${CLAUDE_SKILL_DIR}` が新規混入した (PR #153 review)。skill を列挙せず ${root}
+  // 直下の全 SKILL.md を走査し、`bash "..."` / `python3 "..."` / prose 内の裸参照など
+  // 形を問わず一括置換することで、今後スクリプトを持つ skill が増えても追従不要にする。
   if (isCodexTarget()) {
-    await patchFile(`${root}/pr-review-respond/SKILL.md`, [
-      {
-        from: 'すべて `bash "${CLAUDE_SKILL_DIR}/scripts/prr" <subcommand> <args>` で呼び出す:',
-        to: 'すべて、Codex が表示したこの skill ディレクトリから `scripts/prr` を解決し、`bash <skill-dir>/scripts/prr <subcommand> <args>` で呼び出す:',
-      },
-      { from: 'bash "${CLAUDE_SKILL_DIR}/scripts/prr" fetch <PR>', to: 'bash <skill-dir>/scripts/prr fetch <PR>' },
-      { from: 'bash "${CLAUDE_SKILL_DIR}/scripts/prr" reply <PR> <root-comment-id> <body-file>', to: 'bash <skill-dir>/scripts/prr reply <PR> <root-comment-id> <body-file>' },
-      { from: 'bash "${CLAUDE_SKILL_DIR}/scripts/prr" resolve <PR> <root-comment-id> <classification> <vendor> [body-file]', to: 'bash <skill-dir>/scripts/prr resolve <PR> <root-comment-id> <classification> <vendor> [body-file]' },
-      { from: 'bash "${CLAUDE_SKILL_DIR}/scripts/prr" summary <PR> <body-file>', to: 'bash <skill-dir>/scripts/prr summary <PR> <body-file>' },
-      { from: 'bash "${CLAUDE_SKILL_DIR}/scripts/prr" wait-ci <PR>', to: 'bash <skill-dir>/scripts/prr wait-ci <PR>' },
-      { from: 'bash "${CLAUDE_SKILL_DIR}/scripts/prr" defer <PR> <thread-url> "<title>" <body-file>', to: 'bash <skill-dir>/scripts/prr defer <PR> <thread-url> "<title>" <body-file>' },
-      { from: 'bash "${CLAUDE_SKILL_DIR}/scripts/prr" escalate <PR> <reason> <body-file>', to: 'bash <skill-dir>/scripts/prr escalate <PR> <reason> <body-file>' },
-    ]);
+    for (const name of readdirSync(root)) {
+      const skillMd = `${root}/${name}/SKILL.md`;
+      if (!existsSync(skillMd)) {
+        continue;
+      }
+      const text = readFileSync(skillMd, "utf8");
+      if (text.includes("${CLAUDE_SKILL_DIR}")) {
+        writeFileSync(skillMd, text.split("${CLAUDE_SKILL_DIR}").join("<skill-dir>"));
+      }
+    }
   }
 
   await patchFile(`${root}/mysql/references/primary-keys.md`, [

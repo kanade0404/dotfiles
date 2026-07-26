@@ -66,7 +66,7 @@ scripts/
 
 ### Subcommand 一覧
 
-すべて、Codex が表示したこの skill ディレクトリから `scripts/prr` を解決し、`bash <skill-dir>/scripts/prr <subcommand> <args>` で呼び出す:
+すべて `bash "<skill-dir>/scripts/prr" <subcommand> <args>` で呼び出す:
 
 | Subcommand | 役割 |
 |---|---|
@@ -89,7 +89,7 @@ scripts/
 inline review threads + PR 一般コメントを 1 コマンドで取得・正規化する。`gh api` は `prr` wrapper 経由で呼び出して毎回の許可確認を不要にする。
 
 ```bash
-bash <skill-dir>/scripts/prr fetch <PR>   # → 正規化 JSON を stdout
+bash "<skill-dir>/scripts/prr" fetch <PR>   # → 正規化 JSON を stdout
 ```
 
 スクリプトは:
@@ -171,7 +171,7 @@ git rev-parse HEAD   # push した SHA を記録し、以降の "Fixed in <SHA>"
 
 ```bash
 # body-file には指摘の要約 (自分の言葉で) + スコープ外と判断した理由を書く
-bash <skill-dir>/scripts/prr defer <PR> <thread-url> "<title>" <body-file>
+bash "<skill-dir>/scripts/prr" defer <PR> <thread-url> "<title>" <body-file>
 # stdout: "<issue-number> <issue-url>"
 ```
 
@@ -185,12 +185,12 @@ inline thread への返信は GitHub REST の `/replies` エンドポイント�
 
 ```bash
 # 返信本文は file 経由 (multi-line / 引用符のエスケープ事故防止)
-bash <skill-dir>/scripts/prr reply <PR> <root-comment-id> <body-file>
+bash "<skill-dir>/scripts/prr" reply <PR> <root-comment-id> <body-file>
 
 # 対応済みスレッドを resolve する場合 (VALID / VALID_DEFER / DUPLICATE のみ)。
 # vendor は coderabbit/devin/human から必須指定 (4 番目の引数。省略・誤指定は
 # usage 表示 + 非ゼロ exit で拒否 — 暗黙デフォルトは廃止)
-bash <skill-dir>/scripts/prr resolve <PR> <root-comment-id> <classification> <vendor> [body-file]
+bash "<skill-dir>/scripts/prr" resolve <PR> <root-comment-id> <classification> <vendor> [body-file]
 # classification は VALID / VALID_DEFER / DUPLICATE のいずれか。
 # INVALID_PUSH を渡すとスクリプトが非ゼロ exit で拒否する (誤 resolve ガード)。
 # vendor=coderabbit: body-file 内容 + 改行 + "@coderabbitai resolve" を返信投稿してから resolve。
@@ -226,7 +226,7 @@ PR の **issue comment** として、以下のサマリを **新規 1 件** で�
 
 ```bash
 # サマリ本文を temp file に書き出してから投稿
-bash <skill-dir>/scripts/prr summary <PR> <body-file>
+bash "<skill-dir>/scripts/prr" summary <PR> <body-file>
 ```
 
 サマリ本文テンプレ (`<body-file>` の中身):
@@ -260,7 +260,7 @@ bash <skill-dir>/scripts/prr summary <PR> <body-file>
 - CI 完了待ちも `prr` 経由:
 
 ```bash
-bash <skill-dir>/scripts/prr wait-ci <PR>   # 全 check 完了まで block、fail なら ci-self-heal に渡す
+bash "<skill-dir>/scripts/prr" wait-ci <PR>   # 全 check 完了まで block、fail なら ci-self-heal に渡す
 ```
 
 ### 待機委譲時の規律 (end_turn 禁止)
@@ -281,7 +281,7 @@ bash <skill-dir>/scripts/prr wait-ci <PR>   # 全 check 完了まで block、fai
 #   {"reason": "...", "detail": "...", "attempts": <n>, "session_id": "...", "next_action_hint": "..."}
 # reason は budget-exceeded / max-turns / ci-3-fail / review-5-rounds / no-progress /
 # ambiguous-issue / repo-unresolvable / conflict / security-block / other から選ぶ
-bash <skill-dir>/scripts/prr escalate <PR> <reason> <body-file>
+bash "<skill-dir>/scripts/prr" escalate <PR> <reason> <body-file>
 ```
 
 ---

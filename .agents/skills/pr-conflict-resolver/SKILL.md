@@ -46,7 +46,7 @@ scripts/
 | `verify.sh` | repo 検出 (`package.json`/`pyproject.toml`/`go.mod`/`Cargo.toml`/`Makefile`) に応じて tsc/lint/test 等を実行。**`\|\| true` は使わない** — 各チェックの exit code をそのまま保持する | 0=全チェック PASS (未検出時も PASS 扱い)、1=1件以上 FAIL |
 | `finalize.sh <push-branch> <resolved-file...>` | conflict marker の残存チェック → `git add` → `git commit` で merge を確定 → push 前チェックリスト → `git push` | 0=push 完了、1=チェックリスト不通過または push 失敗、2=usage |
 
-`scripts/*.sh` は `bash "${CLAUDE_SKILL_DIR}/scripts/<name>.sh" <args>` で呼び出す。
+`scripts/*.sh` は `bash "<skill-dir>/scripts/<name>.sh" <args>` で呼び出す。
 最小依存 (`bash`, `git`, `gh`, `jq`) のみを前提とし、Python/Node 等の追加ランタイムは使わない。
 
 ## 0. 前提情報の確認
@@ -57,7 +57,7 @@ theirs を採用」) があれば以降の手順より優先する。
 `scripts/pr-context.sh <PR番号> を正確に実行。フラグ追加禁止。`
 
 ```bash
-eval "$(bash "${CLAUDE_SKILL_DIR}/scripts/pr-context.sh" <PR番号>)"
+eval "$(bash "<skill-dir>/scripts/pr-context.sh" <PR番号>)"
 ```
 
 以降 `$PR_NUMBER` / `$PR_HEAD` / `$PR_BASE` / `$PR_TITLE` / `$PR_URL` / `$PR_HEAD_SHA` を使う。
@@ -87,7 +87,7 @@ rebase ではなく **merge** を既定とする。PR の commit 履歴・署名
 `scripts/resolve-merge.sh を正確に実行。フラグ追加禁止。`
 
 ```bash
-bash "${CLAUDE_SKILL_DIR}/scripts/resolve-merge.sh" "$PR_BASE"
+bash "<skill-dir>/scripts/resolve-merge.sh" "$PR_BASE"
 ```
 
 exit code で分岐する:
@@ -112,7 +112,7 @@ exit code で分岐する:
 lock ファイルは `scripts/regen-lockfiles.sh を正確に実行。フラグ追加禁止。`
 
 ```bash
-bash "${CLAUDE_SKILL_DIR}/scripts/regen-lockfiles.sh" <conflict した lockfile のパス...>
+bash "<skill-dir>/scripts/regen-lockfiles.sh" <conflict した lockfile のパス...>
 ```
 
 未知の lockfile 名 (`case` の `*)` 分岐) は再生成コマンドを推測せず失敗する。その場合は
@@ -136,7 +136,7 @@ bash "${CLAUDE_SKILL_DIR}/scripts/regen-lockfiles.sh" <conflict した lockfile 
 `scripts/verify.sh を正確に実行。フラグ追加禁止。`
 
 ```bash
-bash "${CLAUDE_SKILL_DIR}/scripts/verify.sh"
+bash "<skill-dir>/scripts/verify.sh"
 ```
 
 exit 0 (`RESULT: PASS`) でなければ **conflict 解決の副作用がある**とみなし、5 章に進まない。
@@ -154,7 +154,7 @@ PASS と書かない。タイムアウトや外部依存で特定チェックが
 - **conflict あり (exit 10) で 3 章を経由した場合** — 解決した全ファイルを渡す:
 
   ```bash
-  bash "${CLAUDE_SKILL_DIR}/scripts/finalize.sh" "$PR_HEAD" <3章で解決した全ファイルのパス...>
+  bash "<skill-dir>/scripts/finalize.sh" "$PR_HEAD" <3章で解決した全ファイルのパス...>
   ```
 
 - **conflict なし (exit 0) で 3〜4 章を飛ばした場合** — `resolve-merge.sh` の
@@ -162,7 +162,7 @@ PASS と書かない。タイムアウトや外部依存で特定チェックが
   ファイル一覧を渡さず push 前チェックリストだけを実行させる:
 
   ```bash
-  bash "${CLAUDE_SKILL_DIR}/scripts/finalize.sh" "$PR_HEAD"
+  bash "<skill-dir>/scripts/finalize.sh" "$PR_HEAD"
   ```
 
 このスクリプトが強制する順序 (手動での代替手順を組み立てない):

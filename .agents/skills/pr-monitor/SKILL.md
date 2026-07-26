@@ -57,7 +57,7 @@ dispatch された subagent 内部でも常駐しない。1 回の起動で行�
 `gh api` / `gh pr checks` を都度 inline で叩くと permission prompt が重なる上、未解決スレッド全量取得の cursor pagination や色付き `gh` 出力による `jq` 破壊 (`rules/bash-and-api-discipline.md` 参照) など落とし穴が多い。本スキルはこれらを `scripts/prm` に閉じ込め、**単一エントリポイントからのみ呼び出す** (`pr-review-respond` の `prr` と同じ設計)。呼び出しは常に:
 
 ```bash
-bash "${CLAUDE_SKILL_DIR}/scripts/prm" <subcommand> <pr>
+bash "<skill-dir>/scripts/prm" <subcommand> <pr>
 ```
 
 `allowed-tools` の `Bash(bash *prm *)` で auto-grant されるため、consumer 側の permission 追加は不要。
@@ -179,7 +179,7 @@ JSON はインラインコメントを書けないため、各フィールドの
 ### Step 4 — 状態判定 (毎ポーリング)
 
 ```bash
-bash "${CLAUDE_SKILL_DIR}/scripts/prm" status <n>
+bash "<skill-dir>/scripts/prm" status <n>
 ```
 
 を 1 回叩き、返った JSON と state ファイルの前回スナップショットを突き合わせて、次の順で分岐する:
@@ -247,7 +247,7 @@ bash "${CLAUDE_SKILL_DIR}/scripts/prm" status <n>
    end
    ```
 
-   呼び出しは `bash "${CLAUDE_SKILL_DIR}/scripts/prm" state-apply <n> <filter-file> --arg key "<workflow>/<name>"`。`jq --arg` は値をそのまま文字列として束縛するため呼び出し側での手動エスケープは不要 (実測確認済み: quote / backslash / 改行を含む値でも filter は壊れず、書き戻し後の JSON も往復して正しく復元される)。
+   呼び出しは `bash "<skill-dir>/scripts/prm" state-apply <n> <filter-file> --arg key "<workflow>/<name>"`。`jq --arg` は値をそのまま文字列として束縛するため呼び出し側での手動エスケープは不要 (実測確認済み: quote / backslash / 改行を含む値でも filter は壊れず、書き戻し後の JSON も往復して正しく復元される)。
 
    `state-apply` は lock 内で読み直した最新 state に対してこの filter を評価し、結果を検証してから書き戻す仕組みのため、`error()` を投げた filter は非ゼロ exit・**書き込みなし**で失敗する (実測確認済み)。これにより:
    - claim が **成功** (exit 0) した invocation だけが、その check について `ci-self-heal` を使う subagent を Task で dispatch する (契約は次項)。
