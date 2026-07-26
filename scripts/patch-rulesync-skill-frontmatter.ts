@@ -124,7 +124,10 @@ const patches = [
   ".rulesync/skills/.curated/pr-review-respond/SKILL.md",
 ];
 
-const shellcheckPatches = [
+// NO_COLOR 等の env export を注入する対象。以前は SC2016 disable コメントも注入して
+// いたが生成コピーが shellcheck 対象外になり削除したため、残る責務は env export のみ
+// (旧名 shellcheckPatches から改名 — PR #153 review)。
+const envExportPatches = [
   ".rulesync/skills/.curated/pr-review-respond/scripts/fetch_threads.sh",
 ];
 
@@ -288,23 +291,28 @@ for (const path of patches) {
   await Bun.write(path, patched);
 }
 
-for (const path of shellcheckPatches) {
+const NO_COLOR_EXPORT = "export NO_COLOR=1 CLICOLOR=0 CLICOLOR_FORCE=0 GH_NO_UPDATE_NOTIFIER=1";
+for (const path of envExportPatches) {
   const initial = await readPatchTarget(path);
   if (initial === null) {
     continue;
   }
 
+  // gh の色付き出力が下流 jq を壊すのを防ぐ env export を注入する (挙動変更)。
   let text = initial;
-  // NO_COLOR 等の export は挙動変更 (gh の色付き出力が jq を壊すのを防ぐ) なので保持する。
-  // SC2016 disable コメント注入はかつて「生成コピーが CI で shellcheck される」前提の
-  // 対処だったが、生成コピー (.claude/.agents/.opencode/skills) は shellcheck 対象外に
-  // なり、curated cache (.rulesync/skills/.curated) も gitignore で CI に存在しないため
-  // 消費者がいなくなった。dead code を残さず削除する (PR #153 review)。
-  if (!text.includes("export NO_COLOR=1 CLICOLOR=0 CLICOLOR_FORCE=0 GH_NO_UPDATE_NOTIFIER=1")) {
-    text = text.replace(
+  if (!text.includes(NO_COLOR_EXPORT)) {
+    const injected = text.replace(
       "set -euo pipefail\n",
-      "set -euo pipefail\n\nexport NO_COLOR=1 CLICOLOR=0 CLICOLOR_FORCE=0 GH_NO_UPDATE_NOTIFIER=1\n",
+      `set -euo pipefail\n\n${NO_COLOR_EXPORT}\n`,
     );
+    // アンカー不在で silent no-op すると注入が消える。patchFile の fail-loud 契約に
+    // 揃え、未適用かつアンカー不在なら throw する (PR #153 review)。
+    if (injected === text) {
+      throw new Error(
+        `could not inject NO_COLOR export into ${path} ("set -euo pipefail" anchor not found)`,
+      );
+    }
+    text = injected;
   }
 
   await Bun.write(path, text);
@@ -342,8 +350,9 @@ for (const root of generatedRoots) {
   if (isCodexTarget()) {
     // curated root 欠落は上流 (configured skills missing 検証) で明示 throw されるのが
     // 通常だが、rulesync.lock 欠落等の稀な経路では readdirSync が生 ENOENT で落ちる。
-    // 原因の読める明示メッセージで先に throw する。
-    if (!existsSync(root)) {
+    // 原因の読める明示メッセージで先に throw する (root === curatedPrefix なので
+    // モジュールレベルの curatedRootExists を再利用 — PR #153 review)。
+    if (!curatedRootExists) {
       throw new Error(
         `curated skills root missing: ${root} (rulesync install did not produce it; cannot rewrite \${CLAUDE_SKILL_DIR} for codex targets)`,
       );

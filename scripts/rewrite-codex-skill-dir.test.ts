@@ -131,10 +131,21 @@ describe("rewriteCodexSkillDir", () => {
     expect(readFileSync(skillMd, "utf8")).toContain(SKILL_DIR_NOTE_MARKER);
   });
 
-  test("マーカーと placeholder の literal 値が契約通り (self-consistent assertion 回避)", () => {
+  test("マーカーと placeholder / 注記 marker の literal 値が契約通り (self-consistent assertion 回避)", () => {
     // 定数値がタイポで変わってもテストが通る self-consistent assertion を避け、
-    // 契約 (Claude Code が定義する実在の環境変数名 / 置換後のプレースホルダ) を literal で固定。
+    // 契約 (Claude Code が定義する実在の環境変数名 / 置換後のプレースホルダ / 注記の
+    // 検出 marker) を literal で固定する。
     expect(CLAUDE_SKILL_DIR_MARKER).toBe("${CLAUDE_SKILL_DIR}");
     expect(SKILL_DIR_PLACEHOLDER).toBe("<skill-dir>");
+    expect(SKILL_DIR_NOTE_MARKER).toBe("本文中の `<skill-dir>` は");
+  });
+
+  test("test.yml の逆方向ガードが注記 marker と一致している (文言 drift で落ちる)", () => {
+    // test.yml の codex-skill-dir-guard は `.claude/skills` への注記漏出を
+    // SKILL_DIR_NOTE_MARKER の literal grep で検出する。注記文言を変えると grep が
+    // 空振りして guard が silent 無効化されるため、両者の一致をここで固定する
+    // (PR #153 review)。
+    const workflow = readFileSync(".github/workflows/test.yml", "utf8");
+    expect(workflow).toContain(SKILL_DIR_NOTE_MARKER);
   });
 });
