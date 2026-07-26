@@ -337,19 +337,58 @@ for (const root of generatedRoots) {
   // pr-monitor / pr-conflict-resolver / issue-driven-development 等が新たにスクリプト
   // 呼び出し行を持ち、per-line パッチが取りこぼして .agents/ .opencode/ 生成物に
   // `${CLAUDE_SKILL_DIR}` が新規混入した (PR #153 review)。skill を列挙せず ${root}
-  // 直下の全 SKILL.md を走査し、`bash "..."` / `python3 "..."` / prose 内の裸参照など
-  // 形を問わず一括置換することで、今後スクリプトを持つ skill が増えても追従不要にする。
+  // 配下を再帰走査し、`bash "..."` / `python3 "..."` / prose 内の裸参照など形を問わず
+  // 全 .md を一括置換することで、今後スクリプトを持つ skill が増えても追従不要にする。
+  //
+  // さらに 2 つの安全策 (PR #153 review) を足す:
+  //   1. 置換した SKILL.md には frontmatter 直後に `<skill-dir>` の定義注記を挿入する。
+  //      旧 per-line パッチが持っていた「<skill-dir> は何を指すか」の定義が一括置換で
+  //      失われ、プレースホルダを literal 実行する誤誘導リスクが再導入されたため。
+  //   2. .md 以外 (scripts/ 等) に `${CLAUDE_SKILL_DIR}` が残っていたら throw する。
+  //      置換対象を SKILL.md 直下に限ると references/ やスクリプトからの新規参照を
+  //      silent に取りこぼすため、列挙ではなく assertion で fail-loud にする。
   if (isCodexTarget()) {
-    for (const name of readdirSync(root)) {
-      const skillMd = `${root}/${name}/SKILL.md`;
-      if (!existsSync(skillMd)) {
-        continue;
-      }
-      const text = readFileSync(skillMd, "utf8");
-      if (text.includes("${CLAUDE_SKILL_DIR}")) {
-        writeFileSync(skillMd, text.split("${CLAUDE_SKILL_DIR}").join("<skill-dir>"));
-      }
+    // curated root 欠落は上流 (configured skills missing 検証) で明示 throw されるのが
+    // 通常だが、rulesync.lock 欠落等の稀な経路では readdirSync が生 ENOENT で落ちる。
+    // 原因の読める明示メッセージで先に throw する。
+    if (!existsSync(root)) {
+      throw new Error(
+        `curated skills root missing: ${root} (rulesync install did not produce it; cannot rewrite \${CLAUDE_SKILL_DIR} for codex targets)`,
+      );
     }
+    const marker = "${CLAUDE_SKILL_DIR}";
+    const skillDirNote =
+      "\n> **注 (Codex/OpenCode)**: 本文中の `<skill-dir>` は、この skill が配置された" +
+      "ディレクトリ (Codex が提示するパス) を指すプレースホルダ。`scripts/…` はそこから" +
+      "解決すること — `<skill-dir>` をそのまま literal 実行しない。\n";
+    const rewriteCodexSkillDir = (dir: string) => {
+      for (const ent of readdirSync(dir, { withFileTypes: true })) {
+        const p = `${dir}/${ent.name}`;
+        if (ent.isDirectory()) {
+          rewriteCodexSkillDir(p);
+          continue;
+        }
+        const text = readFileSync(p, "utf8");
+        if (!text.includes(marker)) {
+          continue;
+        }
+        if (ent.name.endsWith(".md")) {
+          let out = text.split(marker).join("<skill-dir>");
+          // SKILL.md にだけ定義注記を挿入 (再実行時の二重挿入をガード)。
+          if (ent.name === "SKILL.md" && !out.includes("本文中の `<skill-dir>` は")) {
+            out = out.replace(/^(---\n[\s\S]*?\n---\n)/, `$1${skillDirNote}`);
+          }
+          writeFileSync(p, out);
+        } else {
+          // scripts/ 等の非 .md に残った場合は、doc プレースホルダ置換では正しく扱えない
+          // (実行時に解決される必要がある) ため、silent に壊れたパスを出荷せず fail-loud。
+          throw new Error(
+            `residual ${marker} in non-markdown codex skill file: ${p} — the <skill-dir> rewrite only covers .md; handle this file's ${marker} deliberately (Codex/OpenCode does not define CLAUDE_SKILL_DIR)`,
+          );
+        }
+      }
+    };
+    rewriteCodexSkillDir(root);
   }
 
   await patchFile(`${root}/mysql/references/primary-keys.md`, [

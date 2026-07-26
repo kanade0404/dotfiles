@@ -17,6 +17,8 @@ description: >-
   `pr-review-respond` (CodeRabbit 起因は `coderabbit:autofix`) が持ち、本スキルは検知と
   dispatch のループ制御に閉じる。PR の merge 操作そのものは行わない — 決着の事実を待つだけ。
 ---
+> **注 (Codex/OpenCode)**: 本文中の `<skill-dir>` は、この skill が配置されたディレクトリ (Codex が提示するパス) を指すプレースホルダ。`scripts/…` はそこから解決すること — `<skill-dir>` をそのまま literal 実行しない。
+
 # pr-monitor — PR ライフサイクル終端監視 + 放置防止ループ
 
 > **責務境界**: 本スキルの責務は PR の **決着 (merge / close) までの長時間監視** と、毎ポーリングでの **CI failure / 未解決レビュースレッドの検知と subagent dispatch のループ制御**。修復・対応の実体は持たない — CI 修復は `ci-self-heal`、レビューコメント対応は `pr-review-respond` (CodeRabbit 起因の修正適用はさらに `coderabbit:autofix` に委譲) が担う。PR の merge / close 操作そのものも行わない。

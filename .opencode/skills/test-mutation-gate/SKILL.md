@@ -15,6 +15,8 @@ description: >-
   CI 赤対応は `ci-self-heal`、skill の eval trigger JSON 採点は `skill-builder` Mode
   B、テストスイート全体の mutation score 算出 (Stryker/mutmut 相当の運用) は、いずれも本スキルの範囲外。
 ---
+> **注 (Codex/OpenCode)**: 本文中の `<skill-dir>` は、この skill が配置されたディレクトリ (Codex が提示するパス) を指すプレースホルダ。`scripts/…` はそこから解決すること — `<skill-dir>` をそのまま literal 実行しない。
+
 # Test Mutation Gate
 
 テスト変更 diff に対して、実行前の静的読解だけで「このテストは検出力を持っているか」を審査するゲート。PASS/BLOCK の二値判定を返し、BLOCK なら実装フェーズに差し戻す。

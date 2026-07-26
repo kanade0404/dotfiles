@@ -17,6 +17,8 @@ description: |
   単体 (`pr-conflict-resolver`)、PR の merge (人間ゲート)。実行環境はクラウドを想定し、
   素の `git` / `gh` / `jq` だけで動くこと。
 ---
+> **注 (Codex/OpenCode)**: 本文中の `<skill-dir>` は、この skill が配置されたディレクトリ (Codex が提示するパス) を指すプレースホルダ。`scripts/…` はそこから解決すること — `<skill-dir>` をそのまま literal 実行しない。
+
 # issue-driven-development
 
 GitHub issue 1 件を「merge 可能な PR の材料」に変えるスキル。**PR 作成が終端** — CI 緑化

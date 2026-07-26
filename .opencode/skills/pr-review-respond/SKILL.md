@@ -17,6 +17,8 @@ description: >-
   coderabbit plugin がある環境では `coderabbit:autofix` に委譲し、本スキルは
   triage・返信・resolve・サマリに徹する。"
 ---
+> **注 (Codex/OpenCode)**: 本文中の `<skill-dir>` は、この skill が配置されたディレクトリ (Codex が提示するパス) を指すプレースホルダ。`scripts/…` はそこから解決すること — `<skill-dir>` をそのまま literal 実行しない。
+
 # PR Review Respond
 
 CodeRabbit / Devin / 人間レビュアーが残したコメントを **盲信せず verify したうえで** 捌くスキル。完了時には PR を読み返した第三者が「何を直し、何を直さず、なぜか」を 1 コメントで追える状態にする。

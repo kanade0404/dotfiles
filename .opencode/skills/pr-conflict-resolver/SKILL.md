@@ -7,6 +7,8 @@ description: |
   lock ファイル再生成 → 検証 → commit で merge を確定 → push までの一連の安全な流れを、
   同梱スクリプト (`scripts/*.sh`) の決定的な実行として定義する。
 ---
+> **注 (Codex/OpenCode)**: 本文中の `<skill-dir>` は、この skill が配置されたディレクトリ (Codex が提示するパス) を指すプレースホルダ。`scripts/…` はそこから解決すること — `<skill-dir>` をそのまま literal 実行しない。
+
 # PR conflict resolver
 
 PR のターゲットブランチ (base) と head ブランチの間で発生した merge conflict を、機能を欠落させず
