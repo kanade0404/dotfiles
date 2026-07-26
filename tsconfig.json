@@ -26,6 +26,8 @@
     "noPropertyAccessFromIndexSignature": false
   },
   // TypeScript の `**/*` デフォルトは `.` 始まりのディレクトリを辿らないため
-  // hooks の TS ファイルを明示的に列挙する。
-  "include": [".claude/hooks/**/*.ts"]
+  // hooks の TS ファイルを明示的に列挙する。scripts/ 配下 (rulesync 補助スクリプトと
+  // その unit テスト) も型検査対象に含める — 含めないと CI の tsc が素通りし、
+  // strict 違反がどの経路でも検出されない (PR #153 review)。
+  "include": [".claude/hooks/**/*.ts", "scripts/**/*.ts"]
 }

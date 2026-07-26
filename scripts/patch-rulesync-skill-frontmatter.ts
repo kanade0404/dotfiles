@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { parse as parseJsonc, type ParseError } from "jsonc-parser";
+import { rewriteCodexSkillDir } from "./rewrite-codex-skill-dir.ts";
 
 const curatedPrefix = ".rulesync/skills/.curated/";
 
@@ -123,7 +124,10 @@ const patches = [
   ".rulesync/skills/.curated/pr-review-respond/SKILL.md",
 ];
 
-const shellcheckPatches = [
+// NO_COLOR 等の env export を注入する対象。以前は SC2016 disable コメントも注入して
+// いたが生成コピーが shellcheck 対象外になり削除したため、残る責務は env export のみ
+// (旧名 shellcheckPatches から改名 — PR #153 review)。
+const envExportPatches = [
   ".rulesync/skills/.curated/pr-review-respond/scripts/fetch_threads.sh",
 ];
 
@@ -287,32 +291,28 @@ for (const path of patches) {
   await Bun.write(path, patched);
 }
 
-for (const path of shellcheckPatches) {
+const NO_COLOR_EXPORT = "export NO_COLOR=1 CLICOLOR=0 CLICOLOR_FORCE=0 GH_NO_UPDATE_NOTIFIER=1";
+for (const path of envExportPatches) {
   const initial = await readPatchTarget(path);
   if (initial === null) {
     continue;
   }
 
+  // gh の色付き出力が下流 jq を壊すのを防ぐ env export を注入する (挙動変更)。
   let text = initial;
-  if (!text.includes("export NO_COLOR=1 CLICOLOR=0 CLICOLOR_FORCE=0 GH_NO_UPDATE_NOTIFIER=1")) {
-    text = text.replace(
+  if (!text.includes(NO_COLOR_EXPORT)) {
+    const injected = text.replace(
       "set -euo pipefail\n",
-      "set -euo pipefail\n\nexport NO_COLOR=1 CLICOLOR=0 CLICOLOR_FORCE=0 GH_NO_UPDATE_NOTIFIER=1\n",
+      `set -euo pipefail\n\n${NO_COLOR_EXPORT}\n`,
     );
-  }
-
-  if (!text.includes("# shellcheck disable=SC2016\n  resp=$(gh api graphql")) {
-    text = text.replace(
-      "  resp=$(gh api graphql",
-      "  # shellcheck disable=SC2016\n  resp=$(gh api graphql",
-    );
-  }
-
-  if (!text.includes("# shellcheck disable=SC2016\nvendor_filter='")) {
-    text = text.replace(
-      "\nvendor_filter='",
-      "\n# shellcheck disable=SC2016\nvendor_filter='",
-    );
+    // アンカー不在で silent no-op すると注入が消える。patchFile の fail-loud 契約に
+    // 揃え、未適用かつアンカー不在なら throw する (PR #153 review)。
+    if (injected === text) {
+      throw new Error(
+        `could not inject NO_COLOR export into ${path} ("set -euo pipefail" anchor not found)`,
+      );
+    }
+    text = injected;
   }
 
   await Bun.write(path, text);
@@ -327,23 +327,37 @@ for (const root of generatedRoots) {
     { from: 'exec "$SCRIPT_DIR/wait_ci.sh" "$@"', to: 'exec bash "$SCRIPT_DIR/wait_ci.sh" "$@"' },
   ]);
 
-  // pr-review-respond の呼び出し手順は upstream 原文が Claude Code の
-  // `${CLAUDE_SKILL_DIR}` 前提で書かれており、Claude 側ではそのまま正しい。
-  // CLAUDE_SKILL_DIR 環境変数を持たない Codex 向けの `<skill-dir>` 書き換えは
-  // codexcli パイプライン限定にする (無条件適用すると Claude 生成物で実パス解決が
-  // 曖昧になりプレースホルダを直接実行する誤誘導が起きる、というレビュー指摘への対応)。
+  // skill の呼び出し手順は upstream 原文が Claude Code の `${CLAUDE_SKILL_DIR}`
+  // (Claude Code だけが定義する環境変数) 前提で書かれており、Claude 側ではそのまま
+  // 正しい。Codex/OpenCode には同変数が無く、参照が残ると同梱スクリプトのパスが
+  // 解決できず起動に失敗するため、codexcli パイプライン限定で `<skill-dir>`
+  // プレースホルダに置換する。
+  //
+  // 以前は pr-review-respond の各呼び出し行を per-line で書き換えていたが、v0.9.0 で
+  // pr-monitor / pr-conflict-resolver / issue-driven-development 等が新たにスクリプト
+  // 呼び出し行を持ち、per-line パッチが取りこぼして .agents/ .opencode/ 生成物に
+  // `${CLAUDE_SKILL_DIR}` が新規混入した (PR #153 review)。skill を列挙せず ${root}
+  // 配下を再帰走査し、`bash "..."` / `python3 "..."` / prose 内の裸参照など形を問わず
+  // 全 .md を一括置換することで、今後スクリプトを持つ skill が増えても追従不要にする。
+  //
+  // 実装と unit テストは ./rewrite-codex-skill-dir.ts に分離 (PR #153 review):
+  //   - 再帰走査で全 .md を置換 (SKILL.md 直下限定だと references/ 由来の参照を取りこぼす)
+  //   - 置換が起きた skill の SKILL.md に `<skill-dir>` 定義注記を挿入。旧 per-line パッチ
+  //     が持っていた定義が一括置換で失われ、プレースホルダ literal 実行の誤誘導が起きるため。
+  //     注記を置けない (SKILL.md 無し / frontmatter 想定外) 場合は fail-loud に throw する。
+  //   - .md 以外 (scripts/ 等) に残った `${CLAUDE_SKILL_DIR}` は throw (実行時解決が要るため
+  //     doc プレースホルダ置換で誤魔化さない)。
   if (isCodexTarget()) {
-    await patchFile(`${root}/pr-review-respond/SKILL.md`, [
-      {
-        from: 'すべて `bash "${CLAUDE_SKILL_DIR}/scripts/prr" <subcommand> <args>` で呼び出す:',
-        to: 'すべて、Codex が表示したこの skill ディレクトリから `scripts/prr` を解決し、`bash <skill-dir>/scripts/prr <subcommand> <args>` で呼び出す:',
-      },
-      { from: 'bash "${CLAUDE_SKILL_DIR}/scripts/prr" fetch <PR>', to: 'bash <skill-dir>/scripts/prr fetch <PR>' },
-      { from: 'bash "${CLAUDE_SKILL_DIR}/scripts/prr" reply <PR> <root-comment-id> <body-file>', to: 'bash <skill-dir>/scripts/prr reply <PR> <root-comment-id> <body-file>' },
-      { from: 'bash "${CLAUDE_SKILL_DIR}/scripts/prr" resolve <PR> <root-comment-id> [body-file]', to: 'bash <skill-dir>/scripts/prr resolve <PR> <root-comment-id> [body-file]' },
-      { from: 'bash "${CLAUDE_SKILL_DIR}/scripts/prr" summary <PR> <body-file>', to: 'bash <skill-dir>/scripts/prr summary <PR> <body-file>' },
-      { from: 'bash "${CLAUDE_SKILL_DIR}/scripts/prr" wait-ci <PR>', to: 'bash <skill-dir>/scripts/prr wait-ci <PR>' },
-    ]);
+    // curated root 欠落は上流 (configured skills missing 検証) で明示 throw されるのが
+    // 通常だが、rulesync.lock 欠落等の稀な経路では readdirSync が生 ENOENT で落ちる。
+    // 原因の読める明示メッセージで先に throw する (root === curatedPrefix なので
+    // モジュールレベルの curatedRootExists を再利用 — PR #153 review)。
+    if (!curatedRootExists) {
+      throw new Error(
+        `curated skills root missing: ${root} (rulesync install did not produce it; cannot rewrite \${CLAUDE_SKILL_DIR} for codex targets)`,
+      );
+    }
+    rewriteCodexSkillDir(root);
   }
 
   await patchFile(`${root}/mysql/references/primary-keys.md`, [

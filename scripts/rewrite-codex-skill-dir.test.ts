@@ -1,0 +1,151 @@
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  CLAUDE_SKILL_DIR_MARKER,
+  rewriteCodexSkillDir,
+  SKILL_DIR_NOTE_MARKER,
+  SKILL_DIR_PLACEHOLDER,
+} from "./rewrite-codex-skill-dir.ts";
+
+const FRONTMATTER = "---\nname: sample\ndescription: x\n---\n";
+
+let root: string;
+
+beforeEach(() => {
+  root = mkdtempSync(join(tmpdir(), "codex-skill-dir-"));
+});
+
+afterEach(() => {
+  rmSync(root, { recursive: true, force: true });
+});
+
+function makeSkill(name: string): string {
+  const dir = join(root, name);
+  mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+describe("rewriteCodexSkillDir", () => {
+  test("SKILL.md のマーカーを置換し、frontmatter 直後に定義注記を挿入する", () => {
+    const dir = makeSkill("pr-monitor");
+    const skillMd = join(dir, "SKILL.md");
+    writeFileSync(skillMd, `${FRONTMATTER}\nbash "${CLAUDE_SKILL_DIR_MARKER}/scripts/prm" status\n`);
+
+    rewriteCodexSkillDir(root);
+
+    const out = readFileSync(skillMd, "utf8");
+    expect(out).not.toContain(CLAUDE_SKILL_DIR_MARKER);
+    expect(out).toContain(`bash "${SKILL_DIR_PLACEHOLDER}/scripts/prm" status`);
+    expect(out).toContain(SKILL_DIR_NOTE_MARKER);
+    // 注記は frontmatter 直後 (最初の閉じ --- の後) に入る。
+    const noteIdx = out.indexOf(SKILL_DIR_NOTE_MARKER);
+    const fmEnd = out.indexOf("\n---\n") + "\n---\n".length;
+    expect(noteIdx).toBeGreaterThanOrEqual(fmEnd);
+  });
+
+  test("再実行しても注記を二重挿入せず、マーカーも残さない (冪等)", () => {
+    const dir = makeSkill("pr-monitor");
+    const skillMd = join(dir, "SKILL.md");
+    writeFileSync(skillMd, `${FRONTMATTER}\n"${CLAUDE_SKILL_DIR_MARKER}/scripts/prm"\n`);
+
+    rewriteCodexSkillDir(root);
+    const first = readFileSync(skillMd, "utf8");
+    rewriteCodexSkillDir(root);
+    const second = readFileSync(skillMd, "utf8");
+
+    // 2 回目は置換対象 (マーカー) が無いので no-op。ファイルは変わらない。
+    expect(second).toBe(first);
+    const occurrences = second.split(SKILL_DIR_NOTE_MARKER).length - 1;
+    expect(occurrences).toBe(1);
+  });
+
+  test("references/*.md だけにマーカーがあっても SKILL.md に注記を入れる", () => {
+    const dir = makeSkill("pr-conflict-resolver");
+    const skillMd = join(dir, "SKILL.md");
+    writeFileSync(skillMd, `${FRONTMATTER}\n本文\n`);
+    mkdirSync(join(dir, "references"), { recursive: true });
+    const ref = join(dir, "references", "guide.md");
+    writeFileSync(ref, `see "${CLAUDE_SKILL_DIR_MARKER}/scripts/verify.sh"\n`);
+
+    rewriteCodexSkillDir(root);
+
+    expect(readFileSync(ref, "utf8")).not.toContain(CLAUDE_SKILL_DIR_MARKER);
+    expect(readFileSync(ref, "utf8")).toContain(`"${SKILL_DIR_PLACEHOLDER}/scripts/verify.sh"`);
+    // SKILL.md 自体にマーカーは無かったが、skill 配下で置換が起きたので注記が入る。
+    expect(readFileSync(skillMd, "utf8")).toContain(SKILL_DIR_NOTE_MARKER);
+  });
+
+  test("非 .md (scripts/*.sh) にマーカーが残ると throw する", () => {
+    const dir = makeSkill("issue-driven-development");
+    writeFileSync(join(dir, "SKILL.md"), `${FRONTMATTER}\n本文\n`);
+    mkdirSync(join(dir, "scripts"), { recursive: true });
+    writeFileSync(join(dir, "scripts", "acquire-lock.sh"), `path="${CLAUDE_SKILL_DIR_MARKER}/scripts"\n`);
+
+    expect(() => rewriteCodexSkillDir(root)).toThrow(/non-markdown/);
+  });
+
+  test("frontmatter が無い SKILL.md で置換が起きたら注記を置けず throw する", () => {
+    const dir = makeSkill("weird");
+    const skillMd = join(dir, "SKILL.md");
+    // frontmatter で始まらない → 注記挿入の replace が no-op になる。
+    writeFileSync(skillMd, `# heading\nbash "${CLAUDE_SKILL_DIR_MARKER}/scripts/x"\n`);
+
+    expect(() => rewriteCodexSkillDir(root)).toThrow(/definition note/);
+  });
+
+  test("大文字拡張子 (.MD) も markdown として置換する", () => {
+    const dir = makeSkill("upper");
+    writeFileSync(join(dir, "SKILL.md"), FRONTMATTER);
+    const readme = join(dir, "README.MD");
+    writeFileSync(readme, `"${CLAUDE_SKILL_DIR_MARKER}/scripts/x"\n`);
+
+    expect(() => rewriteCodexSkillDir(root)).not.toThrow();
+    expect(readFileSync(readme, "utf8")).not.toContain(CLAUDE_SKILL_DIR_MARKER);
+  });
+
+  test("置換が起きたのに SKILL.md が無ければ throw する", () => {
+    const dir = makeSkill("no-skill-md");
+    mkdirSync(join(dir, "references"), { recursive: true });
+    writeFileSync(join(dir, "references", "g.md"), `"${CLAUDE_SKILL_DIR_MARKER}/scripts/x"\n`);
+
+    expect(() => rewriteCodexSkillDir(root)).toThrow(/no SKILL\.md/);
+  });
+
+  test("eager write 後に別ファイルで throw → 原因解消後の再実行で注記が入る (post-state 判定)", () => {
+    const dir = makeSkill("partial");
+    const skillMd = join(dir, "SKILL.md");
+    writeFileSync(skillMd, `${FRONTMATTER}\nbash "${CLAUDE_SKILL_DIR_MARKER}/scripts/prm"\n`);
+    mkdirSync(join(dir, "scripts"), { recursive: true });
+    const sh = join(dir, "scripts", "x.sh");
+    writeFileSync(sh, `p="${CLAUDE_SKILL_DIR_MARKER}"\n`);
+
+    // 1 回目: .sh の残留で throw する。SKILL.md は eager write 済み (マーカー→placeholder)
+    // だが、注記はまだ入っていない可能性がある。
+    expect(() => rewriteCodexSkillDir(root)).toThrow(/non-markdown/);
+    // 原因を解消 (script 側のマーカーを除去)。
+    writeFileSync(sh, `p="/resolved/at/runtime"\n`);
+    // 2 回目: マーカーは SKILL.md に既に無いが、placeholder は残っているので注記が入る。
+    expect(() => rewriteCodexSkillDir(root)).not.toThrow();
+    expect(readFileSync(skillMd, "utf8")).toContain(SKILL_DIR_NOTE_MARKER);
+  });
+
+  test("マーカーと placeholder / 注記 marker の literal 値が契約通り (self-consistent assertion 回避)", () => {
+    // 定数値がタイポで変わってもテストが通る self-consistent assertion を避け、
+    // 契約 (Claude Code が定義する実在の環境変数名 / 置換後のプレースホルダ / 注記の
+    // 検出 marker) を literal で固定する。
+    expect(CLAUDE_SKILL_DIR_MARKER).toBe("${CLAUDE_SKILL_DIR}");
+    expect(SKILL_DIR_PLACEHOLDER).toBe("<skill-dir>");
+    expect(SKILL_DIR_NOTE_MARKER).toBe("本文中の `<skill-dir>` は");
+  });
+
+  test("test.yml の逆方向ガードが注記 marker と一致している (文言 drift で落ちる)", () => {
+    // test.yml の codex-skill-dir-guard は `.claude/skills` への注記漏出を
+    // SKILL_DIR_NOTE_MARKER の literal grep で検出する。注記文言を変えると grep が
+    // 空振りして guard が silent 無効化されるため、両者の一致をここで固定する
+    // (PR #153 review)。
+    const workflow = readFileSync(".github/workflows/test.yml", "utf8");
+    expect(workflow).toContain(SKILL_DIR_NOTE_MARKER);
+  });
+});

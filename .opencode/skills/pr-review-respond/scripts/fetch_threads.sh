@@ -45,6 +45,12 @@ set -euo pipefail
 
 export NO_COLOR=1 CLICOLOR=0 CLICOLOR_FORCE=0 GH_NO_UPDATE_NOTIFIER=1
 
+# 直接実行にも耐えるよう、dispatcher (prr) 頼みにせず自前でも色強制を無効化する
+export NO_COLOR=1
+export CLICOLOR_FORCE=0
+unset GH_FORCE_TTY
+export GH_PAGER=cat
+
 if [ "$#" -ne 1 ]; then
   echo "usage: $0 <pr-number>" >&2
   exit 2
@@ -66,7 +72,6 @@ while :; do
   if [ -n "$cursor" ]; then
     args+=(-F cursor="$cursor")
   fi
-  # shellcheck disable=SC2016
   resp=$(gh api graphql "${args[@]}" -f query='query($owner:String!, $repo:String!, $pr:Int!, $cursor:String) {
     repository(owner:$owner, name:$repo) {
       pullRequest(number:$pr) {
@@ -107,7 +112,6 @@ issue_comments=$(gh api --paginate "repos/$owner/$repo/issues/$pr/comments" \
   --jq '[.[] | {id, author: .user.login, body, url: .html_url, created_at}]' \
   | jq -s 'add // []')
 
-# shellcheck disable=SC2016
 vendor_filter='
 def vendor(login):
   (login // "" | ascii_downcase) as $l

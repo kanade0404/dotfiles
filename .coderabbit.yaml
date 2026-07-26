@@ -1,0 +1,11 @@
+# CodeRabbit 設定。
+# rulesync が upstream (kanade0404/skills / planetscale/database-skills) から生成する
+# skill コピーはこのリポジトリの著者管理外で、内容・スクリプトの修正は source 側で
+# 担保する。生成コピーへのレビューは PR ごとに同じ upstream 指摘を再掲するだけなので
+# レビュー対象から除外する。.markdownlint-cli2.jsonc の ignores / .github/workflows/test.yml
+# の shellcheck 除外と同じ「生成コピーは対象外」ポリシーに揃える。
+reviews:
+  path_filters:
+    - "!.claude/skills/**"
+    - "!.agents/skills/**"
+    - "!.opencode/skills/**"
