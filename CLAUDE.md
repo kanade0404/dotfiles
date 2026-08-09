@@ -142,8 +142,22 @@ security add-generic-password -s "claude-code-otel" -a "$USER" -w '<token>' -U
 ## herdr hook スクリプト (SessionStart → pane/agent通知)
 
 tmux pane と AI agent セッションを紐付けるための herdr 向け SessionStart hook。
-`HERDR_ENV=1` / `HERDR_SOCKET_PATH` / `HERDR_PANE_ID` / `python3` の4段ガードがあり、
-いずれか欠ければ静かに `exit 0` する (herdr の無い環境・cloud session では何もしない)。
+スクリプト**内部**に `HERDR_ENV=1` / `HERDR_SOCKET_PATH` / `HERDR_PANE_ID` / `python3` の
+4段ガードがあり、いずれか欠ければ静かに `exit 0` する。
+
+ただしこの 4 段ガードは「スクリプトが存在して起動できた」後の話で、**スクリプト自体が
+無い環境** (install.sh 未適用のマシン・cloud session・この PUBLIC repo を clone した
+第三者) では届かない。そのため hook 定義側にも存在ガードを置き、
+`h="$HOME/..."; [ -f "$h" ] || exit 0; exec bash "$h" session` の形で
+**スクリプト不在なら hook 自体が静かに `exit 0`** するようにしている
+(ガード無しだと `bash: No such file or directory` で exit 127 となり、
+毎セッション起動時にエラーが出続ける)。`otelHeadersHelper` 側の
+「helper が見つからなければ `{}` + `exit 0`」と同じ不変条件を hook 側にも揃えた形。
+
+なお herdr は tmux pane と紐付けるローカル専用の仕組みなので、`otelHeadersHelper` と違い
+**cloud 用のリポジトリ内フォールバック (`git rev-parse --show-toplevel` 経由の解決) は
+意図的に持たない** (cloud には tmux も herdr socket も無く、解決できても何もできないうえ、
+任意のリポジトリ同梱スクリプトを exec する経路を増やすだけになるため)。
 
 | 対象 | 場所 | integration id / version |
 |------|------|------|
@@ -157,7 +171,8 @@ tmux pane と AI agent セッションを紐付けるための herdr 向け Sess
   `~/.codex/hooks/` の両方へ symlink。`.codex/herdr-agent-state.sh` は個別の `ln -sf` 行で
   `~/.codex/herdr-agent-state.sh` へ配布
 - hook 定義: `.claude/settings.json` の `hooks.SessionStart` / `.codex/hooks.json` の
-  `hooks.SessionStart` (いずれも `bash "$HOME/..." session` 形式)
+  `hooks.SessionStart` (いずれも存在ガード付きの
+  `h="$HOME/..."; [ -f "$h" ] || exit 0; exec bash "$h" session` 形式)
 - 注意: スクリプト冒頭に `managed by herdr; reinstalling or updating the integration
   overwrites this file.` とある。install.sh 適用後は `~/.claude/hooks/herdr-agent-state.sh`
   が dotfiles への symlink になるため、**herdr を再インストール/更新すると symlink 越しに

@@ -15,7 +15,7 @@
       {
         "hooks": [
           {
-            "command": "bash \"$HOME/.codex/herdr-agent-state.sh\" session",
+            "command": "h=\"$HOME/.codex/herdr-agent-state.sh\"; [ -f \"$h\" ] || exit 0; exec bash \"$h\" session",
             "timeout": 10,
             "type": "command"
           }

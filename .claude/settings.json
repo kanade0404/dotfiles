@@ -332,7 +332,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$HOME/.claude/hooks/herdr-agent-state.sh\" session",
+            "command": "h=\"$HOME/.claude/hooks/herdr-agent-state.sh\"; [ -f \"$h\" ] || exit 0; exec bash \"$h\" session",
             "timeout": 10
           }
         ]
