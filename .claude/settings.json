@@ -329,7 +329,6 @@
         ]
       },
       {
-        "matcher": "*",
         "hooks": [
           {
             "type": "command",
