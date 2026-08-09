@@ -621,6 +621,19 @@ function tokenizeCommand(input: string): string[] {
  */
 const RCE_CONFIG_KEY_PATTERN = /^(core\.(fsmonitor|hookspath|sshcommand)=|alias\.)/i;
 
+/**
+ * 指定するだけで git が任意コマンドを起動する環境変数。
+ * `-c core.sshCommand=` 等と同じ RCE 経路を config を介さず開く。
+ */
+const RCE_ENV_VARS = [
+  "GIT_SSH_COMMAND",
+  "GIT_SSH",
+  "GIT_EXTERNAL_DIFF",
+  "GIT_ASKPASS",
+  "GIT_PROXY_COMMAND",
+  "GIT_SEQUENCE_EDITOR",
+];
+
 /** 値部分を持たない「キーだけ」の形 (GIT_CONFIG_KEY_N=<key>) 用 */
 const RCE_CONFIG_KEY_ONLY_PATTERN = /^(core\.(fsmonitor|hookspath|sshcommand)|alias\..+)$/i;
 
@@ -649,6 +662,11 @@ function hasDangerousConfigEnv(command: string): boolean {
     if (eq <= 0) continue;
     const name = token.slice(0, eq);
     const value = token.slice(eq + 1).replace(/['"]/g, "");
+
+    // config を経由せず env 変数そのものがコマンドを走らせる形。
+    // GIT_PAGER / GIT_EDITOR は core.pager / core.editor と同じ理由 (正当な常用形が
+    // ある) で意図的に含めない。
+    if (RCE_ENV_VARS.some((v) => v.toLowerCase() === name.toLowerCase())) return true;
 
     // GIT_CONFIG_PARAMETERS は "'key=value' 'key2=value2'" 形式
     if (/^GIT_CONFIG_PARAMETERS$/i.test(name)) {

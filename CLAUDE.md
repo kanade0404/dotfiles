@@ -186,7 +186,11 @@ ANSI-C quoting (`$'\x72eset'`)・フルパス (`/usr/bin/git`) を正規化す�
   `core.pager` / `core.editor` は `-c core.pager=cat` のような正当な常用形があるので
   意図的に対象外にしている。**環境変数経由の config 注入**
   (`GIT_CONFIG_PARAMETERS` / `GIT_CONFIG_COUNT` + `GIT_CONFIG_KEY_N`) も同じキー集合で
-  同様に deny する (`-c` だけ塞いでも同じ RCE が通るため)
+  同様に deny する (`-c` だけ塞いでも同じ RCE が通るため)。
+  config を介さず直接コマンドを起動する環境変数
+  (`GIT_SSH_COMMAND` / `GIT_SSH` / `GIT_EXTERNAL_DIFF` / `GIT_ASKPASS` /
+  `GIT_PROXY_COMMAND` / `GIT_SEQUENCE_EDITOR`) も同じ扱い。
+  `GIT_PAGER` / `GIT_EDITOR` は `core.pager` / `core.editor` と同じ理由で対象外
 - **付け替え時は `config` の読み取り (`--get` / `--list`) も deny になる**。
   書き込みと読み取りをフラグで見分ける実装にせず、安全側に倒した意図的な選択。
   他リポジトリの config を読む用途が稀なので、誤検知の害よりガードの単純さを取った

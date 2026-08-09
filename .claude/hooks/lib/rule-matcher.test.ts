@@ -609,6 +609,13 @@ describe("checkDangerousGitFlags", () => {
       test("env 付け替えでも読み取り系は false", () => {
         expect(checkDangerousGitFlags("GIT_DIR=/tmp/x/.git git status")).toBe(false);
       });
+
+      // GIT_REDIRECT_ENV_VARS の残り 2 つも同様に redirect として効くこと。
+      test("GIT_COMMON_DIR / GIT_INDEX_FILE も redirect 扱い", () => {
+        expect(checkDangerousGitFlags("GIT_COMMON_DIR=/tmp/x/.git git rm -rf .")).toBe(true);
+        expect(checkDangerousGitFlags("GIT_INDEX_FILE=/tmp/x/.git/index git rm -rf .")).toBe(true);
+        expect(checkDangerousGitFlags("GIT_COMMON_DIR=/tmp/x/.git git status")).toBe(false);
+      });
     });
 
     // denylist の追加候補 (レビュー指摘)。いずれも付け替え時のみ危険。
@@ -738,6 +745,22 @@ describe("checkDangerousGitFlags", () => {
       expect(
         checkDangerousGitFlags("env GIT_CONFIG_PARAMETERS=\"'core.hooksPath=/evil'\" git status"),
       ).toBe(true);
+    });
+
+    // config 経由でなく env 変数そのものがコマンドを走らせる形。
+    test("コマンドを実行する git env 変数も塞ぐ", () => {
+      expect(checkDangerousGitFlags("GIT_SSH_COMMAND=/evil git fetch")).toBe(true);
+      expect(checkDangerousGitFlags("GIT_SSH=/evil git fetch")).toBe(true);
+      expect(checkDangerousGitFlags("GIT_EXTERNAL_DIFF=/evil git diff")).toBe(true);
+      expect(checkDangerousGitFlags("GIT_ASKPASS=/evil git fetch")).toBe(true);
+      expect(checkDangerousGitFlags("GIT_PROXY_COMMAND=/evil git fetch")).toBe(true);
+      expect(checkDangerousGitFlags("GIT_SEQUENCE_EDITOR=/evil git rebase -i HEAD~2")).toBe(true);
+      expect(checkDangerousGitFlags("env GIT_SSH_COMMAND=/evil git fetch")).toBe(true);
+    });
+
+    test("GIT_PAGER / GIT_EDITOR は -c core.pager と同じ理由で対象外", () => {
+      expect(checkDangerousGitFlags("GIT_PAGER=cat git log")).toBe(false);
+      expect(checkDangerousGitFlags("GIT_EDITOR=vim git status")).toBe(false);
     });
 
     test("config 注入 env でも無害なキーは false", () => {
