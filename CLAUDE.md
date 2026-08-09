@@ -207,6 +207,13 @@ ANSI-C quoting (`$'\x72eset'`)・フルパス (`/usr/bin/git`) を正規化す�
   サブコマンドは `-C` 経由で他リポジトリに届く。新しい経路に気付いたら表に足すこと
 - ⚠️ **`sh -c` / `zsh -c` / `dash -c` のラッパー経由はガードが一切効かない**
   (parser が `-c` の引数を展開しないため)。追跡は #177
+- ⚠️ **対象リポジトリ側の repo-local config は静的解析では防げない**。
+  `git -C <path> log` のような読み取り系でも、その `<path>/.git/config` に
+  `core.pager` / `core.fsmonitor` / `core.hooksPath` が仕込まれていれば任意コマンドが走る
+  (同一ユーザ所有なら `safe.directory` チェックも通過する)。コマンド文字列を見る
+  ガードの原理的な射程外。信頼できないリポジトリを触るときは
+  `git -c core.fsmonitor= -c core.pager=cat --no-pager -C <path> ...` のように
+  明示的に無効化するか、そもそも `-C` で触らないこと
 
 ## herdr hook スクリプト (SessionStart → pane/agent通知)
 
