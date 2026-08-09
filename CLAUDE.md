@@ -164,6 +164,27 @@ security add-generic-password -s "claude-code-otel" -a "$USER" -w '<token>' -U
   有効にならないので、無条件に送信されるわけではない)。受信側 (API Gateway) の authorizer で
   無認証リクエストを弾く前提の設計であり、設定ファイル側ではガードしていない
 
+## 危険 git コマンドのガード (rule-matcher)
+
+`permissions.deny` から `Bash(git -C *)` を外している (別ディレクトリへの読み取り系
+`git -C` を通すため)。その代わり、破壊的な git は `.claude/hooks/lib/rule-matcher.ts` の
+`checkDangerousGitFlags` が deny に昇格させる。ガードは 2 層:
+
+| 種別 | 条件 | 例 |
+|------|------|----|
+| `alwaysDangerous` | サブコマンドに一致した時点で危険 | `reset` / `rebase` / `checkout` |
+| `dangerousWhenRedirected` | `-C` / `--git-dir` / `--work-tree` / `GIT_DIR=` 等で**ディレクトリを付け替えた場合のみ**危険 | `rm` / `config` / `commit` / `stash` / `reflog` / `worktree` 等 |
+
+後者は「CWD 内なら allow されている操作でも、付け替えるとプロジェクト外の任意
+リポジトリに届いてリスクの性質が変わる」ものを拾う。判定前に、シェルキーワード /
+コマンド前置 / 一時環境変数前置 / 先頭リダイレクトを剥がし、タブ区切り・クォート・
+ANSI-C quoting (`$'\x72eset'`)・フルパス (`/usr/bin/git`) を正規化する。
+
+- ⚠️ **`DANGEROUS_GIT_FLAGS` は denylist であって網羅ではない**。ここに無い破壊的
+  サブコマンドは `-C` 経由で他リポジトリに届く。新しい経路に気付いたら表に足すこと
+- ⚠️ **`sh -c` / `zsh -c` / `dash -c` のラッパー経由はガードが一切効かない**
+  (parser が `-c` の引数を展開しないため)。追跡は #177
+
 ## herdr hook スクリプト (SessionStart → pane/agent通知)
 
 tmux pane と AI agent セッションを紐付けるための herdr 向け SessionStart hook。

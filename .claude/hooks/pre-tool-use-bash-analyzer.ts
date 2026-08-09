@@ -4,7 +4,6 @@ import { loadRules } from "./lib/rules.ts";
 import { evaluateCommand } from "./lib/evaluator.ts";
 import type { HookInput, HookOutput, RuleCategory } from "./lib/types.ts";
 
-/** deny されたコマンドに対して代替ツールを案内するマッピング */
 /**
  * deny 時に「代わりにこれを使え」と案内するためのコマンド名 → 代替ツールの対応表。
  *

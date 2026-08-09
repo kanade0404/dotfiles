@@ -671,6 +671,61 @@ describe("checkDangerousGitFlags", () => {
     });
   });
 
+  // hasGitRedirectEnv の前置スキップは stripShellPrefixes と揃っている必要がある。
+  // 揃っていないと `exec GIT_DIR=... git rm -rf .` のように、コマンド本体は
+  // 正しく取り出せるのに redirect 情報だけが落ちる。
+  describe("シェルキーワード / コマンド前置を挟んでも redirect 検出が落ちない", () => {
+    for (const cmd of [
+      "exec GIT_DIR=/other/.git git rm -rf .",
+      "then GIT_DIR=/other/.git git update-ref -d refs/heads/main",
+      "nohup GIT_DIR=/other/.git git stash drop",
+      "command GIT_DIR=/other/.git git worktree add /tmp/y",
+      "time GIT_WORK_TREE=/other git rm -rf .",
+      "nice GIT_DIR=/other/.git git cherry-pick deadbeef",
+      "do GIT_DIR=/other/.git git notes prune",
+      "else GIT_DIR=/other/.git git symbolic-ref HEAD refs/heads/other",
+      "elif GIT_DIR=/other/.git git filter-branch --force",
+    ]) {
+      test(JSON.stringify(cmd), () => expect(checkDangerousGitFlags(cmd)).toBe(true));
+    }
+
+    test("前置があっても読み取り系は false", () => {
+      expect(checkDangerousGitFlags("exec GIT_DIR=/other/.git git status")).toBe(false);
+    });
+  });
+
+  // 付け替え先リポジトリへの書き込み系。config は core.fsmonitor / core.hooksPath /
+  // alias 経由でそのリポジトリでの任意コマンド実行につながりうるので優先度が高い。
+  describe("redirect 依存の書き込み系 (config / commit / tag)", () => {
+    for (const cmd of [
+      "git -C /tmp/x config core.fsmonitor /tmp/evil.sh",
+      "git -C /tmp/x config core.hooksPath /tmp/evil",
+      "git -C /tmp/x tag -d v1.0",
+      "git -C /tmp/x tag --delete v1.0",
+      "GIT_DIR=/other/.git git config core.pager /tmp/evil.sh",
+    ]) {
+      test(JSON.stringify(cmd), () => expect(checkDangerousGitFlags(cmd)).toBe(true));
+    }
+
+    test("タグ一覧のような読み取りは false", () => {
+      expect(checkDangerousGitFlags("git -C /tmp/x tag -l")).toBe(false);
+      expect(checkDangerousGitFlags("git -C /tmp/x tag")).toBe(false);
+    });
+
+    // `git -C <repo> commit` はエージェントが絶対パスでリポジトリを操作する
+    // 正当な常用パターンで、コミット作成自体はデータを失わない。
+    // ここを塞ぐと通常の作業が止まるので意図的に allow のままにする。
+    test("git -C <repo> commit は allow のまま", () => {
+      expect(checkDangerousGitFlags("git -C /tmp/x commit -m x")).toBe(false);
+      expect(checkDangerousGitFlags("git -C /tmp/x commit -F /tmp/msg.txt")).toBe(false);
+    });
+
+    test("CWD 内なら従来通り false", () => {
+      expect(checkDangerousGitFlags("git config core.fsmonitor /tmp/x.sh")).toBe(false);
+      expect(checkDangerousGitFlags("git tag -d v1.0")).toBe(false);
+    });
+  });
+
   test("env -u NAME を挟んでも redirect 検出が落ちない", () => {
     expect(checkDangerousGitFlags("env -u FOO GIT_DIR=/tmp/x/.git git rm -rf .")).toBe(true);
     expect(checkDangerousGitFlags("env --unset FOO GIT_DIR=/tmp/x/.git git rm -rf .")).toBe(true);

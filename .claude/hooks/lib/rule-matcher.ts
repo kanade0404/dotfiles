@@ -161,9 +161,19 @@ function hasGitRedirectEnv(command: string): boolean {
     // 飛ばさないとその引数 (NAME) を素のトークンと誤認して打ち切ってしまい、
     // 後続の GIT_DIR= に到達しない。
     if (token === "-u" || token === "--unset") { i++; continue; }
-    // `env` とそのフラグは読み飛ばす。それ以外の素のトークンに当たったら
-    // 前置区間は終わり (コマンド本体に入った)。
-    if (token === "env" || token.startsWith("-")) continue;
+    // 前置として読み飛ばす対象は stripShellPrefixes と揃える。揃っていないと
+    // `exec GIT_DIR=... git rm -rf .` のようにコマンド本体は正しく取り出せるのに
+    // redirect 情報だけが落ちる (非対称が穴になる)。
+    if (
+      (SHELL_KEYWORD_PREFIXES as readonly string[]).includes(token) ||
+      (COMMAND_PREFIXES as readonly string[]).includes(token) ||
+      token === "{" ||
+      token === "(" ||
+      token.startsWith("-")
+    ) {
+      continue;
+    }
+    // 素のトークンに当たったら前置区間は終わり (コマンド本体に入った)。
     break;
   }
   return false;
@@ -350,10 +360,24 @@ const DANGEROUS_GIT_FLAGS: readonly DangerousGitFlagRule[] = [
     // (denylist なので網羅ではない。他の破壊系が見つかったらここに足す)
     gitSubcommands: [
       "rm", "update-ref", "clean", "filter-branch", "symbolic-ref",
-      // 付け替え先リポジトリにコミットや作業ツリーを作る系
+      // 付け替え先リポジトリに作業ツリーやコミットを作る系。
+      // `commit` は**意図的に含めない** — `git -C <repo> commit` は
+      // (エージェントが絶対パスでリポジトリを操作する等) 正当な常用パターンで、
+      // かつコミット作成自体はデータを失わない。含めると通常の作業が止まる。
       "cherry-pick", "revert", "worktree",
+      // config は core.fsmonitor / core.hooksPath / alias 等を別リポジトリに
+      // 書き込めるため、そのリポジトリで次に git を叩いた時点で任意コマンド実行に
+      // つながりうる。読み取り用途 (--get 等) より書き込みの危険が大きいので
+      // 付け替え時は一律で危険扱いにする。
+      "config",
     ],
     dangerousWhenRedirected: true,
+  },
+  {
+    // tag は一覧 (bare / -l) が読み取り。削除・強制付け替えが破壊的。
+    gitSubcommands: ["tag"],
+    dangerousWhenRedirected: true,
+    flags: ["-d", "--delete", "-f", "--force"],
   },
   {
     // stash は list / show だけが読み取り。引数無しは stash push の省略形なので危険。
