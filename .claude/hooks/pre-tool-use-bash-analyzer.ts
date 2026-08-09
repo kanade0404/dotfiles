@@ -5,6 +5,16 @@ import { evaluateCommand } from "./lib/evaluator.ts";
 import type { HookInput, HookOutput, RuleCategory } from "./lib/types.ts";
 
 /** deny されたコマンドに対して代替ツールを案内するマッピング */
+/**
+ * deny 時に「代わりにこれを使え」と案内するためのコマンド名 → 代替ツールの対応表。
+ *
+ * 参照されるのは deny 判定が出たときだけなので、**現在 deny されていないコマンドの
+ * エントリは到達しない**。`ls` / `head` / `tail` / `grep` / `rg` / `echo` は
+ * 現状 deny リストに無い (allow か未マッチ pass-through) ため案内は発火しない。
+ * それでも残しているのは、この表が「deny リストの写し」ではなく
+ * 「そのコマンドの代替は何か」という独立した知識で、deny を足し戻したときに
+ * 案内も一緒に復活してほしいため。表とポリシーの一致は意図的に要求しない。
+ */
 const TOOL_ALTERNATIVES: Readonly<Record<string, string>> = {
   ls: "Glob ツールまたは LS ツール",
   find: "Glob ツール",

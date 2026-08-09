@@ -575,6 +575,55 @@ describe("checkDangerousGitFlags", () => {
     test("付け替えても読み取り系は false", () => {
       expect(checkDangerousGitFlags("git -C /tmp/x stash list")).toBe(false);
     });
+
+    // 環境変数によるディレクトリ付け替えも -C と同型。stripShellPrefixes が
+    // env 前置を剥がした後に findGitSubcommand が走るので、剥がす前に検出して
+    // 伝搬しないと redirect 情報が失われる。
+    describe("環境変数によるディレクトリ付け替えも redirect として扱う", () => {
+      for (const cmd of [
+        "GIT_DIR=/tmp/x/.git git rm -rf .",
+        "GIT_DIR=/tmp/x/.git git update-ref -d refs/heads/main",
+        "GIT_DIR=/tmp/x/.git git filter-branch --force",
+        "GIT_WORK_TREE=/tmp/x git stash drop",
+        "GIT_OBJECT_DIRECTORY=/tmp/x/.git/objects git rm -rf .",
+        "env GIT_DIR=/tmp/x/.git git rm -rf .",
+        "GIT_DIR='/tmp/repo with spaces/.git' git rm -rf .",
+      ]) {
+        test(JSON.stringify(cmd), () => expect(checkDangerousGitFlags(cmd)).toBe(true));
+      }
+
+      test("git と無関係な env 前置は redirect にしない", () => {
+        expect(checkDangerousGitFlags("FOO=bar git rm -rf .")).toBe(false);
+        expect(checkDangerousGitFlags("GIT_AUTHOR_NAME=x git rm -rf .")).toBe(false);
+      });
+
+      test("env 付け替えでも読み取り系は false", () => {
+        expect(checkDangerousGitFlags("GIT_DIR=/tmp/x/.git git status")).toBe(false);
+      });
+    });
+
+    // denylist の追加候補 (レビュー指摘)。いずれも付け替え時のみ危険。
+    describe("redirect 依存の破壊系 (追加分)", () => {
+      for (const cmd of [
+        "git -C /tmp/x reflog expire --expire=now --all",
+        "git -C /tmp/x reflog delete refs/heads/main@{0}",
+        "git -C /tmp/x symbolic-ref HEAD refs/heads/other",
+        "git -C /tmp/x stash push",
+        "git -C /tmp/x notes prune",
+      ]) {
+        test(JSON.stringify(cmd), () => expect(checkDangerousGitFlags(cmd)).toBe(true));
+      }
+
+      test("読み取り系サブコマンドは false のまま", () => {
+        expect(checkDangerousGitFlags("git -C /tmp/x reflog show")).toBe(false);
+        expect(checkDangerousGitFlags("git -C /tmp/x notes list")).toBe(false);
+      });
+
+      test("CWD 内なら従来通り false", () => {
+        expect(checkDangerousGitFlags("git reflog expire --expire=now --all")).toBe(false);
+        expect(checkDangerousGitFlags("git stash push")).toBe(false);
+      });
+    });
   });
 
   test("読み取り系は -C 付きでも false", () => {

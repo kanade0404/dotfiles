@@ -119,6 +119,42 @@ function scanTokenEnd(input: string, pos: number): number {
 }
 
 /**
+ * git の作業ディレクトリ / リポジトリを付け替える環境変数。
+ * `-C` / `--git-dir` / `--work-tree` と同じ「他リポジトリに届く」効果を持つ。
+ */
+const GIT_REDIRECT_ENV_VARS = [
+  "GIT_DIR",
+  "GIT_WORK_TREE",
+  "GIT_OBJECT_DIRECTORY",
+  "GIT_COMMON_DIR",
+  "GIT_INDEX_FILE",
+];
+
+/**
+ * 一時環境変数前置に git のディレクトリ付け替え変数が含まれるかを判定する。
+ *
+ * `stripShellPrefixes` が env 前置を剥がした後に `findGitSubcommand` が走るため、
+ * 剥がす前の文字列を見ないと redirect 情報が失われる
+ * (`GIT_DIR=/other/.git git rm -rf .` が -C 版と違って素通りしてしまう)。
+ */
+function hasGitRedirectEnv(command: string): boolean {
+  const tokens = tokenizeCommand(command.trim());
+
+  for (const token of tokens) {
+    const eq = token.indexOf("=");
+    if (eq > 0 && /^[A-Za-z_][A-Za-z0-9_]*$/.test(token.slice(0, eq))) {
+      if (GIT_REDIRECT_ENV_VARS.includes(token.slice(0, eq))) return true;
+      continue;
+    }
+    // `env` とそのフラグは読み飛ばす。それ以外の素のトークンに当たったら
+    // 前置区間は終わり (コマンド本体に入った)。
+    if (token === "env" || token.startsWith("-")) continue;
+    break;
+  }
+  return false;
+}
+
+/**
  * 先頭に連なる一時環境変数前置 (`VAR=val `) の合計長を返す。
  * 値はクォート / エスケープ / ANSI-C を跨いで 1 トークンとして消費するため、
  * `FOO='bar baz' git reset --hard` のような空白入りの値でも正しく剥がせる。
@@ -278,15 +314,28 @@ const DANGEROUS_GIT_FLAGS: readonly DangerousGitFlagRule[] = [
     // プロジェクト外の任意リポジトリにも同じ破壊的操作が届くため、
     // 付け替えがある場合に限って危険扱いにする。
     // (denylist なので網羅ではない。他の破壊系が見つかったらここに足す)
-    gitSubcommands: ["rm", "update-ref", "clean", "filter-branch"],
+    gitSubcommands: ["rm", "update-ref", "clean", "filter-branch", "symbolic-ref"],
     dangerousWhenRedirected: true,
   },
   {
     // stash は list / show のような読み取りサブコマンドがあるので、
     // 破壊的な位置引数を伴う場合だけ危険扱いにする。
+    // push は対象リポジトリの作業ツリーを退避で書き換えるので含める。
     gitSubcommands: ["stash"],
     dangerousWhenRedirected: true,
-    positionalArgs: ["drop", "clear"],
+    positionalArgs: ["drop", "clear", "push", "pop", "save"],
+  },
+  {
+    // reflog は show が読み取り。expire / delete は到達可能性を壊す。
+    gitSubcommands: ["reflog"],
+    dangerousWhenRedirected: true,
+    positionalArgs: ["expire", "delete"],
+  },
+  {
+    // notes も list / show は読み取り。
+    gitSubcommands: ["notes"],
+    dangerousWhenRedirected: true,
+    positionalArgs: ["prune", "remove"],
   },
   {
     gitSubcommands: ["commit"],
@@ -531,6 +580,10 @@ export function checkDangerousGitFlags(command: string): boolean {
   if (!gitSub) return false;
   const subcommand = gitSub.subcommand;
 
+  // ディレクトリ付け替えは global option だけでなく環境変数前置でも起きる。
+  // env 前置は stripShellPrefixes が既に剥がしているので、元コマンドを見る。
+  const redirected = gitSub.redirected || hasGitRedirectEnv(command);
+
   const args = parts.slice(gitSub.argsStartIndex);
 
   for (const rule of DANGEROUS_GIT_FLAGS) {
@@ -543,7 +596,7 @@ export function checkDangerousGitFlags(command: string): boolean {
     // フラグ / 位置引数の条件を持つルールはそれも満たす必要があるので、
     // 条件が無いルールだけ即 true にして、あるものは下の通常判定に流す。
     if (rule.dangerousWhenRedirected) {
-      if (!gitSub.redirected) continue;
+      if (!redirected) continue;
       if (!rule.flags && !rule.prefixFlags && !rule.positionalArgs) return true;
     }
 
