@@ -2,11 +2,22 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash",
         "hooks": [
           {
-            "type": "command",
-            "command": "bun ~/.codex/hooks/pre-tool-use-bash-analyzer.ts"
+            "command": "bun ~/.codex/hooks/pre-tool-use-bash-analyzer.ts",
+            "type": "command"
+          }
+        ],
+        "matcher": "Bash"
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "command": "bash \"$HOME/.codex/herdr-agent-state.sh\" session",
+            "timeout": 10,
+            "type": "command"
           }
         ]
       }

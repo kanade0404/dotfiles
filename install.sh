@@ -33,6 +33,12 @@ mkdir -p "$HOME/.codex"
 rm -f "$HOME/.codex/config.toml"
 install -m 600 "$DOTFILES/.codex/config.toml" "$HOME/.codex/config.toml"
 ln -sf "$DOTFILES/.codex/hooks.json" "$HOME/.codex/hooks.json"
+# herdr の Codex 連携スクリプト。hooks.json が $HOME/.codex/ 直下を指しており、
+# かつ .claude/hooks/* は ~/.codex/hooks/ にも配布される (同名だと Claude 版に
+# 上書きされる) ため、hooks/ ではなく .codex/ 直下へ個別に symlink する。
+# なお ~/.codex/hooks/ には Claude 用スクリプト (herdr-agent-state.sh の Claude 版や
+# otel-headers.sh 等) がそのまま残るが、Codex はそれらを参照しないので無害。
+ln -sf "$DOTFILES/.codex/herdr-agent-state.sh" "$HOME/.codex/herdr-agent-state.sh"
 # rules: Codex execpolicy command permissions
 if [ -d "$DOTFILES/.codex/rules" ] && [ "$(ls -A "$DOTFILES/.codex/rules" 2>/dev/null)" ]; then
   mkdir -p "$HOME/.codex/rules"

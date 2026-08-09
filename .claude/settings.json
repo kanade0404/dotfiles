@@ -223,9 +223,7 @@
       "Bash(git checkout *)",
       "Bash(git --git-dir *)",
       "Bash(git --work-tree *)",
-      "Bash(git -C *)",
       "Bash(cat *)",
-      "Bash(ls *)",
       "Bash(find *)",
       "Bash(awk *)",
       "Bash(sed *)",
@@ -292,7 +290,35 @@
     ],
     "defaultMode": "auto"
   },
+  "env": {
+    "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
+    "OTEL_METRICS_EXPORTER": "otlp",
+    "OTEL_EXPORTER_OTLP_METRICS_PROTOCOL": "http/json",
+    "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT": "https://dapbih69d4.execute-api.ap-northeast-1.amazonaws.com/v1/metrics",
+    "OTEL_METRIC_EXPORT_INTERVAL": "60000",
+    "OTEL_METRICS_INCLUDE_SESSION_ID": "true",
+    "OTEL_METRICS_INCLUDE_VERSION": "true",
+    "OTEL_METRICS_INCLUDE_ACCOUNT_UUID": "true",
+    "OTEL_LOGS_EXPORTER": "otlp",
+    "OTEL_EXPORTER_OTLP_LOGS_PROTOCOL": "http/json",
+    "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT": "https://dapbih69d4.execute-api.ap-northeast-1.amazonaws.com/v1/logs",
+    "OTEL_LOGS_EXPORT_INTERVAL": "5000",
+    "OTEL_LOG_USER_PROMPTS": "0",
+    "OTEL_LOG_TOOL_DETAILS": "1"
+  },
+  "otelHeadersHelper": "p=\"$HOME/.claude/hooks/otel-headers.sh\"; [ -x \"$p\" ] || p=\"$(git rev-parse --show-toplevel 2>/dev/null)/.claude/hooks/otel-headers.sh\"; [ -x \"$p\" ] || { printf '{}\\n'; exit 0; }; exec \"$p\"",
   "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bun ~/.claude/hooks/pre-tool-use-bash-analyzer.ts"
+          }
+        ]
+      }
+    ],
     "SessionStart": [
       {
         "hooks": [
@@ -301,15 +327,14 @@
             "command": "zsh -c 'set +e; ENV_BEFORE=$(export -p | sort); source ~/.zshrc >/dev/null 2>&1; if [ -n \"$CLAUDE_ENV_FILE\" ]; then ENV_AFTER=$(export -p | sort); comm -13 <(echo \"$ENV_BEFORE\") <(echo \"$ENV_AFTER\") >> \"$CLAUDE_ENV_FILE\" || true; fi; exit 0' || exit 0"
           }
         ]
-      }
-    ],
-    "PreToolUse": [
+      },
       {
-        "matcher": "Bash",
+        "matcher": "*",
         "hooks": [
           {
             "type": "command",
-            "command": "bun ~/.claude/hooks/pre-tool-use-bash-analyzer.ts"
+            "command": "bash \"$HOME/.claude/hooks/herdr-agent-state.sh\" session",
+            "timeout": 10
           }
         ]
       }
@@ -355,8 +380,8 @@
       }
     }
   },
-  "model": "claude-fable-5[1m]",
   "effortLevel": "high",
+  "skillListingBudgetFraction": 0.02,
   "plansDirectory": "./.claude/plans",
   "autoMemoryEnabled": false,
   "skipWorkflowUsageWarning": true,
@@ -364,82 +389,82 @@
   "remoteControlAtStartup": true,
   "skipAutoPermissionPrompt": true,
   "mcpServers": {
-    "figma": {
-      "type": "http",
-      "url": "https://mcp.figma.com/mcp"
-    },
-    "eslint": {
-      "command": "npx",
-      "args": [
-        "@eslint/mcp"
-      ]
-    },
-    "terraform": {
-      "command": "docker",
-      "args": [
-        "run",
-        "-i",
-        "--rm",
-        "hashicorp/terraform-mcp-server"
-      ]
-    },
     "aws-core-mcp-server": {
-      "command": "docker",
       "args": [
         "run",
         "-i",
         "--rm",
         "mcp/aws-core-mcp-server"
-      ]
-    },
-    "gemini-cli": {
-      "type": "stdio",
-      "command": "npx",
-      "args": [
-        "@choplin/mcp-gemini-cli",
-        "--allow-npx"
       ],
-      "env": {}
+      "command": "docker"
+    },
+    "context7": {
+      "args": [
+        "-y",
+        "@upstash/context7-mcp@latest"
+      ],
+      "command": "npx"
     },
     "deepwiki": {
-      "type": "stdio",
-      "command": "npx",
       "args": [
         "mcp-remote",
         "https://mcp.deepwiki.com/sse"
       ],
-      "env": {}
+      "command": "npx",
+      "env": {},
+      "type": "stdio"
+    },
+    "eslint": {
+      "args": [
+        "@eslint/mcp"
+      ],
+      "command": "npx"
+    },
+    "excalidraw": {
+      "url": "https://excalidraw-mcp-app.vercel.app/mcp"
+    },
+    "figma": {
+      "type": "http",
+      "url": "https://mcp.figma.com/mcp"
+    },
+    "gemini-cli": {
+      "args": [
+        "@choplin/mcp-gemini-cli",
+        "--allow-npx"
+      ],
+      "command": "npx",
+      "env": {},
+      "type": "stdio"
     },
     "next-devtools": {
-      "command": "npx",
       "args": [
         "-y",
         "next-devtools-mcp@latest"
-      ]
+      ],
+      "command": "npx"
     },
     "notion": {
       "type": "http",
       "url": "https://mcp.notion.com/mcp"
     },
+    "playwright": {
+      "args": [
+        "@playwright/mcp@latest"
+      ],
+      "command": "npx"
+    },
     "sentry": {
       "type": "http",
       "url": "https://mcp.sentry.dev/mcp"
     },
-    "playwright": {
-      "command": "npx",
+    "terraform": {
       "args": [
-        "@playwright/mcp@latest"
-      ]
-    },
-    "context7": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "@upstash/context7-mcp@latest"
-      ]
-    },
-    "excalidraw": {
-      "url": "https://excalidraw-mcp-app.vercel.app/mcp"
+        "run",
+        "-i",
+        "--rm",
+        "hashicorp/terraform-mcp-server"
+      ],
+      "command": "docker"
     }
   }
 }

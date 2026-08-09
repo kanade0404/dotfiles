@@ -27,27 +27,37 @@ DOTFILES="$DOTFILES_DIR" bash "$DOTFILES_DIR/install.sh"
 
 ```text
 nix/
-  flake.nix              # エントリポイント (nixpkgs unstable + nix-darwin + home-manager)
-  configuration.nix      # system-level packages + locale + user
-  home.nix               # user-level: zsh, git, tmux, starship, bat, delta, etc.
+  flake.nix                 # エントリポイント (nixpkgs unstable + nix-darwin + home-manager)
+  configuration.nix         # system-level packages + locale + user
+  home.nix                  # user-level: zsh, git, tmux, starship, bat, delta, etc.
   modules/
-    homebrew.nix         # brew casks (GUI apps) / taps / formulae
+    homebrew.nix            # brew casks (GUI apps) / taps / formulae
 
-.config/nvim/            # Neovim (LazyVim) — install.sh でsymlink
-.config/ghostty/config   # Ghostty — install.sh でsymlink
-.claude/settings.json    # Claude Code user設定 — install.sh でsymlink
-.claude/hooks/           # Claude Code hooks — install.sh でsymlink
-.claude/commands/        # Claude Code commands — install.sh でsymlink
-.claude/skills/          # Claude Code skills — rulesync で生成 (rulesync-claude/, kanade0404/skills を ref 固定取得。現在の tag は rulesync-claude/rulesync.jsonc の ref を参照)。project 単位のため install.sh でのグローバル symlink はしない
-rulesync-claude/         # Claude 用 skill の rulesync 隔離パイプライン (config + lock)
-.agents/skills/          # Codex 用 skills — rulesync で生成 (rulesync.jsonc) + install.sh でsymlink
-.github/workflows/       # GitHub Actions (PR conflict 自動解決 etc.)
-.local/bin/              # ヘルパースクリプト (tmux-project, gw) — install.sh でsymlink
-bootstrap.sh             # 初回セットアップ (Homebrew + nix-darwin bootstrap + install.sh)
-bootstrap-codex-cloud.sh # Codex Cloud 用の依存関係セットアップ
-bootstrap-worktree.sh    # git worktree を参照元にして適用
-install.sh               # Nix 管理外ファイルの symlink 作成スクリプト
+.config/nvim/               # Neovim (LazyVim) — install.sh でsymlink
+.config/ghostty/config      # Ghostty — install.sh でsymlink
+.claude/settings.json       # Claude Code user設定 — install.sh でsymlink
+.claude/hooks/              # Claude Code hooks — install.sh でsymlink
+.claude/commands/           # Claude Code commands — install.sh でsymlink
+.claude/skills/             # Claude Code skills — rulesync で生成 (rulesync-claude/, kanade0404/skills を ref 固定取得。現在の tag は rulesync-claude/rulesync.jsonc の ref を参照)。project 単位のため install.sh でのグローバル symlink はしない
+.codex/herdr-agent-state.sh # herdr hook (Codex用) — install.sh で個別に ~/.codex/herdr-agent-state.sh へsymlink。詳細は「herdr hook スクリプト」節
+rulesync-claude/            # Claude 用 skill の rulesync 隔離パイプライン (config + lock)
+.agents/skills/             # Codex 用 skills — rulesync で生成 (rulesync.jsonc) + install.sh でsymlink
+.github/workflows/          # GitHub Actions (PR conflict 自動解決 etc.)
+.local/bin/                 # ヘルパースクリプト (tmux-project, gw) — install.sh でsymlink
+.gitignore                  # ⚠️ global な core.excludesFile (下記の注意を参照)
+bootstrap.sh                # 初回セットアップ (Homebrew + nix-darwin bootstrap + install.sh)
+bootstrap-codex-cloud.sh    # Codex Cloud 用の依存関係セットアップ
+bootstrap-worktree.sh       # git worktree を参照元にして適用
+install.sh                  # Nix 管理外ファイルの symlink 作成スクリプト
 ```
+
+> ⚠️ **`.gitignore` は「このリポジトリ用」ではなく global な ignore**
+> `install.sh` が `~/.gitignore` へ symlink し (`ln -sf "$DOTFILES/.gitignore" "$HOME/.gitignore"`)、
+> `nix/home.nix` の `programs.git` で `excludesfile = "~/.gitignore"` として **core.excludesFile** に
+> 設定している。つまりここに書いたパターンは **このマシンの全リポジトリに適用される**。
+> `/env.json` のようにリポジトリ直下をアンカーしたパターンでも「全リポジトリのルートの
+> `env.json`」を無視してしまうため、**dotfiles 固有のファイルを ignore したいだけの目的で
+> ここにパターンを足さないこと** (どうしても必要なら `.git/info/exclude` を使う)。
 
 ## Where to Edit
 
@@ -64,6 +74,95 @@ install.sh               # Nix 管理外ファイルの symlink 作成スクリ�
 | Claude/Codex skill の更新取込 | (kanade0404/skills の新 tag リリース後) `ref` を更新して再解決 | `bun run rulesync:skills:claude:update` / `rulesync:skills:update` |
 | Codex 用 skill のソース変更 | kanade0404/skills は `ref` でタグ固定 (push だけでは取得されない)。tag 更新が必要 | `rulesync.jsonc` / `rulesync-claude/rulesync.jsonc` **両方**の `ref` を更新 → `bun run rulesync:skills:update` + `bun run rulesync:skills:claude:update` + `install.sh` (両ファイルは同じ source を参照するため ref 更新は常に両パイプライン同時。`.agents/skills` はグローバル symlink のため反映に必須) |
 | GitHub Actions workflow | `.github/workflows/` を編集 | push (Actions が自動検出) |
+| Claude Code テレメトリ (OTEL) のエンドポイント/挙動 | `.claude/settings.json` の `env` | `install.sh` (トークンは別管理。「Claude Code テレメトリ (OpenTelemetry)」節を参照) |
+| herdr hook (pane⇔agentセッション通知) | `.claude/hooks/herdr-agent-state.sh` (Claude用) / `.codex/herdr-agent-state.sh` (Codex用) | `install.sh` (実装は herdr 管理下。「herdr hook スクリプト」節を参照) |
+
+## Claude Code テレメトリ (OpenTelemetry)
+
+Claude Code の metrics / logs を OTLP エンドポイントへ export する設定。
+**トークンは絶対にコミットしない**方針で、設定本体とトークンの供給経路を分離している。
+
+| 対象 | 置き場所 | 備考 |
+|------|---------|------|
+| エンドポイント・protocol・export interval 等 | `.claude/settings.json` の `env` (コミット済み) | `OTEL_EXPORTER_OTLP_HEADERS` はここに**入れない** |
+| `Authorization: Bearer <token>` ヘッダー | `.claude/settings.json` の `otelHeadersHelper` → `.claude/hooks/otel-headers.sh` | helper が実行時にトークンを解決して JSON で返す |
+| トークン実体 (ローカル) | macOS Keychain (service: `claude-code-otel`) | dotfiles には一切書かない |
+| トークン実体 (cloud) | claude.ai/code の Environment variables で `OTEL_EXPORTER_TOKEN` | 同上 |
+
+トークンの解決順序 (`.claude/hooks/otel-headers.sh`):
+
+1. 環境変数 `OTEL_EXPORTER_TOKEN` が非空ならそれを使う
+2. macOS なら Keychain から取得
+3. どちらも無ければ `{}` を返して静かに続行 (ヘッダーなしで export され、セッションは落ちない)
+
+取得できたトークンは前後の空白 (スペース・タブ・改行) を除去してから使う (Keychain 登録時に
+紛れ込んだ空白で無効なヘッダーを送り続けるのを防ぐため)。それでも内部に制御文字が残る場合は
+JSON として壊れるため `{}` を返して静かに続行する。`settings.json` 側のラッパー式も、helper が見つからない場合は
+`exec` せず `{}` を stdout に出して `exit 0` する (「取れなければ `{}`」という不変条件を
+helper 本体とラッパーの両方で守る)。
+
+Keychain への登録:
+
+```bash
+security add-generic-password -s "claude-code-otel" -a "$USER" -w '<token>' -U
+```
+
+注意点:
+
+- `settings.json` の `env` の値は `${VAR}` 展開をサポートしない (リテラル文字列のみ)。
+  かつシェルの `export` を**上書きする**ため、トークンは `env` ではなく helper 経由で供給している
+- `otelHeadersHelper` の値は「実ファイルなら直接 exec、そうでなければ `/bin/sh -c` で実行」という
+  2 段構えで解釈されるためシェル式を書ける。ローカルは `$HOME/.claude/hooks/otel-headers.sh`
+  (install.sh が貼る symlink)、cloud は `git rev-parse --show-toplevel` で clone root を解決する
+- helper には引数も stdin も渡されず、`CLAUDE_PROJECT_DIR` も渡されない。実行ビット必須 (無いと exit 126)。
+  呼び出しは既定 29 分デバウンス / 1 回 30 秒 timeout
+- ⚠️ `otelHeadersHelper` は**公式ドキュメントに記載が無い**。上記の「実ファイルなら直接 exec /
+  そうでなければ `/bin/sh -c`」「29 分デバウンス」「30 秒 timeout」はいずれも
+  **Claude Code 2.1.226 で実測した挙動**であり、将来のリリースで無言に変わりうる。
+  挙動が変わった場合は helper が呼ばれない / タイムアウトする形で現れるので、
+  バージョンを上げた際は改めて確認すること
+- **cloud session (claude.ai/code) は `~/.claude/settings.json` (user settings) を読まない**。
+  リポジトリ内の `.claude/settings.json` のみ有効なので、**この dotfiles リポジトリ以外の
+  cloud session ではテレメトリ設定は効かない**
+- cloud の Environment variables UI は専用のシークレットストアではなく、公式 docs も資格情報を
+  置かないよう警告している。トークンをそこに置くかはユーザーの判断
+- `env.json` は旧来のローカル設定ファイル。内容は `.claude/settings.json` の `env` に
+  取り込み済みなので**削除した** (`.gitignore` にも登録しない。理由は下記「`.gitignore` は
+  global core.excludesFile」の注意を参照)
+- ⚠️ **この `env` は `~/.claude/settings.json` (user settings) 経由でローカルの全プロジェクトに
+  適用される**。`OTEL_LOG_TOOL_DETAILS=1` は bash コマンド文字列やファイルパスを含むため、
+  業務リポジトリで実行したコマンドも export される (`OTEL_LOG_USER_PROMPTS=0` により
+  プロンプト本文は除外)。この範囲で export することを承知のうえで `1` にしている
+- ⚠️ **このリポジトリは PUBLIC**。`.claude/settings.json` は clone した第三者にとって
+  project settings にもなるため、その人が dotfiles ディレクトリで Claude Code を起動すると
+  テレメトリ export が試みられる。トークンを持たないため `Authorization` ヘッダーは付かないが、
+  **リクエスト自体は送信される**。受信側 (API Gateway) の authorizer で無認証リクエストを
+  弾く前提の設計であり、設定ファイル側ではガードしていない
+
+## herdr hook スクリプト (SessionStart → pane/agent通知)
+
+tmux pane と AI agent セッションを紐付けるための herdr 向け SessionStart hook。
+`HERDR_ENV=1` / `HERDR_SOCKET_PATH` / `HERDR_PANE_ID` / `python3` の4段ガードがあり、
+いずれか欠ければ静かに `exit 0` する (herdr の無い環境・cloud session では何もしない)。
+
+| 対象 | 場所 | integration id / version |
+|------|------|------|
+| Claude Code 用 | `.claude/hooks/herdr-agent-state.sh` | `HERDR_INTEGRATION_ID=claude`, v7 |
+| Codex 用 | `.codex/herdr-agent-state.sh` | `HERDR_INTEGRATION_ID=codex`, v6 |
+
+- 両者は agent 種別・イベント絞り込み条件・payload が異なる別物。**統合しない**
+- 役割: hook 入力 JSON から `session_id` / `transcript_path` を抜き、herdr の Unix domain
+  socket へ `pane.report_agent_session` JSON-RPC を送信する (herdr バイナリ自体は呼ばない)
+- 配布: `.claude/hooks/*` は install.sh のワイルドカードで `~/.claude/hooks/` と
+  `~/.codex/hooks/` の両方へ symlink。`.codex/herdr-agent-state.sh` は個別の `ln -sf` 行で
+  `~/.codex/herdr-agent-state.sh` へ配布
+- hook 定義: `.claude/settings.json` の `hooks.SessionStart` / `.codex/hooks.json` の
+  `hooks.SessionStart` (いずれも `bash "$HOME/..." session` 形式)
+- 注意: スクリプト冒頭に `managed by herdr; reinstalling or updating the integration
+  overwrites this file.` とある。install.sh 適用後は `~/.claude/hooks/herdr-agent-state.sh`
+  が dotfiles への symlink になるため、**herdr を再インストール/更新すると symlink 越しに
+  dotfiles リポジトリ内の実体が書き換わり git diff として現れる** (追跡できるのは利点だが、
+  意図しない差分に見えうるので注意)
 
 ## Nix-specific Notes
 
