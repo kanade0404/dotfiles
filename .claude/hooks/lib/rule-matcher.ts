@@ -374,6 +374,8 @@ const DANGEROUS_GIT_FLAGS: readonly DangerousGitFlagRule[] = [
       // (エージェントが絶対パスでリポジトリを操作する等) 正当な常用パターンで、
       // かつコミット作成自体はデータを失わない。含めると通常の作業が止まる。
       "cherry-pick", "revert", "worktree",
+      // 付け替え先の作業ツリー / オブジェクトを壊す・書き換える系
+      "restore", "mv", "apply", "checkout-index", "gc", "prune", "sparse-checkout",
       // config は core.fsmonitor / core.hooksPath / alias 等を別リポジトリに
       // 書き込めるため、そのリポジトリで次に git を叩いた時点で任意コマンド実行に
       // つながりうる。読み取り用途 (--get 等) より書き込みの危険が大きいので
@@ -578,6 +580,29 @@ function tokenizeCommand(input: string): string[] {
 }
 
 /**
+ * インライン `-c <key>=<value>` で指定されると任意コマンド実行につながる設定キー。
+ *
+ * `core.fsmonitor` は status / index 操作で即実行されるため、ディレクトリ付け替えすら
+ * 不要でそのまま RCE になる。`config` サブコマンド経由の書き込みを塞いでいる以上、
+ * より容易なこのインライン形を開けておく理由が無い。
+ *
+ * `core.pager` / `core.editor` は同じくコマンドを走らせるが、`-c core.pager=cat` の
+ * ような正当な常用形があるため**意図的に含めない** (誤検知の害の方が大きい)。
+ */
+const RCE_CONFIG_KEY_PATTERN = /^(core\.(fsmonitor|hookspath|sshcommand)=|alias\.)/i;
+
+/** `git -c <key>=<value>` に RCE につながる設定キーが含まれるか */
+function hasDangerousInlineConfig(parts: readonly string[]): boolean {
+  for (let i = 1; i < parts.length - 1; i++) {
+    const opt = normalizeArg(parts[i]).replace(/['"]/g, "");
+    if (opt !== "-c") continue;
+    const cfg = normalizeArg(parts[i + 1]).replace(/['"]/g, "");
+    if (RCE_CONFIG_KEY_PATTERN.test(cfg)) return true;
+  }
+  return false;
+}
+
+/**
  * git global optionsをスキップしてsubcommandとその引数を検出する。
  * 例: ["git", "-c", "key=val", "push", "--force"] → { subcommand: "push", argsStartIndex: 4 }
  */
@@ -657,6 +682,10 @@ export function checkDangerousGitFlags(command: string): boolean {
   const lastSlash = name.lastIndexOf("/");
   if (lastSlash >= 0) name = name.slice(lastSlash + 1);
   if (name !== "git") return false;
+
+  // インライン -c による RCE はサブコマンドに依らないので先に判定する
+  // (`git -c core.fsmonitor=/evil status` のように読み取り系でも成立する)。
+  if (hasDangerousInlineConfig(parts)) return true;
 
   const gitSub = findGitSubcommand(parts);
   if (!gitSub) return false;

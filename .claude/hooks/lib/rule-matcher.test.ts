@@ -698,6 +698,49 @@ describe("checkDangerousGitFlags", () => {
     });
   });
 
+  // インライン -c による任意コマンド実行。core.fsmonitor 等は status / index 操作で
+  // 即実行されるので、ディレクトリ付け替えすら不要。config サブコマンド経由を
+  // 塞いでいる以上、より容易なこちらを開けておく理由が無い。
+  describe("インライン -c の RCE 設定キー", () => {
+    for (const cmd of [
+      "git -c core.fsmonitor=/evil status",
+      "git -c core.hooksPath=/evil status",
+      "git -c core.sshCommand=/evil fetch",
+      "git -c alias.x=!/evil x",
+      "git -C /tmp/x -c core.fsmonitor=/evil status",
+      "git -c CORE.FSMONITOR=/evil status",
+    ]) {
+      test(JSON.stringify(cmd), () => expect(checkDangerousGitFlags(cmd)).toBe(true));
+    }
+
+    test("通常の -c は巻き込まない", () => {
+      expect(checkDangerousGitFlags("git -c core.pager=cat log")).toBe(false);
+      expect(checkDangerousGitFlags("git -c user.name=x commit -m y")).toBe(false);
+      expect(checkDangerousGitFlags("git -c advice.detachedHead=false checkout-index")).toBe(false);
+    });
+  });
+
+  // データ喪失を伴う付け替え系の追加分。
+  describe("redirect 依存の破壊系 (データ喪失系の追加分)", () => {
+    for (const cmd of [
+      "git -C /other restore file.txt",
+      "git -C /other mv a b",
+      "git -C /other apply /tmp/p.patch",
+      "git -C /other checkout-index -f -a",
+      "git -C /other gc --prune=now",
+      "git -C /other prune",
+      "git -C /other sparse-checkout set x",
+    ]) {
+      test(JSON.stringify(cmd), () => expect(checkDangerousGitFlags(cmd)).toBe(true));
+    }
+
+    test("CWD 内なら従来通り (restore の . は元から deny)", () => {
+      expect(checkDangerousGitFlags("git restore file.txt")).toBe(false);
+      expect(checkDangerousGitFlags("git restore .")).toBe(true);
+      expect(checkDangerousGitFlags("git mv a b")).toBe(false);
+    });
+  });
+
   // `-c core.worktree=<dir>` は -c 経由だが実質ディレクトリ付け替え。
   test("-c core.worktree= もディレクトリ付け替えとして扱う", () => {
     expect(checkDangerousGitFlags("git -c core.worktree=/other rm -rf .")).toBe(true);
