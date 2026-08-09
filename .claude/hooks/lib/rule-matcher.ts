@@ -80,11 +80,6 @@ const COMMAND_PREFIXES = [
 ] as const;
 
 /**
- * シェル制御構文キーワードやコマンドプレフィックスを除去する。
- * 例: "then git push --force" → "git push --force"
- *     "env GIT_TRACE=1 git status" → "git status"
- */
-/**
  * `pos` から 1 トークン分の終端インデックスを返す (クォート / バックスラッシュ /
  * ANSI-C quoting を跨いで空白を消費する)。トークン境界の判定だけを行い、
  * 中身の復号はしない (復号は tokenizeCommand の担当)。
@@ -155,13 +150,6 @@ const GIT_REDIRECT_ENV_VARS = [
 ];
 
 /**
- * 一時環境変数前置に git のディレクトリ付け替え変数が含まれるかを判定する。
- *
- * `stripShellPrefixes` が env 前置を剥がした後に `findGitSubcommand` が走るため、
- * 剥がす前の文字列を見ないと redirect 情報が失われる
- * (`GIT_DIR=/other/.git git rm -rf .` が -C 版と違って素通りしてしまう)。
- */
-/**
  * コマンド先頭の「一時環境変数前置」区間にある `NAME=value` トークンを返す。
  *
  * シェルキーワード / コマンド前置 / リダイレクト / `env` のフラグは読み飛ばし、
@@ -203,46 +191,17 @@ function envPrefixTokens(command: string): string[] {
   return found;
 }
 
+/**
+ * 一時環境変数前置に git のディレクトリ付け替え変数が含まれるかを判定する。
+ *
+ * `stripShellPrefixes` が env 前置を剥がした後に `findGitSubcommand` が走るため、
+ * 剥がす前の文字列を見ないと redirect 情報が失われる
+ * (`GIT_DIR=/other/.git git rm -rf .` が -C 版と違って素通りしてしまう)。
+ */
 function hasGitRedirectEnv(command: string): boolean {
-  const tokens = tokenizeCommand(command.trim());
-
-  for (let i = 0; i < tokens.length; i++) {
-    const token = tokens[i];
-
-    // 先頭のリダイレクトは前置区間の一部として読み飛ばす。
-    // 演算子だけのトークン (`>` `2>&1` の前半など) は次のトークンが対象なので
-    // それも消費する (`> /dev/null GIT_DIR=... git ...`)。
-    const redirectTok = /^(\d*(?:&>>|&>|>>|>&|<>|>|<))(.*)$/.exec(token);
-    if (redirectTok) {
-      if (redirectTok[2] === "") i++;
-      continue;
-    }
-
-    const eq = token.indexOf("=");
-    if (eq > 0 && /^[A-Za-z_][A-Za-z0-9_]*$/.test(token.slice(0, eq))) {
-      if (GIT_REDIRECT_ENV_VARS.includes(token.slice(0, eq))) return true;
-      continue;
-    }
-    // `env -u NAME` / `env --unset NAME` は次のトークンを引数として消費する。
-    // 飛ばさないとその引数 (NAME) を素のトークンと誤認して打ち切ってしまい、
-    // 後続の GIT_DIR= に到達しない。
-    if (token === "-u" || token === "--unset") { i++; continue; }
-    // 前置として読み飛ばす対象は stripShellPrefixes と揃える。揃っていないと
-    // `exec GIT_DIR=... git rm -rf .` のようにコマンド本体は正しく取り出せるのに
-    // redirect 情報だけが落ちる (非対称が穴になる)。
-    if (
-      (SHELL_KEYWORD_PREFIXES as readonly string[]).includes(token) ||
-      (COMMAND_PREFIXES as readonly string[]).includes(token) ||
-      token === "{" ||
-      token === "(" ||
-      token.startsWith("-")
-    ) {
-      continue;
-    }
-    // 素のトークンに当たったら前置区間は終わり (コマンド本体に入った)。
-    break;
-  }
-  return false;
+  return envPrefixTokens(command).some((token) =>
+    GIT_REDIRECT_ENV_VARS.includes(token.slice(0, token.indexOf("="))),
+  );
 }
 
 /**
@@ -271,6 +230,11 @@ function envAssignPrefixLength(cmd: string): number {
   return pos;
 }
 
+/**
+ * シェル制御構文キーワードやコマンドプレフィックスを除去する。
+ * 例: "then git push --force" → "git push --force"
+ *     "env GIT_TRACE=1 git status" → "git status"
+ */
 export function stripShellPrefixes(command: string): string {
   let cmd = command.trim();
 
