@@ -689,12 +689,13 @@ describe("統合テスト: settings.json ルールでの判定", () => {
     // 緩和されるのは読み取り系だけで、破壊的サブコマンドは -C を挟んでも
     // checkDangerousGitFlags が deny にする (下の deny 系テストを参照)。
     //
-    // ⚠️ ただし deny になるのは DANGEROUS_GIT_FLAGS に載っているものだけ。
-    // 表に無い破壊系 (`git -C <dir> update-ref -d ...` / `git -C <dir> stash drop` 等) は
-    // pass-through allow のままで、`-C` 緩和によって「他ディレクトリのリポジトリにも
-    // 届く」ようになっている点は受容している (CWD 相当の `git update-ref ...` は
-    // 元から pass-through allow だったため、増えたのは到達範囲のみ)。
-    // 必要になったら DANGEROUS_GIT_FLAGS に追加して塞ぐこと。
+    // CWD 内では allow されている破壊系 (`rm` / `stash drop` / `update-ref` 等) も、
+    // `-C` で付け替えるとプロジェクト外に届いてリスクの性質が変わるため、
+    // dangerousWhenRedirected ルールで付け替え時のみ deny にしている
+    // (「ディレクトリ付け替え時のみ危険なサブコマンド」のテスト群を参照)。
+    //
+    // ⚠️ deny になるのは DANGEROUS_GIT_FLAGS に載っているものだけで、この表は
+    // denylist なので網羅ではない。他の破壊系が見つかったら表に足すこと。
     test("git -C /tmp/x status", () => expect(judgeCommand("git -C /tmp/x status")).toBe("allow"));
     test("git -C /tmp/x log", () => expect(judgeCommand("git -C /tmp/x log")).toBe("allow"));
     test("git -C /tmp/x diff", () => expect(judgeCommand("git -C /tmp/x diff")).toBe("allow"));
