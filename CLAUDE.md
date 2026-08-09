@@ -184,7 +184,9 @@ ANSI-C quoting (`$'\x72eset'`)・フルパス (`/usr/bin/git`) を正規化す�
   `alias.*` は付け替えの有無によらず deny**。これらは指定しただけで任意コマンドが走る
   (`git -c core.fsmonitor=/evil status` で成立するため `-C` すら要らない)。
   `core.pager` / `core.editor` は `-c core.pager=cat` のような正当な常用形があるので
-  意図的に対象外にしている
+  意図的に対象外にしている。**環境変数経由の config 注入**
+  (`GIT_CONFIG_PARAMETERS` / `GIT_CONFIG_COUNT` + `GIT_CONFIG_KEY_N`) も同じキー集合で
+  同様に deny する (`-c` だけ塞いでも同じ RCE が通るため)
 - **付け替え時は `config` の読み取り (`--get` / `--list`) も deny になる**。
   書き込みと読み取りをフラグで見分ける実装にせず、安全側に倒した意図的な選択。
   他リポジトリの config を読む用途が稀なので、誤検知の害よりガードの単純さを取った

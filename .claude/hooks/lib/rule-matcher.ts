@@ -110,6 +110,29 @@ function scanTokenEnd(input: string, pos: number): number {
       i++; // 閉じクォート
       continue;
     }
+    // コマンド置換 $(...) はネストを数えながら跨ぐ。跨がないと
+    // `FOO=$(evil arg) git reset --hard` の値が空白で切れて残余が壊れ、
+    // 先頭トークンが git にならず最上位ガードまで落ちる。
+    if (ch === "$" && input[i + 1] === "(") {
+      let depth = 1;
+      i += 2;
+      while (i < input.length && depth > 0) {
+        if (input[i] === "\\") { i += 2; continue; }
+        if (input[i] === "(") depth++;
+        else if (input[i] === ")") depth--;
+        i++;
+      }
+      continue;
+    }
+    // バッククォートによるコマンド置換
+    if (ch === "`") {
+      i++;
+      while (i < input.length && input[i] !== "`") {
+        i += input[i] === "\\" ? 2 : 1;
+      }
+      i++;
+      continue;
+    }
     if (ch === "$" && input[i + 1] === '"') { quote = '"'; i += 2; continue; }
     if (ch === '"' || ch === "'") { quote = ch; i++; continue; }
     if (ch === "\\" && i + 1 < input.length) { i += 2; continue; }
@@ -385,6 +408,13 @@ const DANGEROUS_GIT_FLAGS: readonly DangerousGitFlagRule[] = [
     dangerousWhenRedirected: true,
   },
   {
+    // switch は通常のブランチ切替 (`switch main` / `switch -c new`) は安全だが、
+    // -f / --discard-changes はローカル変更を破棄する点で `checkout -- .` と同性質。
+    // checkout を alwaysDangerous にした以上、こちらだけ通す非対称は残せない。
+    gitSubcommands: ["switch"],
+    flags: ["-f", "--force", "--discard-changes"],
+  },
+  {
     // tag は一覧 (bare / -l) が読み取り。削除・強制付け替えが破壊的。
     gitSubcommands: ["tag"],
     dangerousWhenRedirected: true,
@@ -591,6 +621,9 @@ function tokenizeCommand(input: string): string[] {
  */
 const RCE_CONFIG_KEY_PATTERN = /^(core\.(fsmonitor|hookspath|sshcommand)=|alias\.)/i;
 
+/** 値部分を持たない「キーだけ」の形 (GIT_CONFIG_KEY_N=<key>) 用 */
+const RCE_CONFIG_KEY_ONLY_PATTERN = /^(core\.(fsmonitor|hookspath|sshcommand)|alias\..+)$/i;
+
 /** `git -c <key>=<value>` に RCE につながる設定キーが含まれるか */
 function hasDangerousInlineConfig(parts: readonly string[]): boolean {
   for (let i = 1; i < parts.length - 1; i++) {
@@ -598,6 +631,36 @@ function hasDangerousInlineConfig(parts: readonly string[]): boolean {
     if (opt !== "-c") continue;
     const cfg = normalizeArg(parts[i + 1]).replace(/['"]/g, "");
     if (RCE_CONFIG_KEY_PATTERN.test(cfg)) return true;
+  }
+  return false;
+}
+
+/**
+ * 環境変数経由の config 注入に RCE 設定キーが含まれるか。
+ *
+ * git は `-c` 以外に `GIT_CONFIG_PARAMETERS` (内部的に `-c` を渡す仕組みそのもの) と
+ * `GIT_CONFIG_COUNT` + `GIT_CONFIG_KEY_N` / `GIT_CONFIG_VALUE_N` でも config を注入できる。
+ * `-c` だけ塞いでも `core.fsmonitor` を仕込めば `git status` だけで任意コマンドが走るため、
+ * 同じクラスとして扱う。
+ */
+function hasDangerousConfigEnv(command: string): boolean {
+  for (const token of tokenizeCommand(command.trim())) {
+    const eq = token.indexOf("=");
+    if (eq <= 0) continue;
+    const name = token.slice(0, eq);
+    const value = token.slice(eq + 1).replace(/['"]/g, "");
+
+    // GIT_CONFIG_PARAMETERS は "'key=value' 'key2=value2'" 形式
+    if (/^GIT_CONFIG_PARAMETERS$/i.test(name)) {
+      for (const pair of value.split(/\s+/)) {
+        if (RCE_CONFIG_KEY_PATTERN.test(pair)) return true;
+      }
+      continue;
+    }
+    // GIT_CONFIG_KEY_<n>=<key>
+    if (/^GIT_CONFIG_KEY_\d+$/i.test(name) && RCE_CONFIG_KEY_ONLY_PATTERN.test(value)) {
+      return true;
+    }
   }
   return false;
 }
@@ -685,7 +748,7 @@ export function checkDangerousGitFlags(command: string): boolean {
 
   // インライン -c による RCE はサブコマンドに依らないので先に判定する
   // (`git -c core.fsmonitor=/evil status` のように読み取り系でも成立する)。
-  if (hasDangerousInlineConfig(parts)) return true;
+  if (hasDangerousInlineConfig(parts) || hasDangerousConfigEnv(command)) return true;
 
   const gitSub = findGitSubcommand(parts);
   if (!gitSub) return false;

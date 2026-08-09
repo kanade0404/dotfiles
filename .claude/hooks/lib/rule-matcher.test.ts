@@ -458,6 +458,15 @@ describe("checkDangerousGitFlags", () => {
       test("空白入り値でも読み取り系は false", () => {
         expect(checkDangerousGitFlags("FOO='bar baz' git status")).toBe(false);
       });
+
+      // コマンド置換の中の空白でも値が切れないこと。切れると残余が壊れ、
+      // 最上位ガード (alwaysDangerous) すら false に落ちる。
+      test("コマンド置換 / バッククォートを跨いで値を消費する", () => {
+        expect(checkDangerousGitFlags("FOO=$(evil arg) git reset --hard")).toBe(true);
+        expect(checkDangerousGitFlags("FOO=$(evil) git reset --hard")).toBe(true);
+        expect(checkDangerousGitFlags("FOO=`evil arg` git reset --hard")).toBe(true);
+        expect(checkDangerousGitFlags("FOO=$(a $(b c)) git reset --hard")).toBe(true);
+      });
     });
   });
 
@@ -713,6 +722,35 @@ describe("checkDangerousGitFlags", () => {
       test(JSON.stringify(cmd), () => expect(checkDangerousGitFlags(cmd)).toBe(true));
     }
 
+    // git は環境変数経由でも config を注入できる。-c だけ塞いでも同じ RCE が通る。
+    test("環境変数経由の config 注入も塞ぐ", () => {
+      expect(
+        checkDangerousGitFlags(
+          "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.fsmonitor GIT_CONFIG_VALUE_0=/evil git status",
+        ),
+      ).toBe(true);
+      expect(
+        checkDangerousGitFlags("GIT_CONFIG_PARAMETERS=\"'core.fsmonitor=/evil'\" git status"),
+      ).toBe(true);
+      expect(
+        checkDangerousGitFlags("GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.x GIT_CONFIG_VALUE_0=!/evil git x"),
+      ).toBe(true);
+      expect(
+        checkDangerousGitFlags("env GIT_CONFIG_PARAMETERS=\"'core.hooksPath=/evil'\" git status"),
+      ).toBe(true);
+    });
+
+    test("config 注入 env でも無害なキーは false", () => {
+      expect(
+        checkDangerousGitFlags(
+          "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=user.name GIT_CONFIG_VALUE_0=x git status",
+        ),
+      ).toBe(false);
+      expect(
+        checkDangerousGitFlags("GIT_CONFIG_PARAMETERS=\"'core.pager=cat'\" git log"),
+      ).toBe(false);
+    });
+
     test("通常の -c は巻き込まない", () => {
       expect(checkDangerousGitFlags("git -c core.pager=cat log")).toBe(false);
       expect(checkDangerousGitFlags("git -c user.name=x commit -m y")).toBe(false);
@@ -816,8 +854,17 @@ describe("checkDangerousGitFlags", () => {
     expect(checkDangerousGitFlags("git -C /tmp/x diff")).toBe(false);
   });
 
-  test("git switch は対象外（allow のまま）", () => {
+  test("git switch はブランチ切替なら対象外（allow のまま）", () => {
     expect(checkDangerousGitFlags("git -C /tmp/x switch main")).toBe(false);
+    expect(checkDangerousGitFlags("git switch -c feature/x")).toBe(false);
+  });
+
+  // switch -f / --discard-changes は checkout -- . と同じくローカル変更を破棄する。
+  // checkout を alwaysDangerous にした以上、こちらだけ通す非対称は残せない。
+  test("git switch の破壊フラグは危険", () => {
+    expect(checkDangerousGitFlags("git switch -f main")).toBe(true);
+    expect(checkDangerousGitFlags("git switch --discard-changes main")).toBe(true);
+    expect(checkDangerousGitFlags("git -C /other switch -f main")).toBe(true);
   });
 });
 
