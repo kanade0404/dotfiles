@@ -114,6 +114,13 @@ security add-generic-password -s "claude-code-otel" -a "$USER" -w '<token>' -U
 - `otelHeadersHelper` の値は「実ファイルなら直接 exec、そうでなければ `/bin/sh -c` で実行」という
   2 段構えで解釈されるためシェル式を書ける。ローカルは `$HOME/.claude/hooks/otel-headers.sh`
   (install.sh が貼る symlink)、cloud は `git rev-parse --show-toplevel` で clone root を解決する
+- ⚠️ リポジトリ内フォールバックは **origin が `kanade0404/dotfiles` の場合に限定**している。
+  この `settings.json` は user settings としてローカルの全プロジェクトに効くため、無条件に
+  `git rev-parse --show-toplevel` を使うと、`$HOME` 側の helper が不在・非実行になった状態で
+  任意の git リポジトリを開いたときに、**そのリポジトリが同梱する `.claude/hooks/otel-headers.sh`
+  を無確認で `exec` する**経路になる (helper 実行に trust プロンプトは無い)。
+  `git config --get remote.origin.url` を照合して自リポジトリだけに絞り、一致しなければ
+  `{}` を返して静かに続行する (cloud session は origin が一致するのでこれまで通り動く)
 - helper には引数も stdin も渡されず、`CLAUDE_PROJECT_DIR` も渡されない。実行ビット必須 (無いと exit 126)。
   呼び出しは既定 29 分デバウンス / 1 回 30 秒 timeout
 - ⚠️ `otelHeadersHelper` は**公式ドキュメントに記載が無い**。上記の「実ファイルなら直接 exec /
