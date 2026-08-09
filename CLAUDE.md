@@ -123,11 +123,13 @@ security add-generic-password -s "claude-code-otel" -a "$USER" -w '<token>' -U
   `{}` を返して静かに続行する (cloud session は origin が一致するのでこれまで通り動く)
 - helper には引数も stdin も渡されず、`CLAUDE_PROJECT_DIR` も渡されない。実行ビット必須 (無いと exit 126)。
   呼び出しは既定 29 分デバウンス / 1 回 30 秒 timeout
-- ⚠️ `otelHeadersHelper` は**公式ドキュメントに記載が無い**。上記の「実ファイルなら直接 exec /
-  そうでなければ `/bin/sh -c`」「29 分デバウンス」「30 秒 timeout」はいずれも
-  **Claude Code 2.1.226 で実測した挙動**であり、将来のリリースで無言に変わりうる。
-  挙動が変わった場合は helper が呼ばれない / タイムアウトする形で現れるので、
-  バージョンを上げた際は改めて確認すること
+- ⚠️ `otelHeadersHelper` は**キー自体は公式ドキュメント (Monitoring usage) に記載がある**。
+  「値は実行ファイルのパスでも引数付きのシェルコマンドラインでもよい」「既定 29 分間隔で
+  再実行される (`CLAUDE_CODE_OTEL_HEADERS_HELPER_DEBOUNCE_MS` で変更可)」までが公式記載。
+  一方、**「実ファイルなら直接 exec / そうでなければ `/bin/sh -c`」という非 Windows での
+  解釈のされ方と「1 回 30 秒 timeout」は公式に記載が無く、Claude Code 2.1.226 での実測値**。
+  この 2 点は将来のリリースで無言に変わりうる (helper が呼ばれない / タイムアウトする形で
+  現れる) ので、バージョンを上げた際は改めて確認すること
 - **cloud session (claude.ai/code) は `~/.claude/settings.json` (user settings) を読まない**。
   リポジトリ内の `.claude/settings.json` のみ有効なので、**この dotfiles リポジトリ以外の
   cloud session ではテレメトリ設定は効かない**
@@ -141,10 +143,12 @@ security add-generic-password -s "claude-code-otel" -a "$USER" -w '<token>' -U
   業務リポジトリで実行したコマンドも export される (`OTEL_LOG_USER_PROMPTS=0` により
   プロンプト本文は除外)。この範囲で export することを承知のうえで `1` にしている
 - ⚠️ **このリポジトリは PUBLIC**。`.claude/settings.json` は clone した第三者にとって
-  project settings にもなるため、その人が dotfiles ディレクトリで Claude Code を起動すると
+  project settings にもなるため、その人が dotfiles ディレクトリで Claude Code を起動し、
+  初回の **workspace trust (このフォルダのファイルを信頼するか) を承認した後は**
   テレメトリ export が試みられる。トークンを持たないため `Authorization` ヘッダーは付かないが、
-  **リクエスト自体は送信される**。受信側 (API Gateway) の authorizer で無認証リクエストを
-  弾く前提の設計であり、設定ファイル側ではガードしていない
+  **リクエスト自体は送信される** (trust を承認しなければ project settings の `env` は
+  有効にならないので、無条件に送信されるわけではない)。受信側 (API Gateway) の authorizer で
+  無認証リクエストを弾く前提の設計であり、設定ファイル側ではガードしていない
 
 ## herdr hook スクリプト (SessionStart → pane/agent通知)
 
