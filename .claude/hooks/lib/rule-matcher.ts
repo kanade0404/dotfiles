@@ -140,12 +140,27 @@ const GIT_REDIRECT_ENV_VARS = [
 function hasGitRedirectEnv(command: string): boolean {
   const tokens = tokenizeCommand(command.trim());
 
-  for (const token of tokens) {
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+
+    // 先頭のリダイレクトは前置区間の一部として読み飛ばす。
+    // 演算子だけのトークン (`>` `2>&1` の前半など) は次のトークンが対象なので
+    // それも消費する (`> /dev/null GIT_DIR=... git ...`)。
+    const redirectTok = /^(\d*(?:&>>|&>|>>|>&|<>|>|<))(.*)$/.exec(token);
+    if (redirectTok) {
+      if (redirectTok[2] === "") i++;
+      continue;
+    }
+
     const eq = token.indexOf("=");
     if (eq > 0 && /^[A-Za-z_][A-Za-z0-9_]*$/.test(token.slice(0, eq))) {
       if (GIT_REDIRECT_ENV_VARS.includes(token.slice(0, eq))) return true;
       continue;
     }
+    // `env -u NAME` / `env --unset NAME` は次のトークンを引数として消費する。
+    // 飛ばさないとその引数 (NAME) を素のトークンと誤認して打ち切ってしまい、
+    // 後続の GIT_DIR= に到達しない。
+    if (token === "-u" || token === "--unset") { i++; continue; }
     // `env` とそのフラグは読み飛ばす。それ以外の素のトークンに当たったら
     // 前置区間は終わり (コマンド本体に入った)。
     if (token === "env" || token.startsWith("-")) continue;
@@ -226,6 +241,16 @@ export function stripShellPrefixes(command: string): string {
       continue;
     }
 
+    // 先頭のリダイレクト演算子 (`>/dev/null cmd` / `2>&1 cmd` / `>>out.txt cmd`)。
+    // 剥がさないと先頭トークンが `>/dev/null` になり、コマンド名判定が
+    // 素通りする (deny リストもプレフィックス一致なので当たらない)。
+    const redirectMatch = cmd.match(/^\d*(?:&>>|&>|>>|>&|<>|>|<)\s*\S*\s+(?=\S)/);
+    if (redirectMatch) {
+      cmd = cmd.slice(redirectMatch[0].length);
+      changed = true;
+      continue;
+    }
+
     for (const prefix of COMMAND_PREFIXES) {
       if (cmd === prefix || cmd.startsWith(prefix + " ")) {
         const wasEnv = prefix === "env";
@@ -294,6 +319,15 @@ type DangerousGitFlagRule = {
    * プロジェクト外の任意リポジトリに届いてリスクの性質が変わるものに使う。
    */
   readonly dangerousWhenRedirected?: boolean;
+  /**
+   * `dangerousWhenRedirected` と併用。第 1 位置引数 (サブアクション) がここに
+   * 挙がっていれば読み取りとみなし危険扱いしない。**挙がっていなければ危険**
+   * (未知のサブアクションは安全側=危険側に倒す denylist ではなく allowlist)。
+   * 位置引数が無い場合の既定は `bareIsReadOnly` で決める。
+   */
+  readonly readOnlySubActions?: readonly string[];
+  /** 位置引数無し (`git stash` 等) が読み取り相当かどうか。既定は false=危険 */
+  readonly bareIsReadOnly?: boolean;
 };
 
 const DANGEROUS_GIT_FLAGS: readonly DangerousGitFlagRule[] = [
@@ -314,28 +348,33 @@ const DANGEROUS_GIT_FLAGS: readonly DangerousGitFlagRule[] = [
     // プロジェクト外の任意リポジトリにも同じ破壊的操作が届くため、
     // 付け替えがある場合に限って危険扱いにする。
     // (denylist なので網羅ではない。他の破壊系が見つかったらここに足す)
-    gitSubcommands: ["rm", "update-ref", "clean", "filter-branch", "symbolic-ref"],
+    gitSubcommands: [
+      "rm", "update-ref", "clean", "filter-branch", "symbolic-ref",
+      // 付け替え先リポジトリにコミットや作業ツリーを作る系
+      "cherry-pick", "revert", "worktree",
+    ],
     dangerousWhenRedirected: true,
   },
   {
-    // stash は list / show のような読み取りサブコマンドがあるので、
-    // 破壊的な位置引数を伴う場合だけ危険扱いにする。
-    // push は対象リポジトリの作業ツリーを退避で書き換えるので含める。
+    // stash は list / show だけが読み取り。引数無しは stash push の省略形なので危険。
     gitSubcommands: ["stash"],
     dangerousWhenRedirected: true,
-    positionalArgs: ["drop", "clear", "push", "pop", "save"],
+    readOnlySubActions: ["list", "show"],
+    bareIsReadOnly: false,
   },
   {
-    // reflog は show が読み取り。expire / delete は到達可能性を壊す。
+    // reflog は引数無しだと show 相当なので読み取り。expire / delete が破壊的。
     gitSubcommands: ["reflog"],
     dangerousWhenRedirected: true,
-    positionalArgs: ["expire", "delete"],
+    readOnlySubActions: ["show", "exists"],
+    bareIsReadOnly: true,
   },
   {
-    // notes も list / show は読み取り。
+    // notes は引数無しで一覧表示。
     gitSubcommands: ["notes"],
     dangerousWhenRedirected: true,
-    positionalArgs: ["prune", "remove"],
+    readOnlySubActions: ["list", "show", "get-ref"],
+    bareIsReadOnly: true,
   },
   {
     gitSubcommands: ["commit"],
@@ -597,6 +636,18 @@ export function checkDangerousGitFlags(command: string): boolean {
     // 条件が無いルールだけ即 true にして、あるものは下の通常判定に流す。
     if (rule.dangerousWhenRedirected) {
       if (!redirected) continue;
+
+      // サブアクションの allowlist を持つルールは、それが読み取りなら安全。
+      if (rule.readOnlySubActions) {
+        const subAction = args.map(normalizeArg).find((a) => !a.startsWith("-"));
+        if (subAction === undefined) {
+          if (rule.bareIsReadOnly) continue;
+          return true;
+        }
+        if (rule.readOnlySubActions.includes(subAction)) continue;
+        return true;
+      }
+
       if (!rule.flags && !rule.prefixFlags && !rule.positionalArgs) return true;
     }
 

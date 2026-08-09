@@ -624,6 +624,57 @@ describe("checkDangerousGitFlags", () => {
         expect(checkDangerousGitFlags("git stash push")).toBe(false);
       });
     });
+
+    // 他リポジトリにコミット / 作業ツリーを作る系と、省略形の stash。
+    describe("redirect 依存の破壊系 (書き換え・生成系)", () => {
+      for (const cmd of [
+        "git -C /tmp/x cherry-pick deadbeef",
+        "git -C /tmp/x revert HEAD",
+        "git -C /tmp/x worktree add /tmp/y",
+        "git -C /tmp/x stash", // 引数無し = stash push の省略形
+      ]) {
+        test(JSON.stringify(cmd), () => expect(checkDangerousGitFlags(cmd)).toBe(true));
+      }
+
+      test("既定が読み取りのものは引数無しでも false", () => {
+        // 引数無しの reflog は reflog show 相当、notes は一覧表示
+        expect(checkDangerousGitFlags("git -C /tmp/x reflog")).toBe(false);
+        expect(checkDangerousGitFlags("git -C /tmp/x notes")).toBe(false);
+      });
+
+      test("CWD 内なら従来通り false", () => {
+        expect(checkDangerousGitFlags("git cherry-pick deadbeef")).toBe(false);
+        expect(checkDangerousGitFlags("git stash")).toBe(false);
+      });
+    });
+  });
+
+  // 先頭のリダイレクト演算子。`>/dev/null git reset --hard` は parts[0] が
+  // `>/dev/null` になって入口の git 判定で早期 return していた。
+  // deny リストもプレフィックス一致なので当たらない。
+  describe("先頭リダイレクト演算子でも迂回できない", () => {
+    for (const cmd of [
+      ">/dev/null git reset --hard",
+      "2>/dev/null git push --force origin main",
+      ">/dev/null git -C /tmp/x reset --hard",
+      "> /dev/null git reset --hard",
+      ">>out.txt git reset --hard",
+      "2>&1 git reset --hard",
+      ">/dev/null FOO=bar git reset --hard",
+      ">/dev/null GIT_DIR=/tmp/x/.git git rm -rf .",
+    ]) {
+      test(JSON.stringify(cmd), () => expect(checkDangerousGitFlags(cmd)).toBe(true));
+    }
+
+    test("リダイレクト付きでも読み取り系は false", () => {
+      expect(checkDangerousGitFlags(">/dev/null git status")).toBe(false);
+    });
+  });
+
+  test("env -u NAME を挟んでも redirect 検出が落ちない", () => {
+    expect(checkDangerousGitFlags("env -u FOO GIT_DIR=/tmp/x/.git git rm -rf .")).toBe(true);
+    expect(checkDangerousGitFlags("env --unset FOO GIT_DIR=/tmp/x/.git git rm -rf .")).toBe(true);
+    expect(checkDangerousGitFlags("env --unset=FOO GIT_DIR=/tmp/x/.git git rm -rf .")).toBe(true);
   });
 
   test("読み取り系は -C 付きでも false", () => {
