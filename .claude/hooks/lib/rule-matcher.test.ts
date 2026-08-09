@@ -461,6 +461,19 @@ describe("統合テスト: settings.json ルールでの判定", () => {
     // `Bash(ls *)` は settings.json の deny から意図的に除外した (allow にも無く未マッチ)。
     test("ls", () => expect(judgeCommand("ls")).toBe("allow"));
     test("ls -la", () => expect(judgeCommand("ls -la")).toBe("allow"));
+
+    // `Bash(git -C *)` も deny から意図的に除外した。別ディレクトリに対する
+    // 読み取り系 git を通すための緩和で、以下はその意図を固定するテスト。
+    //
+    // ⚠️ 破壊的サブコマンド (`git -C <dir> reset|rebase|checkout`) は現状この緩和の
+    // 巻き添えで pass-through allow になっている。deny パターンはプレフィックス一致
+    // なので `git -C ... reset` にマッチせず、`checkDangerousGitFlags` の
+    // DANGEROUS_GIT_FLAGS 表にも reset/rebase/checkout が無いため。
+    // ここでは「意図した挙動」として固定せず、#175 で -C の有無によらず捕捉する
+    // 方向で塞ぐ。
+    test("git -C /tmp/x status", () => expect(judgeCommand("git -C /tmp/x status")).toBe("allow"));
+    test("git -C /tmp/x log", () => expect(judgeCommand("git -C /tmp/x log")).toBe("allow"));
+    test("git -C /tmp/x diff", () => expect(judgeCommand("git -C /tmp/x diff")).toBe("allow"));
   });
 
   describe("複合コマンド（パイプ / && / リダイレクト）", () => {
