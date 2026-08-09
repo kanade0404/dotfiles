@@ -430,8 +430,6 @@ describe("統合テスト: settings.json ルールでの判定", () => {
   });
 
   describe("deny 系: 禁止コマンド", () => {
-    test("ls", () => expect(judgeCommand("ls")).toBe("deny"));
-    test("ls -la", () => expect(judgeCommand("ls -la")).toBe("deny"));
     test("cat foo.txt", () => expect(judgeCommand("cat foo.txt")).toBe("deny"));
     test("cd /tmp", () => expect(judgeCommand("cd /tmp")).toBe("deny"));
     test("rm -rf /tmp", () => expect(judgeCommand("rm -rf /tmp")).toBe("deny"));
@@ -460,6 +458,9 @@ describe("統合テスト: settings.json ルールでの判定", () => {
   describe("未マッチ → pass-through allow", () => {
     test("python script.py", () => expect(judgeCommand("python script.py")).toBe("allow"));
     test("node index.js", () => expect(judgeCommand("node index.js")).toBe("allow"));
+    // `Bash(ls *)` は settings.json の deny から意図的に除外した (allow にも無く未マッチ)。
+    test("ls", () => expect(judgeCommand("ls")).toBe("allow"));
+    test("ls -la", () => expect(judgeCommand("ls -la")).toBe("allow"));
   });
 
   describe("複合コマンド（パイプ / && / リダイレクト）", () => {
@@ -483,8 +484,9 @@ describe("統合テスト: settings.json ルールでの判定", () => {
       expect(judgeCommand("git diff HEAD~1 2>&1 | head -20")).toBe("allow");
     });
 
-    test("git status && ls → deny (ls が deny)", () => {
-      expect(judgeCommand("git status && ls")).toBe("deny");
+    // `Bash(ls *)` を deny から意図的に除外したため、ls は未マッチ pass-through allow。
+    test("git status && ls → allow (両方 allow)", () => {
+      expect(judgeCommand("git status && ls")).toBe("allow");
     });
 
     test("pnpm build 2>&1 | tail -20 → allow (pnpm は未マッチで pass-through)", () => {
