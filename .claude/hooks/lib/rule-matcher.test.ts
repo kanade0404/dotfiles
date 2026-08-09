@@ -431,6 +431,28 @@ describe("checkDangerousGitFlags", () => {
     test("ANSI-C quoting でも読み取り系は false", () => {
       expect(checkDangerousGitFlags("git $'status'")).toBe(false);
     });
+
+    // bash は $'...' 内のエスケープシーケンスを実際に展開する。リテラル文字形だけを
+    // 通してもエスケープ形が素通りするので、デコードまでやらないとガードにならない。
+    describe("エスケープシーケンスを復号する", () => {
+      for (const [cmd, why] of [
+        ["git $'\\x72eset' --hard", "\\xHH (16進)"],
+        ["git $'\\162eset' --hard", "\\nnn (8進)"],
+        ["git $'\\u0072eset' --hard", "\\uHHHH"],
+        ["git $'\\U00000072eset' --hard", "\\UHHHHHHHH"],
+        ["git push $'\\x2d\\x2dforce' origin main", "16進を連結して --force"],
+        ["git $'\\x2dC' /tmp/x reset --hard", "global option 側を 16進で"],
+        ["git commit $'\\x2d\\x2dno\\x2dverify' -m x", "16進で --no-verify"],
+      ] as const) {
+        test(`${why}: ${JSON.stringify(cmd)}`, () =>
+          expect(checkDangerousGitFlags(cmd)).toBe(true));
+      }
+
+      test("復号しても読み取り系は false", () => {
+        // $'\x73tatus' → "status"
+        expect(checkDangerousGitFlags("git $'\\x73tatus'")).toBe(false);
+      });
+    });
   });
 
   // コマンド名側の迂回。matchCommand は checkDangerousGitFlags に正規化前の生コマンドを
@@ -620,6 +642,23 @@ describe("統合テスト: settings.json ルールでの判定", () => {
       expect(judgeCommand("git $'reset' --hard")).toBe("deny"));
     test("ANSI-C quoting: git push $'--force' origin main", () =>
       expect(judgeCommand("git push $'--force' origin main")).toBe("deny"));
+    test("ANSI-C escape: git $'\\x72eset' --hard", () =>
+      expect(judgeCommand("git $'\\x72eset' --hard")).toBe("deny"));
+    test("ANSI-C escape: git push $'\\x2d\\x2dforce' origin main", () =>
+      expect(judgeCommand("git push $'\\x2d\\x2dforce' origin main")).toBe("deny"));
+  });
+
+  describe("deny 系: git branch の強制付け替え", () => {
+    test("git branch -f main HEAD~10", () =>
+      expect(judgeCommand("git branch -f main HEAD~10")).toBe("deny"));
+    test("git branch --force main HEAD~10", () =>
+      expect(judgeCommand("git branch --force main HEAD~10")).toBe("deny"));
+    test("git -C /tmp/x branch -f main HEAD~10", () =>
+      expect(judgeCommand("git -C /tmp/x branch -f main HEAD~10")).toBe("deny"));
+    test("git branch (一覧) は allow のまま", () =>
+      expect(judgeCommand("git branch")).toBe("allow"));
+    test("git branch feature/x は allow のまま", () =>
+      expect(judgeCommand("git branch feature/x")).toBe("allow"));
   });
 
   describe("複合コマンド（パイプ / && / リダイレクト）", () => {

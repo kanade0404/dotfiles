@@ -218,8 +218,11 @@ const DANGEROUS_GIT_FLAGS: readonly DangerousGitFlagRule[] = [
     flags: ["-f", "--force", "-d", "-x", "-X"],
   },
   {
+    // -f / --force は `git branch -f <name> <start>` で既存ブランチのポインタを
+    // 強制的に付け替えられる (commit を失いうる)。settings.json 側は
+    // `Bash(git branch *)` を allow しているので、ここで拾わないと素通りする。
     gitSubcommands: ["branch"],
-    flags: ["-D", "-M", "-m", "--move", "--move-force"],
+    flags: ["-D", "-M", "-m", "--move", "--move-force", "-f", "--force"],
   },
   {
     gitSubcommands: ["restore"],
@@ -244,6 +247,45 @@ function normalizeArg(arg: string): string {
   // バックスラッシュエスケープを除去（\- → -）
   s = s.replace(/\\(.)/g, "$1");
   return s;
+}
+
+/** ANSI-C quoting ($'...') の 1 エスケープを復号する。`\` の次の位置を受け取る。 */
+function decodeAnsiCEscape(input: string, pos: number): { text: string; next: number } {
+  const ch = input[pos];
+
+  // \xHH — 16進 1〜2 桁
+  if (ch === "x") {
+    const m = /^[0-9a-fA-F]{1,2}/.exec(input.slice(pos + 1));
+    if (m) return { text: String.fromCharCode(parseInt(m[0], 16)), next: pos + 1 + m[0].length };
+  }
+  // \uHHHH / \UHHHHHHHH
+  if (ch === "u" || ch === "U") {
+    const width = ch === "u" ? 4 : 8;
+    const m = new RegExp(`^[0-9a-fA-F]{1,${width}}`).exec(input.slice(pos + 1));
+    if (m) {
+      const code = parseInt(m[0], 16);
+      // 範囲外は復号せずリテラル扱い（例外を投げない）
+      if (code <= 0x10ffff) {
+        return { text: String.fromCodePoint(code), next: pos + 1 + m[0].length };
+      }
+    }
+  }
+  // \nnn — 8進 1〜3 桁
+  if (ch >= "0" && ch <= "7") {
+    const m = /^[0-7]{1,3}/.exec(input.slice(pos));
+    if (m) return { text: String.fromCharCode(parseInt(m[0], 8) & 0xff), next: pos + m[0].length };
+  }
+
+  const simple: Record<string, string> = {
+    a: "\x07", b: "\b", e: "\x1b", E: "\x1b", f: "\f",
+    n: "\n", r: "\r", t: "\t", v: "\v",
+    "\\": "\\", "'": "'", '"': '"', "?": "?",
+  };
+  if (ch in simple) return { text: simple[ch], next: pos + 1 };
+
+  // 未知のエスケープは bash 同様バックスラッシュごとリテラル扱い…ではなく、
+  // ここでは「次の 1 文字」を採用する (従来 normalizeArg と同じ保守的な挙動)。
+  return { text: ch ?? "", next: pos + 1 };
 }
 
 /**
@@ -279,12 +321,19 @@ function tokenizeCommand(input: string): string[] {
 
     // ANSI-C quoting ($'...')。`$` を素の文字として積むとトークンが `$--force` に
     // 化けて、以降の normalizeArg の ANSI-C 分岐 (^\$'(.*)'$) にも入らなくなり、
-    // フラグ比較から完全に漏れる。ここで剥がして中身だけを残す。
+    // フラグ比較から完全に漏れる。ここで剥がして中身を復号する。
+    // 復号まで行わないと `$'\x72eset'` (= reset) や `$'\x2d\x2dforce'` (= --force) の
+    // ように、bash が展開する形だけがガードを素通りする。
     if (ch === "$" && input[i + 1] === "'") {
       started = true;
       let j = i + 2;
       while (j < input.length && input[j] !== "'") {
-        if (input[j] === "\\" && j + 1 < input.length) { current += input[j + 1]; j += 2; continue; }
+        if (input[j] === "\\" && j + 1 < input.length) {
+          const dec = decodeAnsiCEscape(input, j + 1);
+          current += dec.text;
+          j = dec.next;
+          continue;
+        }
         current += input[j];
         j++;
       }
