@@ -120,7 +120,11 @@ security add-generic-password -s "claude-code-otel" -a "$USER" -w '<token>' -U
   任意の git リポジトリを開いたときに、**そのリポジトリが同梱する `.claude/hooks/otel-headers.sh`
   を無確認で `exec` する**経路になる (helper 実行に trust プロンプトは無い)。
   `git config --get remote.origin.url` を照合して自リポジトリだけに絞り、一致しなければ
-  `{}` を返して静かに続行する (cloud session は origin が一致するのでこれまで通り動く)
+  `{}` を返して静かに続行する (cloud session は origin が一致するのでこれまで通り動く)。
+  照合は**部分一致ではなく canonical な URL の完全一致列挙**にすること。
+  `*kanade0404/dotfiles*` のような部分一致だと `evilkanade0404/dotfiles` や
+  `dotfiles-evil`、`evil.example.com/kanade0404/dotfiles` にもマッチし、
+  ガードを入れた意味が無くなる
 - helper には引数も stdin も渡されず、`CLAUDE_PROJECT_DIR` も渡されない。実行ビット必須 (無いと exit 126)。
   呼び出しは既定 29 分デバウンス / 1 回 30 秒 timeout
 - ⚠️ `otelHeadersHelper` は**キー自体は公式ドキュメント (Monitoring usage) に記載がある**。

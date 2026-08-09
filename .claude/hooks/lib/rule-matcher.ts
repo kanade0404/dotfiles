@@ -264,7 +264,12 @@ function findGitSubcommand(parts: readonly string[]): {
 
   let i = 1;
   while (i < parts.length) {
-    const p = parts[i];
+    // subcommand / global option の判定はクォートを剥がしてから行う。
+    // `git 'reset' --hard` や `git re'set' --hard` のようにシェルが解釈すれば
+    // 同じコマンドになる形で危険サブコマンドの判定を迂回されるのを防ぐ。
+    // git の subcommand / global option は素の単語なので、途中のクォートも含めて
+    // 全て除去してよい。
+    const p = normalizeArg(parts[i]).replace(/['"]/g, "");
     // 2トークン消費するglobal options
     if (twoTokenGlobalOpts.includes(p) && i + 1 < parts.length) { i += 2; continue; }
     // --key=value 形式のglobal options
@@ -287,7 +292,10 @@ function findGitSubcommand(parts: readonly string[]): {
  */
 export function checkDangerousGitFlags(command: string): boolean {
   const stripped = stripShellPrefixes(command);
-  if (!stripped.startsWith("git ")) return false;
+  // 区切りはスペースとは限らない (`git\t-C /tmp/x reset --hard`)。
+  // 以降の split は /\s+/ なのでタブでも解析できるが、この入口の判定を
+  // リテラルスペース固定にするとタブ区切りが丸ごと素通りしてしまう。
+  if (!/^git\s/.test(stripped)) return false;
 
   // 空クォートペアを除去（""--force → --force）
   const sanitized = stripped.replace(/""|''/g, "");

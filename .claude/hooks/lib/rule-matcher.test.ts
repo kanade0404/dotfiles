@@ -396,6 +396,23 @@ describe("checkDangerousGitFlags", () => {
     }
   });
 
+  // 区切り文字がタブでも、サブコマンドがクォートされていても迂回できないこと。
+  // どちらも settings.json の deny (リテラルスペース前提のプレフィックス一致) では
+  // 捕捉できないため、このガードが最後の砦になる。
+  describe("タブ区切り / クォートでも迂回できない", () => {
+    for (const cmd of [
+      "git\t-C /tmp/x reset --hard",
+      "git\treset --hard",
+      "git\tpush --force origin main",
+      "git 'reset' --hard",
+      'git "reset" --hard',
+      "git re'set' --hard",
+      "git -C /tmp/x 'checkout' -- .",
+    ]) {
+      test(JSON.stringify(cmd), () => expect(checkDangerousGitFlags(cmd)).toBe(true));
+    }
+  });
+
   test("読み取り系は -C 付きでも false", () => {
     expect(checkDangerousGitFlags("git -C /tmp/x status")).toBe(false);
     expect(checkDangerousGitFlags("git -C /tmp/x log")).toBe(false);
@@ -500,6 +517,13 @@ describe("統合テスト: settings.json ルールでの判定", () => {
     //
     // 緩和されるのは読み取り系だけで、破壊的サブコマンドは -C を挟んでも
     // checkDangerousGitFlags が deny にする (下の deny 系テストを参照)。
+    //
+    // ⚠️ ただし deny になるのは DANGEROUS_GIT_FLAGS に載っているものだけ。
+    // 表に無い破壊系 (`git -C <dir> update-ref -d ...` / `git -C <dir> stash drop` 等) は
+    // pass-through allow のままで、`-C` 緩和によって「他ディレクトリのリポジトリにも
+    // 届く」ようになっている点は受容している (CWD 相当の `git update-ref ...` は
+    // 元から pass-through allow だったため、増えたのは到達範囲のみ)。
+    // 必要になったら DANGEROUS_GIT_FLAGS に追加して塞ぐこと。
     test("git -C /tmp/x status", () => expect(judgeCommand("git -C /tmp/x status")).toBe("allow"));
     test("git -C /tmp/x log", () => expect(judgeCommand("git -C /tmp/x log")).toBe("allow"));
     test("git -C /tmp/x diff", () => expect(judgeCommand("git -C /tmp/x diff")).toBe("allow"));
@@ -512,6 +536,10 @@ describe("統合テスト: settings.json ルールでの判定", () => {
       expect(judgeCommand("git -C /tmp/x rebase main")).toBe("deny"));
     test("git -C /tmp/x checkout -- .", () =>
       expect(judgeCommand("git -C /tmp/x checkout -- .")).toBe("deny"));
+    test("タブ区切り: git\\t-C /tmp/x reset --hard", () =>
+      expect(judgeCommand("git\t-C /tmp/x reset --hard")).toBe("deny"));
+    test("クォート: git 'reset' --hard", () =>
+      expect(judgeCommand("git 'reset' --hard")).toBe("deny"));
   });
 
   describe("複合コマンド（パイプ / && / リダイレクト）", () => {

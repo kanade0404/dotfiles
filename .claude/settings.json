@@ -306,7 +306,7 @@
     "OTEL_LOG_USER_PROMPTS": "0",
     "OTEL_LOG_TOOL_DETAILS": "1"
   },
-  "otelHeadersHelper": "p=\"$HOME/.claude/hooks/otel-headers.sh\"; if [ ! -x \"$p\" ]; then p=\"\"; case \"$(git config --get remote.origin.url 2>/dev/null)\" in *kanade0404/dotfiles*) r=\"$(git rev-parse --show-toplevel 2>/dev/null)\"; [ -n \"$r\" ] && p=\"$r/.claude/hooks/otel-headers.sh\" ;; esac; fi; [ -n \"$p\" ] && [ -x \"$p\" ] || { printf '{}\\n'; exit 0; }; exec \"$p\"",
+  "otelHeadersHelper": "p=\"$HOME/.claude/hooks/otel-headers.sh\"; if [ ! -x \"$p\" ]; then p=\"\"; case \"$(git config --get remote.origin.url 2>/dev/null)\" in https://github.com/kanade0404/dotfiles|https://github.com/kanade0404/dotfiles.git|git@github.com:kanade0404/dotfiles|git@github.com:kanade0404/dotfiles.git|ssh://git@github.com/kanade0404/dotfiles|ssh://git@github.com/kanade0404/dotfiles.git) r=\"$(git rev-parse --show-toplevel 2>/dev/null)\"; [ -n \"$r\" ] && p=\"$r/.claude/hooks/otel-headers.sh\" ;; esac; fi; [ -n \"$p\" ] && [ -x \"$p\" ] || { printf '{}\\n'; exit 0; }; exec \"$p\"",
   "hooks": {
     "PreToolUse": [
       {
