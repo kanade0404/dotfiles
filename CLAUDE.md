@@ -125,6 +125,16 @@ security add-generic-password -s "claude-code-otel" -a "$USER" -w '<token>' -U
   `*kanade0404/dotfiles*` のような部分一致だと `evilkanade0404/dotfiles` や
   `dotfiles-evil`、`evil.example.com/kanade0404/dotfiles` にもマッチし、
   ガードを入れた意味が無くなる
+- ⚠️ **残余リスク: origin URL 照合は trust boundary としては不完全**。
+  `git config --get remote.origin.url` の値はカレントリポジトリの `.git/config` 由来、
+  つまり**リポジトリ作成者が自由に設定できるデータ**なので、悪意あるリポジトリが
+  `origin` を `https://github.com/kanade0404/dotfiles.git` に詐称して
+  `.claude/hooks/otel-headers.sh` を同梱すれば、このガードは通過してしまう。
+  成立には「user settings 経由でこの helper が読まれる」「`$HOME` 側 helper が不在/非実行」
+  「その悪意リポジトリで workspace trust を承認済み」の 3 条件が揃う必要があるため
+  受容しているが、**このガードは「無関係なリポジトリを巻き込まないための足切り」であって、
+  能動的な攻撃者を止めるものではない**。
+  根本的に断つには install.sh 適用済み (= `$HOME` 側 helper が常に存在する) 状態を保つこと
 - helper には引数も stdin も渡されず、`CLAUDE_PROJECT_DIR` も渡されない。実行ビット必須 (無いと exit 126)。
   呼び出しは既定 29 分デバウンス / 1 回 30 秒 timeout
 - ⚠️ `otelHeadersHelper` は**キー自体は公式ドキュメント (Monitoring usage) に記載がある**。

@@ -413,6 +413,26 @@ describe("checkDangerousGitFlags", () => {
     }
   });
 
+  // ANSI-C quoting ($'...')。tokenizeCommand が $ を通常文字として扱うと
+  // トークンが `$--force` に化けて normalizeArg の ANSI-C 分岐にも二度と入らず、
+  // フラグ比較から漏れる (split(/\s+/) 時代は素の `$'--force'` が normalizeArg で
+  // 正規化されて deny になっていたため、トークナイザ導入時の退行になりうる)。
+  describe("ANSI-C quoting ($'...') でも迂回できない", () => {
+    for (const cmd of [
+      "git push $'--force' origin main",
+      "git $'reset' --hard",
+      "git -C /tmp/x $'reset' --hard",
+      "git commit $'--no-verify' -m x",
+      "git $'-C' /tmp/x reset --hard",
+    ]) {
+      test(JSON.stringify(cmd), () => expect(checkDangerousGitFlags(cmd)).toBe(true));
+    }
+
+    test("ANSI-C quoting でも読み取り系は false", () => {
+      expect(checkDangerousGitFlags("git $'status'")).toBe(false);
+    });
+  });
+
   // コマンド名側の迂回。matchCommand は checkDangerousGitFlags に正規化前の生コマンドを
   // 渡すため、入口の git 判定でもクォート除去とベース名抽出が要る。
   // `-C` 無しの形は normalizeCommandName 経由の候補が deny ルールに当たるので塞がっているが、
@@ -558,6 +578,13 @@ describe("統合テスト: settings.json ルールでの判定", () => {
     // `Bash(git -C *)` も deny から意図的に除外した。別ディレクトリに対する
     // 読み取り系 git を通すための緩和で、以下はその意図を固定するテスト。
     //
+    // 姉妹オプションの `Bash(git --git-dir *)` / `Bash(git --work-tree *)` は deny の
+    // ままで、扱いは揃っていない。緩和したのは実運用で使う `-C` だけ、というのが
+    // 現状で、`--git-dir` / `--work-tree` を同じく緩和すべきかは未判断
+    // (使う場面が無いので deny のまま倒している)。
+    // なお破壊的サブコマンドはどのオプション形式でも checkDangerousGitFlags が
+    // 捕捉するので、この非対称は読み取り系が通るかどうかの差でしかない。
+    //
     // 緩和されるのは読み取り系だけで、破壊的サブコマンドは -C を挟んでも
     // checkDangerousGitFlags が deny にする (下の deny 系テストを参照)。
     //
@@ -589,6 +616,10 @@ describe("統合テスト: settings.json ルールでの判定", () => {
       expect(judgeCommand("/usr/bin/git -C /tmp/x checkout -- .")).toBe("deny"));
     test("スペース入りパス: git -C '/tmp/repo with spaces' reset --hard", () =>
       expect(judgeCommand("git -C '/tmp/repo with spaces' reset --hard")).toBe("deny"));
+    test("ANSI-C quoting: git $'reset' --hard", () =>
+      expect(judgeCommand("git $'reset' --hard")).toBe("deny"));
+    test("ANSI-C quoting: git push $'--force' origin main", () =>
+      expect(judgeCommand("git push $'--force' origin main")).toBe("deny"));
   });
 
   describe("複合コマンド（パイプ / && / リダイレクト）", () => {

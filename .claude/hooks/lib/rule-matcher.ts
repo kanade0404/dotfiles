@@ -255,7 +255,7 @@ function normalizeArg(arg: string): string {
  *
  * クォート自体は取り除く (シェルの quote removal 相当)。空のクォート (`''`) は
  * 空トークンとして残す — 落とすと `-C ''` の引数消費がずれて後続の subcommand を
- * `-C` の引数として food してしまい、危険コマンドを取りこぼすため。
+ * `-C` の引数として食ってしまい、危険コマンドを取りこぼすため。
  */
 function tokenizeCommand(input: string): string[] {
   const tokens: string[] = [];
@@ -274,6 +274,21 @@ function tokenizeCommand(input: string): string[] {
       }
       if (ch === quote) { quote = null; continue; }
       current += ch;
+      continue;
+    }
+
+    // ANSI-C quoting ($'...')。`$` を素の文字として積むとトークンが `$--force` に
+    // 化けて、以降の normalizeArg の ANSI-C 分岐 (^\$'(.*)'$) にも入らなくなり、
+    // フラグ比較から完全に漏れる。ここで剥がして中身だけを残す。
+    if (ch === "$" && input[i + 1] === "'") {
+      started = true;
+      let j = i + 2;
+      while (j < input.length && input[j] !== "'") {
+        if (input[j] === "\\" && j + 1 < input.length) { current += input[j + 1]; j += 2; continue; }
+        current += input[j];
+        j++;
+      }
+      i = j; // 閉じクォート位置。for の i++ でその次へ進む
       continue;
     }
 
