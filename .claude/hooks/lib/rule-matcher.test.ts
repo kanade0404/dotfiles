@@ -669,6 +669,41 @@ describe("checkDangerousGitFlags", () => {
     test("リダイレクト付きでも読み取り系は false", () => {
       expect(checkDangerousGitFlags(">/dev/null git status")).toBe(false);
     });
+
+    // リダイレクト先がクォート / 空白を含む形。`\S*` だとクォート内の空白で
+    // 切れて残余が壊れ、先頭トークンが git にならなくなる。
+    test("リダイレクト先にクォート/空白があっても剥がせる", () => {
+      expect(checkDangerousGitFlags(">'a b' git reset --hard")).toBe(true);
+      expect(checkDangerousGitFlags('>"a b" git reset --hard')).toBe(true);
+      expect(checkDangerousGitFlags("> 'a b' git reset --hard")).toBe(true);
+      expect(checkDangerousGitFlags("2>'a b' git push --force origin main")).toBe(true);
+      expect(checkDangerousGitFlags(">/tmp/ab git reset --hard")).toBe(true);
+    });
+  });
+
+  // $"..." は bash の locale translation quoting。翻訳が無ければリテラルなので
+  // $'...' と同じく迂回に使える。
+  describe('$"..." (locale translation quoting) でも迂回できない', () => {
+    for (const cmd of [
+      'git $"reset" --hard',
+      'git push $"--force" origin main',
+      'git -C /tmp/x $"checkout" -- .',
+      'git $"-C" /tmp/x reset --hard',
+    ]) {
+      test(JSON.stringify(cmd), () => expect(checkDangerousGitFlags(cmd)).toBe(true));
+    }
+
+    test('$"..." でも読み取り系は false', () => {
+      expect(checkDangerousGitFlags('git $"status"')).toBe(false);
+    });
+  });
+
+  // `-c core.worktree=<dir>` は -c 経由だが実質ディレクトリ付け替え。
+  test("-c core.worktree= もディレクトリ付け替えとして扱う", () => {
+    expect(checkDangerousGitFlags("git -c core.worktree=/other rm -rf .")).toBe(true);
+    expect(checkDangerousGitFlags("git -c core.worktree=/other stash")).toBe(true);
+    // 付け替えでない -c は従来通り
+    expect(checkDangerousGitFlags("git -c core.pager=cat stash drop")).toBe(false);
   });
 
   // hasGitRedirectEnv の前置スキップは stripShellPrefixes と揃っている必要がある。

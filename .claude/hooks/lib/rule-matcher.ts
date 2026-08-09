@@ -110,6 +110,7 @@ function scanTokenEnd(input: string, pos: number): number {
       i++; // 閉じクォート
       continue;
     }
+    if (ch === "$" && input[i + 1] === '"') { quote = '"'; i += 2; continue; }
     if (ch === '"' || ch === "'") { quote = ch; i++; continue; }
     if (ch === "\\" && i + 1 < input.length) { i += 2; continue; }
     if (/\s/.test(ch)) break;
@@ -254,11 +255,19 @@ export function stripShellPrefixes(command: string): string {
     // 先頭のリダイレクト演算子 (`>/dev/null cmd` / `2>&1 cmd` / `>>out.txt cmd`)。
     // 剥がさないと先頭トークンが `>/dev/null` になり、コマンド名判定が
     // 素通りする (deny リストもプレフィックス一致なので当たらない)。
-    const redirectMatch = cmd.match(/^\d*(?:&>>|&>|>>|>&|<>|>|<)\s*\S*\s+(?=\S)/);
-    if (redirectMatch) {
-      cmd = cmd.slice(redirectMatch[0].length);
-      changed = true;
-      continue;
+    // リダイレクト先の読み取りは scanTokenEnd に任せる — `\S*` だと
+    // `>'a b' git reset --hard` がクォート内の空白で切れて残余が壊れる。
+    const redirectOp = cmd.match(/^\d*(?:&>>|&>|>>|>&|<>|>|<)\s*/);
+    if (redirectOp) {
+      const targetEnd = scanTokenEnd(cmd, redirectOp[0].length);
+      let next = targetEnd;
+      while (next < cmd.length && /\s/.test(cmd[next])) next++;
+      // 後続にコマンドが残る場合だけ剥がす
+      if (next < cmd.length && next > redirectOp[0].length) {
+        cmd = cmd.slice(next);
+        changed = true;
+        continue;
+      }
     }
 
     for (const prefix of COMMAND_PREFIXES) {
@@ -550,6 +559,10 @@ function tokenizeCommand(input: string): string[] {
       continue;
     }
 
+    // $"..." は locale translation quoting。翻訳カタログが無ければ中身がそのまま
+    // 残るので、`$` を落として通常のダブルクォートとして扱う。
+    // 放置すると `git $"reset" --hard` のトークンが `$reset` に化けて素通りする。
+    if (ch === "$" && input[i + 1] === '"') { quote = '"'; started = true; i++; continue; }
     if (ch === '"' || ch === "'") { quote = ch; started = true; continue; }
     if (ch === "\\" && i + 1 < input.length) { current += input[++i]; started = true; continue; }
     if (/\s/.test(ch)) {
@@ -596,6 +609,12 @@ function findGitSubcommand(parts: readonly string[]): {
     // 2トークン消費するglobal options
     if (twoTokenGlobalOpts.includes(p) && i + 1 < parts.length) {
       if (redirectOpts.includes(p)) redirected = true;
+      // `-c` 一般は付け替えではないが `-c core.worktree=<dir>` は実質
+      // --work-tree と同じ効果を持つので redirect 扱いにする。
+      if (p === "-c") {
+        const cfg = normalizeArg(parts[i + 1]).replace(/['"]/g, "");
+        if (/^core\.worktree=/i.test(cfg)) redirected = true;
+      }
       i += 2;
       continue;
     }

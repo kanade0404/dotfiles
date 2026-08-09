@@ -173,13 +173,17 @@ security add-generic-password -s "claude-code-otel" -a "$USER" -w '<token>' -U
 | 種別 | 条件 | 例 |
 |------|------|----|
 | `alwaysDangerous` | サブコマンドに一致した時点で危険 | `reset` / `rebase` / `checkout` |
-| `dangerousWhenRedirected` | `-C` / `--git-dir` / `--work-tree` / `GIT_DIR=` 等で**ディレクトリを付け替えた場合のみ**危険 | `rm` / `config` / `commit` / `stash` / `reflog` / `worktree` 等 |
+| `dangerousWhenRedirected` | `-C` / `--git-dir` / `--work-tree` / `GIT_DIR=` 等で**ディレクトリを付け替えた場合のみ**危険 | `rm` / `config` / `stash` / `reflog` / `worktree` / `cherry-pick` 等 |
 
 後者は「CWD 内なら allow されている操作でも、付け替えるとプロジェクト外の任意
 リポジトリに届いてリスクの性質が変わる」ものを拾う。判定前に、シェルキーワード /
 コマンド前置 / 一時環境変数前置 / 先頭リダイレクトを剥がし、タブ区切り・クォート・
 ANSI-C quoting (`$'\x72eset'`)・フルパス (`/usr/bin/git`) を正規化する。
 
+- **`commit` は意図的に対象外**。`git -C <repo> commit` は (エージェントが絶対パスで
+  リポジトリを操作する等) 正当な常用パターンで、かつコミット作成自体はデータを失わない。
+  `dangerousWhenRedirected` の趣旨は「他リポジトリのデータを壊す / 実行経路を仕込む」
+  ことの阻止なので commit はその枠に入らない
 - ⚠️ **`DANGEROUS_GIT_FLAGS` は denylist であって網羅ではない**。ここに無い破壊的
   サブコマンドは `-C` 経由で他リポジトリに届く。新しい経路に気付いたら表に足すこと
 - ⚠️ **`sh -c` / `zsh -c` / `dash -c` のラッパー経由はガードが一切効かない**
