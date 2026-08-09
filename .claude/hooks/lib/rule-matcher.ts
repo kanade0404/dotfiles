@@ -84,6 +84,66 @@ const COMMAND_PREFIXES = [
  * 例: "then git push --force" → "git push --force"
  *     "env GIT_TRACE=1 git status" → "git status"
  */
+/**
+ * `pos` から 1 トークン分の終端インデックスを返す (クォート / バックスラッシュ /
+ * ANSI-C quoting を跨いで空白を消費する)。トークン境界の判定だけを行い、
+ * 中身の復号はしない (復号は tokenizeCommand の担当)。
+ */
+function scanTokenEnd(input: string, pos: number): number {
+  let i = pos;
+  let quote: '"' | "'" | null = null;
+
+  while (i < input.length) {
+    const ch = input[i];
+    if (quote) {
+      if (ch === "\\" && quote === '"' && i + 1 < input.length) { i += 2; continue; }
+      if (ch === quote) { quote = null; i++; continue; }
+      i++;
+      continue;
+    }
+    // ANSI-C quoting は $' で開始し、内部のエスケープを跨いで ' まで
+    if (ch === "$" && input[i + 1] === "'") {
+      i += 2;
+      while (i < input.length && input[i] !== "'") {
+        i += input[i] === "\\" && i + 1 < input.length ? 2 : 1;
+      }
+      i++; // 閉じクォート
+      continue;
+    }
+    if (ch === '"' || ch === "'") { quote = ch; i++; continue; }
+    if (ch === "\\" && i + 1 < input.length) { i += 2; continue; }
+    if (/\s/.test(ch)) break;
+    i++;
+  }
+  return i;
+}
+
+/**
+ * 先頭に連なる一時環境変数前置 (`VAR=val `) の合計長を返す。
+ * 値はクォート / エスケープ / ANSI-C を跨いで 1 トークンとして消費するため、
+ * `FOO='bar baz' git reset --hard` のような空白入りの値でも正しく剥がせる。
+ * 後ろにコマンドが残らない場合は 0 を返す (代入だけの行は剥がさない)。
+ */
+function envAssignPrefixLength(cmd: string): number {
+  let pos = 0;
+
+  for (;;) {
+    const m = /^[A-Za-z_][A-Za-z0-9_]*=/.exec(cmd.slice(pos));
+    if (!m) break;
+
+    const valueEnd = scanTokenEnd(cmd, pos + m[0].length);
+    // 次のトークンまでの空白を飛ばす
+    let next = valueEnd;
+    while (next < cmd.length && /\s/.test(cmd[next])) next++;
+    // 後続に何も残らないなら前置ではない
+    if (next >= cmd.length) break;
+
+    pos = next;
+  }
+
+  return pos;
+}
+
 export function stripShellPrefixes(command: string): string {
   let cmd = command.trim();
 
@@ -121,10 +181,11 @@ export function stripShellPrefixes(command: string): string {
     // 危険 git ガードの入口を素通りしていた。
     // 変数名は POSIX の名前規則 ([A-Za-z_][A-Za-z0-9_]*) に限定し、
     // `--format=%H` のようなフラグや、= を含むだけの引数を巻き込まないようにする。
-    // 後ろに必ず別のコマンドが続く形 (\s+\S) のみを対象にする。
-    const envAssignMatch = cmd.match(/^[A-Za-z_][A-Za-z0-9_]*=\S*\s+(?=\S)/);
-    if (envAssignMatch) {
-      cmd = cmd.slice(envAssignMatch[0].length);
+    // 値の読み取りは scanTokenEnd に任せる — `\S*` だと
+    // `FOO='bar baz' git reset --hard` を途中までしか剥がせず迂回できてしまう。
+    const envAssignLen = envAssignPrefixLength(cmd);
+    if (envAssignLen > 0) {
+      cmd = cmd.slice(envAssignLen);
       changed = true;
       continue;
     }
@@ -169,10 +230,9 @@ export function stripShellPrefixes(command: string): string {
               break;
             }
           }
-          // KEY=VALUE を除去
-          while (/^\w+=\S*/.test(cmd)) {
-            cmd = cmd.replace(/^\w+=\S*\s*/, "");
-          }
+          // KEY=VALUE の除去はここでは行わない。`env` を剥がした時点で changed=true
+          // となり、次の while 反復の冒頭で素の前置と同じ envAssignPrefixLength が
+          // 処理する (env 形式と素の形式で剥がし方を二重に持たない)。
         }
         break;
       }
@@ -192,6 +252,12 @@ type DangerousGitFlagRule = {
    * settings.json 側でサブコマンドごと deny されているものに使う。
    */
   readonly alwaysDangerous?: boolean;
+  /**
+   * `-C` / `--git-dir` / `--work-tree` でディレクトリを付け替えている場合に限り
+   * 危険と判定する。CWD 内では allow されている操作でも、付け替えると
+   * プロジェクト外の任意リポジトリに届いてリスクの性質が変わるものに使う。
+   */
+  readonly dangerousWhenRedirected?: boolean;
 };
 
 const DANGEROUS_GIT_FLAGS: readonly DangerousGitFlagRule[] = [
@@ -205,6 +271,22 @@ const DANGEROUS_GIT_FLAGS: readonly DangerousGitFlagRule[] = [
     // 読み取り系 (status / log / diff) と `git switch` は対象外なので影響しない。
     gitSubcommands: ["reset", "rebase", "checkout"],
     alwaysDangerous: true,
+  },
+  {
+    // これらは allow リストに載っているが、その許可は「プロジェクトの CWD 内」を
+    // 前提としたもの。`-C` / `--git-dir` / `--work-tree` で付け替えると
+    // プロジェクト外の任意リポジトリにも同じ破壊的操作が届くため、
+    // 付け替えがある場合に限って危険扱いにする。
+    // (denylist なので網羅ではない。他の破壊系が見つかったらここに足す)
+    gitSubcommands: ["rm", "update-ref", "clean", "filter-branch"],
+    dangerousWhenRedirected: true,
+  },
+  {
+    // stash は list / show のような読み取りサブコマンドがあるので、
+    // 破壊的な位置引数を伴う場合だけ危険扱いにする。
+    gitSubcommands: ["stash"],
+    dangerousWhenRedirected: true,
+    positionalArgs: ["drop", "clear"],
   },
   {
     gitSubcommands: ["commit"],
@@ -377,7 +459,12 @@ function tokenizeCommand(input: string): string[] {
 function findGitSubcommand(parts: readonly string[]): {
   subcommand: string;
   argsStartIndex: number;
+  /** -C / --git-dir / --work-tree でディレクトリを付け替えているか */
+  redirected: boolean;
 } | null {
+  // 作業ディレクトリ / リポジトリを付け替える global options
+  const redirectOpts = ["-C", "--git-dir", "--work-tree"];
+  let redirected = false;
   // git global options一覧
   const singleGlobalOpts = [
     "--no-pager", "--bare", "--no-replace-objects", "--literal-pathspecs",
@@ -395,14 +482,22 @@ function findGitSubcommand(parts: readonly string[]): {
     // 全て除去してよい。
     const p = normalizeArg(parts[i]).replace(/['"]/g, "");
     // 2トークン消費するglobal options
-    if (twoTokenGlobalOpts.includes(p) && i + 1 < parts.length) { i += 2; continue; }
+    if (twoTokenGlobalOpts.includes(p) && i + 1 < parts.length) {
+      if (redirectOpts.includes(p)) redirected = true;
+      i += 2;
+      continue;
+    }
     // --key=value 形式のglobal options
-    if (p.startsWith("--") && p.includes("=")) { i++; continue; }
+    if (p.startsWith("--") && p.includes("=")) {
+      if (redirectOpts.includes(p.slice(0, p.indexOf("=")))) redirected = true;
+      i++;
+      continue;
+    }
     // 単独global options
     if (singleGlobalOpts.includes(p)) { i++; continue; }
     // subcommandを発見（-で始まらない）
     if (!p.startsWith("-")) {
-      return { subcommand: p, argsStartIndex: i + 1 };
+      return { subcommand: p, argsStartIndex: i + 1, redirected };
     }
     // 不明な-フラグ → 安全側でスキップ
     i++;
@@ -443,6 +538,14 @@ export function checkDangerousGitFlags(command: string): boolean {
 
     // フラグを見るまでもなくサブコマンド自体が危険
     if (rule.alwaysDangerous) return true;
+
+    // ディレクトリ付け替えがある場合のみ危険。付け替えが無ければこのルールは適用しない。
+    // フラグ / 位置引数の条件を持つルールはそれも満たす必要があるので、
+    // 条件が無いルールだけ即 true にして、あるものは下の通常判定に流す。
+    if (rule.dangerousWhenRedirected) {
+      if (!gitSub.redirected) continue;
+      if (!rule.flags && !rule.prefixFlags && !rule.positionalArgs) return true;
+    }
 
     // subcommand がマッチした場合のみ正規化（遅延初期化）
     const normalizedArgs = args.map(normalizeArg);

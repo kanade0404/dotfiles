@@ -437,6 +437,28 @@ describe("checkDangerousGitFlags", () => {
       // `git log` の引数に = が含まれるだけのケース
       expect(checkDangerousGitFlags("git log --format=%H")).toBe(false);
     });
+
+    // 値に空白が含まれる形。`\S*` で値を読むと途中までしか剥がせず、
+    // 残りの先頭トークンが `baz'` のようになって git 判定を素通りする。
+    // 空白入り env 値は GIT_AUTHOR_DATE 等で実運用にも普通に現れる。
+    describe("値に空白を含んでも剥がせる", () => {
+      for (const cmd of [
+        "FOO='bar baz' git reset --hard",
+        'FOO="bar baz" git push --force origin main',
+        "FOO=bar\\ baz git reset --hard",
+        "GIT_WORK_TREE='/a b' git checkout -- .",
+        "GIT_AUTHOR_DATE='2020-01-01 00:00:00' git commit --no-verify -m x",
+        "A=1 B='x y' git push --force origin main",
+        "FOO=$'bar baz' git reset --hard",
+        "FOO='bar baz' git -C /tmp/x rebase main",
+      ]) {
+        test(JSON.stringify(cmd), () => expect(checkDangerousGitFlags(cmd)).toBe(true));
+      }
+
+      test("空白入り値でも読み取り系は false", () => {
+        expect(checkDangerousGitFlags("FOO='bar baz' git status")).toBe(false);
+      });
+    });
   });
 
   // ANSI-C quoting ($'...')。tokenizeCommand が $ を通常文字として扱うと
@@ -521,6 +543,37 @@ describe("checkDangerousGitFlags", () => {
 
     test("スペース入りパスでも読み取り系は false", () => {
       expect(checkDangerousGitFlags("git -C '/tmp/repo with spaces' status")).toBe(false);
+    });
+  });
+
+  // `git rm` / `git stash` 等は allow リストに載っているが、それは「プロジェクトの
+  // CWD 内」を前提とした許可。-C / --git-dir / --work-tree でディレクトリを
+  // 付け替えるとプロジェクト外の任意リポジトリに同じ操作が届くのでリスクの性質が
+  // 変わる。ディレクトリ付け替えがある場合に限って危険側に倒す。
+  describe("ディレクトリ付け替え時のみ危険なサブコマンド", () => {
+    for (const cmd of [
+      "git -C /tmp/x rm -rf .",
+      "git -C /tmp/x stash drop",
+      "git -C /tmp/x stash clear",
+      "git -C /tmp/x update-ref -d refs/heads/main",
+      "git --git-dir /tmp/x/.git rm -rf .",
+      "git --work-tree=/tmp/x stash drop",
+    ]) {
+      test(JSON.stringify(cmd), () => expect(checkDangerousGitFlags(cmd)).toBe(true));
+    }
+
+    test("CWD 内なら従来通り false (allow リストの意図を維持)", () => {
+      expect(checkDangerousGitFlags("git rm -rf .")).toBe(false);
+      expect(checkDangerousGitFlags("git stash drop")).toBe(false);
+      expect(checkDangerousGitFlags("git update-ref -d refs/heads/main")).toBe(false);
+    });
+
+    test("-c (config) はディレクトリ付け替えではないので false", () => {
+      expect(checkDangerousGitFlags("git -c core.pager=cat stash drop")).toBe(false);
+    });
+
+    test("付け替えても読み取り系は false", () => {
+      expect(checkDangerousGitFlags("git -C /tmp/x stash list")).toBe(false);
     });
   });
 
@@ -676,6 +729,10 @@ describe("統合テスト: settings.json ルールでの判定", () => {
       expect(judgeCommand("FOO=bar git -C /tmp/x reset --hard")).toBe("deny"));
     test("環境変数前置: GIT_DIR=/tmp/x/.git git reset --hard", () =>
       expect(judgeCommand("GIT_DIR=/tmp/x/.git git reset --hard")).toBe("deny"));
+    test("空白入り env 値: FOO='bar baz' git reset --hard", () =>
+      expect(judgeCommand("FOO='bar baz' git reset --hard")).toBe("deny"));
+    test("空白入り env 値: env FOO='bar baz' git reset --hard", () =>
+      expect(judgeCommand("env FOO='bar baz' git reset --hard")).toBe("deny"));
   });
 
   describe("deny 系: git branch の強制付け替え", () => {
