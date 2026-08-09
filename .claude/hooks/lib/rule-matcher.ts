@@ -247,6 +247,51 @@ function normalizeArg(arg: string): string {
 }
 
 /**
+ * コマンド文字列をシェル相当の規則でトークンに分割する。
+ *
+ * `split(/\s+/)` と違い、クォート内・バックスラッシュエスケープされた空白では
+ * 区切らない。`git -C '/tmp/repo with spaces' reset --hard` の `-C` 引数を
+ * 1 トークンとして保ち、subcommand の取り違えを防ぐのが目的。
+ *
+ * クォート自体は取り除く (シェルの quote removal 相当)。空のクォート (`''`) は
+ * 空トークンとして残す — 落とすと `-C ''` の引数消費がずれて後続の subcommand を
+ * `-C` の引数として food してしまい、危険コマンドを取りこぼすため。
+ */
+function tokenizeCommand(input: string): string[] {
+  const tokens: string[] = [];
+  let current = "";
+  let started = false;
+  let quote: '"' | "'" | null = null;
+
+  for (let i = 0; i < input.length; i++) {
+    const ch = input[i];
+
+    if (quote) {
+      // 単一クォート内ではエスケープは効かない (シェルの挙動と同じ)
+      if (ch === "\\" && quote === '"' && i + 1 < input.length) {
+        current += input[++i];
+        continue;
+      }
+      if (ch === quote) { quote = null; continue; }
+      current += ch;
+      continue;
+    }
+
+    if (ch === '"' || ch === "'") { quote = ch; started = true; continue; }
+    if (ch === "\\" && i + 1 < input.length) { current += input[++i]; started = true; continue; }
+    if (/\s/.test(ch)) {
+      if (started || current.length > 0) { tokens.push(current); current = ""; started = false; }
+      continue;
+    }
+    current += ch;
+    started = true;
+  }
+  if (started || current.length > 0) tokens.push(current);
+
+  return tokens;
+}
+
+/**
  * git global optionsをスキップしてsubcommandとその引数を検出する。
  * 例: ["git", "-c", "key=val", "push", "--force"] → { subcommand: "push", argsStartIndex: 4 }
  */
@@ -292,16 +337,21 @@ function findGitSubcommand(parts: readonly string[]): {
  */
 export function checkDangerousGitFlags(command: string): boolean {
   const stripped = stripShellPrefixes(command);
-  // 区切りはスペースとは限らない (`git\t-C /tmp/x reset --hard`)。
-  // 以降の split は /\s+/ なのでタブでも解析できるが、この入口の判定を
-  // リテラルスペース固定にするとタブ区切りが丸ごと素通りしてしまう。
-  if (!/^git\s/.test(stripped)) return false;
 
-  // 空クォートペアを除去（""--force → --force）
-  const sanitized = stripped.replace(/""|''/g, "");
-
-  const parts = sanitized.split(/\s+/);
+  // 空白区切りの単純 split ではなくシェル相当のトークナイズを行う。
+  // `git -C '/tmp/repo with spaces' reset --hard` を split(/\s+/) で割ると
+  // subcommand が "with" に化けて判定が落ちるため。
+  const parts = tokenizeCommand(stripped);
   if (parts.length < 2) return false;
+
+  // 入口の git 判定はコマンド名を正規化してから行う。matchCommand は本関数に
+  // 正規化前の生コマンドを渡すので、`"git"` / `'git'` / `/usr/bin/git` の形だと
+  // リテラル比較では素通りしてしまう (`Bash(git -C *)` の deny を外した以上、
+  // `-C` 付きの破壊的 git はこのガードが最後の砦になる)。
+  let name = normalizeArg(parts[0]).replace(/['"]/g, "");
+  const lastSlash = name.lastIndexOf("/");
+  if (lastSlash >= 0) name = name.slice(lastSlash + 1);
+  if (name !== "git") return false;
 
   const gitSub = findGitSubcommand(parts);
   if (!gitSub) return false;

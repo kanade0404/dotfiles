@@ -413,6 +413,49 @@ describe("checkDangerousGitFlags", () => {
     }
   });
 
+  // コマンド名側の迂回。matchCommand は checkDangerousGitFlags に正規化前の生コマンドを
+  // 渡すため、入口の git 判定でもクォート除去とベース名抽出が要る。
+  // `-C` 無しの形は normalizeCommandName 経由の候補が deny ルールに当たるので塞がっているが、
+  // `Bash(git -C *)` の deny を外した本 PR では `-C` 付きがこのガード頼みになる。
+  describe("コマンド名がクォート / フルパスでも迂回できない", () => {
+    for (const cmd of [
+      '"git" -C /tmp/x reset --hard',
+      "'git' -C /tmp/x rebase main",
+      "/usr/bin/git -C /tmp/x checkout -- .",
+      "/opt/homebrew/bin/git -C /tmp/x reset --hard",
+      'g"i"t -C /tmp/x reset --hard',
+    ]) {
+      test(JSON.stringify(cmd), () => expect(checkDangerousGitFlags(cmd)).toBe(true));
+    }
+
+    test("読み取り系は素通ししない (false のまま)", () => {
+      expect(checkDangerousGitFlags("/usr/bin/git -C /tmp/x status")).toBe(false);
+      expect(checkDangerousGitFlags('"git" -C /tmp/x log')).toBe(false);
+    });
+
+    test("git 以外のコマンドを巻き込まない", () => {
+      expect(checkDangerousGitFlags("/usr/bin/gitk -C /tmp/x reset --hard")).toBe(false);
+      expect(checkDangerousGitFlags("/usr/bin/legit -C /tmp/x reset --hard")).toBe(false);
+    });
+  });
+
+  // -C の引数にスペースが含まれると split(/\s+/) がパスを分割してしまい、
+  // サブコマンドを取り違えて判定を落としていた。
+  describe("-C 引数にスペースを含んでも迂回できない", () => {
+    for (const cmd of [
+      "git -C '/tmp/repo with spaces' reset --hard",
+      'git -C "/tmp/repo with spaces" reset --hard',
+      "git -C /tmp/repo\\ with\\ spaces reset --hard",
+      "git -C '/tmp/repo with spaces' checkout -- .",
+    ]) {
+      test(JSON.stringify(cmd), () => expect(checkDangerousGitFlags(cmd)).toBe(true));
+    }
+
+    test("スペース入りパスでも読み取り系は false", () => {
+      expect(checkDangerousGitFlags("git -C '/tmp/repo with spaces' status")).toBe(false);
+    });
+  });
+
   test("読み取り系は -C 付きでも false", () => {
     expect(checkDangerousGitFlags("git -C /tmp/x status")).toBe(false);
     expect(checkDangerousGitFlags("git -C /tmp/x log")).toBe(false);
@@ -540,6 +583,12 @@ describe("統合テスト: settings.json ルールでの判定", () => {
       expect(judgeCommand("git\t-C /tmp/x reset --hard")).toBe("deny"));
     test("クォート: git 'reset' --hard", () =>
       expect(judgeCommand("git 'reset' --hard")).toBe("deny"));
+    test('コマンド名クォート: "git" -C /tmp/x reset --hard', () =>
+      expect(judgeCommand('"git" -C /tmp/x reset --hard')).toBe("deny"));
+    test("フルパス: /usr/bin/git -C /tmp/x checkout -- .", () =>
+      expect(judgeCommand("/usr/bin/git -C /tmp/x checkout -- .")).toBe("deny"));
+    test("スペース入りパス: git -C '/tmp/repo with spaces' reset --hard", () =>
+      expect(judgeCommand("git -C '/tmp/repo with spaces' reset --hard")).toBe("deny"));
   });
 
   describe("複合コマンド（パイプ / && / リダイレクト）", () => {
