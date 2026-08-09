@@ -413,6 +413,32 @@ describe("checkDangerousGitFlags", () => {
     }
   });
 
+  // bash 標準の一時環境変数前置 (`VAR=val cmd`)。`env VAR=val` 形式は
+  // stripShellPrefixes が剥がすのに素の形は剥がしていなかったため、
+  // 先頭トークンが `FOO=bar` になって git 判定で早期 return していた。
+  // 特に GIT_DIR= / GIT_WORK_TREE= は -C と同型のディレクトリ迂回になる。
+  describe("一時環境変数の前置でも迂回できない", () => {
+    for (const cmd of [
+      "FOO=bar git reset --hard",
+      "GIT_DIR=/tmp/x/.git git reset --hard",
+      "GIT_WORK_TREE=/tmp/x git checkout -- .",
+      "A=1 B=2 git push --force origin main",
+      "FOO=bar git -C /tmp/x rebase main",
+      "FOO= git reset --hard",
+    ]) {
+      test(JSON.stringify(cmd), () => expect(checkDangerousGitFlags(cmd)).toBe(true));
+    }
+
+    test("前置があっても読み取り系は false", () => {
+      expect(checkDangerousGitFlags("FOO=bar git status")).toBe(false);
+    });
+
+    test("環境変数前置に見えるだけの引数を巻き込まない", () => {
+      // `git log` の引数に = が含まれるだけのケース
+      expect(checkDangerousGitFlags("git log --format=%H")).toBe(false);
+    });
+  });
+
   // ANSI-C quoting ($'...')。tokenizeCommand が $ を通常文字として扱うと
   // トークンが `$--force` に化けて normalizeArg の ANSI-C 分岐にも二度と入らず、
   // フラグ比較から漏れる (split(/\s+/) 時代は素の `$'--force'` が normalizeArg で
@@ -646,6 +672,10 @@ describe("統合テスト: settings.json ルールでの判定", () => {
       expect(judgeCommand("git $'\\x72eset' --hard")).toBe("deny"));
     test("ANSI-C escape: git push $'\\x2d\\x2dforce' origin main", () =>
       expect(judgeCommand("git push $'\\x2d\\x2dforce' origin main")).toBe("deny"));
+    test("環境変数前置: FOO=bar git -C /tmp/x reset --hard", () =>
+      expect(judgeCommand("FOO=bar git -C /tmp/x reset --hard")).toBe("deny"));
+    test("環境変数前置: GIT_DIR=/tmp/x/.git git reset --hard", () =>
+      expect(judgeCommand("GIT_DIR=/tmp/x/.git git reset --hard")).toBe("deny"));
   });
 
   describe("deny 系: git branch の強制付け替え", () => {

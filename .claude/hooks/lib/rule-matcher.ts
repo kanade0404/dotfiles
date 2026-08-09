@@ -114,6 +114,21 @@ export function stripShellPrefixes(command: string): string {
   let changed = true;
   while (changed) {
     changed = false;
+
+    // bash 標準の一時環境変数前置 (`VAR=val cmd`) を除去する。
+    // `env VAR=val cmd` は下の env 分岐で剥がしていたのに素の形は残っており、
+    // `FOO=bar git reset --hard` の先頭トークンが `FOO=bar` になって
+    // 危険 git ガードの入口を素通りしていた。
+    // 変数名は POSIX の名前規則 ([A-Za-z_][A-Za-z0-9_]*) に限定し、
+    // `--format=%H` のようなフラグや、= を含むだけの引数を巻き込まないようにする。
+    // 後ろに必ず別のコマンドが続く形 (\s+\S) のみを対象にする。
+    const envAssignMatch = cmd.match(/^[A-Za-z_][A-Za-z0-9_]*=\S*\s+(?=\S)/);
+    if (envAssignMatch) {
+      cmd = cmd.slice(envAssignMatch[0].length);
+      changed = true;
+      continue;
+    }
+
     for (const prefix of COMMAND_PREFIXES) {
       if (cmd === prefix || cmd.startsWith(prefix + " ")) {
         const wasEnv = prefix === "env";
