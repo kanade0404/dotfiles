@@ -79,7 +79,10 @@ describe("matchCommand", () => {
       const midRules: readonly Rule[] = [
         rule("allow", "Bash(git * main)"),
       ];
-      expect(decision("git checkout main", midRules)).toBe("allow");
+      // サンプルには破壊的サブコマンド (reset/rebase/checkout) を使わないこと。
+      // matchCommand は allow 判定より前に checkDangerousGitFlags を通すため、
+      // それらを使うとパターン形状ではなく危険 git ガードを測ってしまう。
+      expect(decision("git switch main", midRules)).toBe("allow");
       expect(matchCommand("git main", midRules)).toBeNull();
     });
   });
@@ -372,6 +375,36 @@ describe("checkDangerousGitFlags", () => {
       true,
     );
   });
+
+  // 破壊的サブコマンド (reset / rebase / checkout) は settings.json の deny
+  // (`Bash(git reset *)` 等) がプレフィックス一致なので、`-C` / `--git-dir` 等の
+  // global option を挟まれると素通りしていた。global option 正規化後の
+  // サブコマンドで捕捉し、ディレクトリ迂回でも同じ判定になることを固定する。
+  describe("破壊的サブコマンドは global option を挟んでも true", () => {
+    for (const cmd of [
+      "git -C /tmp/x reset --hard",
+      "git -C /tmp/x rebase main",
+      "git -C /tmp/x checkout -- .",
+      "git --git-dir /tmp/x/.git reset --hard",
+      "git --work-tree /tmp/x checkout main",
+      "git -c core.pager=cat reset --hard",
+      "git reset --hard",
+      "git rebase main",
+      "git checkout main",
+    ]) {
+      test(cmd, () => expect(checkDangerousGitFlags(cmd)).toBe(true));
+    }
+  });
+
+  test("読み取り系は -C 付きでも false", () => {
+    expect(checkDangerousGitFlags("git -C /tmp/x status")).toBe(false);
+    expect(checkDangerousGitFlags("git -C /tmp/x log")).toBe(false);
+    expect(checkDangerousGitFlags("git -C /tmp/x diff")).toBe(false);
+  });
+
+  test("git switch は対象外（allow のまま）", () => {
+    expect(checkDangerousGitFlags("git -C /tmp/x switch main")).toBe(false);
+  });
 });
 
 /**
@@ -465,15 +498,20 @@ describe("統合テスト: settings.json ルールでの判定", () => {
     // `Bash(git -C *)` も deny から意図的に除外した。別ディレクトリに対する
     // 読み取り系 git を通すための緩和で、以下はその意図を固定するテスト。
     //
-    // ⚠️ 破壊的サブコマンド (`git -C <dir> reset|rebase|checkout`) は現状この緩和の
-    // 巻き添えで pass-through allow になっている。deny パターンはプレフィックス一致
-    // なので `git -C ... reset` にマッチせず、`checkDangerousGitFlags` の
-    // DANGEROUS_GIT_FLAGS 表にも reset/rebase/checkout が無いため。
-    // ここでは「意図した挙動」として固定せず、#175 で -C の有無によらず捕捉する
-    // 方向で塞ぐ。
+    // 緩和されるのは読み取り系だけで、破壊的サブコマンドは -C を挟んでも
+    // checkDangerousGitFlags が deny にする (下の deny 系テストを参照)。
     test("git -C /tmp/x status", () => expect(judgeCommand("git -C /tmp/x status")).toBe("allow"));
     test("git -C /tmp/x log", () => expect(judgeCommand("git -C /tmp/x log")).toBe("allow"));
     test("git -C /tmp/x diff", () => expect(judgeCommand("git -C /tmp/x diff")).toBe("allow"));
+  });
+
+  describe("deny 系: -C でディレクトリ迂回した破壊的 git", () => {
+    test("git -C /tmp/x reset --hard", () =>
+      expect(judgeCommand("git -C /tmp/x reset --hard")).toBe("deny"));
+    test("git -C /tmp/x rebase main", () =>
+      expect(judgeCommand("git -C /tmp/x rebase main")).toBe("deny"));
+    test("git -C /tmp/x checkout -- .", () =>
+      expect(judgeCommand("git -C /tmp/x checkout -- .")).toBe("deny"));
   });
 
   describe("複合コマンド（パイプ / && / リダイレクト）", () => {

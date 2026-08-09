@@ -172,9 +172,25 @@ type DangerousGitFlagRule = {
   readonly flags?: readonly string[];
   readonly prefixFlags?: readonly string[];
   readonly positionalArgs?: readonly string[];
+  /**
+   * フラグや位置引数を問わず、サブコマンドに一致した時点で危険と判定する。
+   * settings.json 側でサブコマンドごと deny されているものに使う。
+   */
+  readonly alwaysDangerous?: boolean;
 };
 
 const DANGEROUS_GIT_FLAGS: readonly DangerousGitFlagRule[] = [
+  {
+    // settings.json の `Bash(git reset *)` / `Bash(git rebase *)` /
+    // `Bash(git checkout *)` はプレフィックス一致なので、`git -C <dir> reset --hard`
+    // のように global option を挟まれるとマッチせず素通りしていた
+    // (`Bash(git -C *)` の deny を外した際に開いた迂回経路)。
+    // findGitSubcommand が -C / --git-dir / --work-tree / -c を正規化して読み飛ばした
+    // 後のサブコマンドで捕捉し、ディレクトリ迂回の有無によらず同じ判定にする。
+    // 読み取り系 (status / log / diff) と `git switch` は対象外なので影響しない。
+    gitSubcommands: ["reset", "rebase", "checkout"],
+    alwaysDangerous: true,
+  },
   {
     gitSubcommands: ["commit"],
     flags: ["--no-verify", "-n", "-a", "--all"],
@@ -287,6 +303,9 @@ export function checkDangerousGitFlags(command: string): boolean {
 
   for (const rule of DANGEROUS_GIT_FLAGS) {
     if (!rule.gitSubcommands.includes(subcommand)) continue;
+
+    // フラグを見るまでもなくサブコマンド自体が危険
+    if (rule.alwaysDangerous) return true;
 
     // subcommand がマッチした場合のみ正規化（遅延初期化）
     const normalizedArgs = args.map(normalizeArg);
