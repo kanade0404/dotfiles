@@ -161,6 +161,48 @@ const GIT_REDIRECT_ENV_VARS = [
  * 剥がす前の文字列を見ないと redirect 情報が失われる
  * (`GIT_DIR=/other/.git git rm -rf .` が -C 版と違って素通りしてしまう)。
  */
+/**
+ * コマンド先頭の「一時環境変数前置」区間にある `NAME=value` トークンを返す。
+ *
+ * シェルキーワード / コマンド前置 / リダイレクト / `env` のフラグは読み飛ばし、
+ * コマンド本体 (最初の素のトークン) に当たった時点で打ち切る。
+ * スキップ対象は stripShellPrefixes と揃えること — 揃っていないと
+ * 「コマンド本体は取り出せるのに env 情報だけ落ちる」非対称が穴になる。
+ */
+function envPrefixTokens(command: string): string[] {
+  const tokens = tokenizeCommand(command.trim());
+  const found: string[] = [];
+
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+
+    const redirectTok = /^(\d*(?:&>>|&>|>>|>&|<>|>|<))(.*)$/.exec(token);
+    if (redirectTok) {
+      if (redirectTok[2] === "") i++;
+      continue;
+    }
+
+    const eq = token.indexOf("=");
+    if (eq > 0 && /^[A-Za-z_][A-Za-z0-9_]*$/.test(token.slice(0, eq))) {
+      found.push(token);
+      continue;
+    }
+
+    if (token === "-u" || token === "--unset") { i++; continue; }
+    if (
+      (SHELL_KEYWORD_PREFIXES as readonly string[]).includes(token) ||
+      (COMMAND_PREFIXES as readonly string[]).includes(token) ||
+      token === "{" ||
+      token === "(" ||
+      token.startsWith("-")
+    ) {
+      continue;
+    }
+    break;
+  }
+  return found;
+}
+
 function hasGitRedirectEnv(command: string): boolean {
   const tokens = tokenizeCommand(command.trim());
 
@@ -408,6 +450,16 @@ const DANGEROUS_GIT_FLAGS: readonly DangerousGitFlagRule[] = [
     dangerousWhenRedirected: true,
   },
   {
+    // git 自身が任意コマンドを起動する transport ヘルパー。
+    // `--upload-pack` / `--receive-pack` は指定したコマンドをそのまま実行し、
+    // `ext::` リモートは `ext::sh -c <cmd>` の形で任意コマンドを走らせる。
+    // settings.json は `Bash(git fetch *)` 等を広く allow しているので、
+    // ここで拾わないと auto-allow になる。
+    gitSubcommands: ["fetch", "pull", "clone", "push", "remote", "submodule", "ls-remote", "archive"],
+    flags: ["--upload-pack", "--receive-pack", "--exec"],
+    prefixFlags: ["ext::"],
+  },
+  {
     // switch は通常のブランチ切替 (`switch main` / `switch -c new`) は安全だが、
     // -f / --discard-changes はローカル変更を破棄する点で `checkout -- .` と同性質。
     // checkout を alwaysDangerous にした以上、こちらだけ通す非対称は残せない。
@@ -637,11 +689,23 @@ const RCE_ENV_VARS = [
 /** 値部分を持たない「キーだけ」の形 (GIT_CONFIG_KEY_N=<key>) 用 */
 const RCE_CONFIG_KEY_ONLY_PATTERN = /^(core\.(fsmonitor|hookspath|sshcommand)|alias\..+)$/i;
 
-/** `git -c <key>=<value>` に RCE につながる設定キーが含まれるか */
-function hasDangerousInlineConfig(parts: readonly string[]): boolean {
-  for (let i = 1; i < parts.length - 1; i++) {
+/**
+ * `git -c <key>=<value>` / `git --config-env=<key>=<var>` に RCE につながる
+ * 設定キーが含まれるか。
+ *
+ * 走査は **subcommand より前の global option 区間だけ** に限る。全体を見ると
+ * `git commit -c <commit-ish>` (メッセージ再利用フラグ) のような同名の
+ * サブコマンドフラグまで inline config と誤認して誤 deny する。
+ */
+function hasDangerousInlineConfig(parts: readonly string[], subcommandIndex: number): boolean {
+  for (let i = 1; i < subcommandIndex; i++) {
     const opt = normalizeArg(parts[i]).replace(/['"]/g, "");
-    if (opt !== "-c") continue;
+
+    if (opt.startsWith("--config-env=")) {
+      if (RCE_CONFIG_KEY_PATTERN.test(opt.slice("--config-env=".length))) return true;
+      continue;
+    }
+    if (opt !== "-c" || i + 1 >= parts.length) continue;
     const cfg = normalizeArg(parts[i + 1]).replace(/['"]/g, "");
     if (RCE_CONFIG_KEY_PATTERN.test(cfg)) return true;
   }
@@ -657,7 +721,9 @@ function hasDangerousInlineConfig(parts: readonly string[]): boolean {
  * 同じクラスとして扱う。
  */
 function hasDangerousConfigEnv(command: string): boolean {
-  for (const token of tokenizeCommand(command.trim())) {
+  // 走査は env 前置区間だけに限る。コマンド全体を見るとコミットメッセージ等の
+  // 引数 (`git commit -m GIT_SSH_COMMAND=/evil`) まで拾って誤 deny する。
+  for (const token of envPrefixTokens(command)) {
     const eq = token.indexOf("=");
     if (eq <= 0) continue;
     const name = token.slice(0, eq);
@@ -764,12 +830,16 @@ export function checkDangerousGitFlags(command: string): boolean {
   if (lastSlash >= 0) name = name.slice(lastSlash + 1);
   if (name !== "git") return false;
 
-  // インライン -c による RCE はサブコマンドに依らないので先に判定する
-  // (`git -c core.fsmonitor=/evil status` のように読み取り系でも成立する)。
-  if (hasDangerousInlineConfig(parts) || hasDangerousConfigEnv(command)) return true;
+  // env 経由の RCE 指定はサブコマンドに依らないので先に判定する
+  // (`GIT_SSH_COMMAND=/evil git fetch` のように読み取り系でも成立する)。
+  if (hasDangerousConfigEnv(command)) return true;
 
   const gitSub = findGitSubcommand(parts);
   if (!gitSub) return false;
+
+  // インライン config も同様にサブコマンド非依存だが、走査範囲を
+  // global option 区間に限るため subcommand を確定してから判定する。
+  if (hasDangerousInlineConfig(parts, gitSub.argsStartIndex - 1)) return true;
   const subcommand = gitSub.subcommand;
 
   // ディレクトリ付け替えは global option だけでなく環境変数前置でも起きる。

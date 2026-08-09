@@ -774,10 +774,48 @@ describe("checkDangerousGitFlags", () => {
       ).toBe(false);
     });
 
+    // 走査範囲は「git サブコマンドより前の global option / env 前置」に限る。
+    // 全トークンを見るとコミットメッセージ等の引数で誤 deny する。
+    test("サブコマンドの引数は inline config / config env と誤認しない", () => {
+      expect(checkDangerousGitFlags("git commit -m GIT_SSH_COMMAND=/evil")).toBe(false);
+      expect(checkDangerousGitFlags('git commit -m "GIT_SSH_COMMAND=1"')).toBe(false);
+      expect(checkDangerousGitFlags("git commit -c core.fsmonitor=x -m msg")).toBe(false);
+      expect(checkDangerousGitFlags("git commit -m GIT_CONFIG_KEY_0=core.fsmonitor")).toBe(false);
+      expect(checkDangerousGitFlags("git log --grep=core.fsmonitor=x")).toBe(false);
+    });
+
+    test("--config-env= 形式の config 注入も塞ぐ", () => {
+      expect(checkDangerousGitFlags("git --config-env=core.hooksPath=EVIL status")).toBe(true);
+      expect(checkDangerousGitFlags("git --config-env=user.name=X status")).toBe(false);
+    });
+
     test("通常の -c は巻き込まない", () => {
       expect(checkDangerousGitFlags("git -c core.pager=cat log")).toBe(false);
       expect(checkDangerousGitFlags("git -c user.name=x commit -m y")).toBe(false);
       expect(checkDangerousGitFlags("git -c advice.detachedHead=false checkout-index")).toBe(false);
+    });
+  });
+
+  // git 自身が任意コマンドを起動する transport ヘルパー。
+  // settings.json の広い allow (Bash(git fetch *) 等) にプレフィックス一致するため、
+  // ここで拾わないと auto-allow になる。
+  describe("transport ヘルパー経由の RCE", () => {
+    for (const cmd of [
+      "git fetch 'ext::sh -c evil'",
+      "git fetch --upload-pack=/tmp/evil.sh origin",
+      "git pull --upload-pack=/tmp/evil.sh",
+      "git push --receive-pack=/tmp/evil.sh origin main",
+      "git clone --upload-pack=/tmp/evil.sh https://example.com/r.git",
+      "git clone 'ext::sh -c evil' dst",
+    ]) {
+      test(JSON.stringify(cmd), () => expect(checkDangerousGitFlags(cmd)).toBe(true));
+    }
+
+    test("通常の fetch / pull / push は巻き込まない", () => {
+      expect(checkDangerousGitFlags("git fetch origin main")).toBe(false);
+      expect(checkDangerousGitFlags("git pull --rebase origin main")).toBe(false);
+      expect(checkDangerousGitFlags("git push origin main")).toBe(false);
+      expect(checkDangerousGitFlags("git clone https://github.com/x/y.git")).toBe(false);
     });
   });
 

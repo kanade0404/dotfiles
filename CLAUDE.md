@@ -190,7 +190,12 @@ ANSI-C quoting (`$'\x72eset'`)・フルパス (`/usr/bin/git`) を正規化す�
   config を介さず直接コマンドを起動する環境変数
   (`GIT_SSH_COMMAND` / `GIT_SSH` / `GIT_EXTERNAL_DIFF` / `GIT_ASKPASS` /
   `GIT_PROXY_COMMAND` / `GIT_SEQUENCE_EDITOR`) も同じ扱い。
-  `GIT_PAGER` / `GIT_EDITOR` は `core.pager` / `core.editor` と同じ理由で対象外
+  `GIT_PAGER` / `GIT_EDITOR` は `core.pager` / `core.editor` と同じ理由で対象外。
+  **transport ヘルパー** (`--upload-pack` / `--receive-pack` / `ext::` リモート) も
+  git が任意コマンドを起動する同クラスなので deny する
+- 検出は**サブコマンドより前の global option / env 前置区間だけ**を走査する。
+  コマンド全体を見るとコミットメッセージ等の引数 (`git commit -m GIT_SSH_COMMAND=x`) や
+  同名のサブコマンドフラグ (`git commit -c <commit-ish>`) を誤検知して deny してしまう
 - **付け替え時は `config` の読み取り (`--get` / `--list`) も deny になる**。
   書き込みと読み取りをフラグで見分ける実装にせず、安全側に倒した意図的な選択。
   他リポジトリの config を読む用途が稀なので、誤検知の害よりガードの単純さを取った
