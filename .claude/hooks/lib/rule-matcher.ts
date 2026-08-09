@@ -158,7 +158,15 @@ const GIT_REDIRECT_ENV_VARS = [
  * 「コマンド本体は取り出せるのに env 情報だけ落ちる」非対称が穴になる。
  */
 function envPrefixTokens(command: string): string[] {
-  const tokens = tokenizeCommand(command.trim());
+  // 先頭のサブシェル `(` / ブレースグループ `{` を文字単位で剥がす。
+  // stripShellPrefixes と揃えないと `(GIT_SSH_COMMAND=/evil git fetch)` が
+  // 1 トークン `(GIT_SSH_COMMAND=/evil` になって代入判定に一致せず、
+  // env 検出だけが落ちる (subcommand 判定は通るので非対称が穴になる)。
+  let src = command.trim();
+  if (src.startsWith("{")) src = src.slice(1).trim();
+  while (src.startsWith("(")) src = src.slice(1).trim();
+
+  const tokens = tokenizeCommand(src);
   const found: string[] = [];
 
   for (let i = 0; i < tokens.length; i++) {

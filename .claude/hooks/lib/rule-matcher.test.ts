@@ -871,6 +871,25 @@ describe("checkDangerousGitFlags", () => {
     });
   });
 
+  // 空白なしのサブシェル / ブレースグループ。stripShellPrefixes は先頭の `(` を
+  // 文字単位で剥がすので subcommand 判定は通るが、env 検出は生のコマンドを
+  // tokenize するため `(GIT_SSH_COMMAND=/evil` が 1 トークンになって落ちていた。
+  describe("空白なしサブシェル / ブレースでも env 検出が落ちない", () => {
+    for (const cmd of [
+      "(GIT_SSH_COMMAND=/evil git fetch)",
+      "(GIT_DIR=/other/.git git rm -rf .)",
+      "((GIT_DIR=/other/.git git rm -rf .))",
+      "{GIT_SSH_COMMAND=/evil git fetch;}",
+      "( GIT_SSH_COMMAND=/evil git fetch )",
+    ]) {
+      test(JSON.stringify(cmd), () => expect(checkDangerousGitFlags(cmd)).toBe(true));
+    }
+
+    test("サブシェルでも読み取り系は false", () => {
+      expect(checkDangerousGitFlags("(GIT_DIR=/other/.git git status)")).toBe(false);
+    });
+  });
+
   // 付け替え先リポジトリへの書き込み系。config は core.fsmonitor / core.hooksPath /
   // alias 経由でそのリポジトリでの任意コマンド実行につながりうるので優先度が高い。
   describe("redirect 依存の書き込み系 (config / commit / tag)", () => {
