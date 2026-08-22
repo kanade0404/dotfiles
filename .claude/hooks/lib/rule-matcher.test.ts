@@ -79,7 +79,10 @@ describe("matchCommand", () => {
       const midRules: readonly Rule[] = [
         rule("allow", "Bash(git * main)"),
       ];
-      expect(decision("git checkout main", midRules)).toBe("allow");
+      // サンプルには破壊的サブコマンド (reset/rebase/checkout) を使わないこと。
+      // matchCommand は allow 判定より前に checkDangerousGitFlags を通すため、
+      // それらを使うとパターン形状ではなく危険 git ガードを測ってしまう。
+      expect(decision("git switch main", midRules)).toBe("allow");
       expect(matchCommand("git main", midRules)).toBeNull();
     });
   });
@@ -372,6 +375,577 @@ describe("checkDangerousGitFlags", () => {
       true,
     );
   });
+
+  // 破壊的サブコマンド (reset / rebase / checkout) は settings.json の deny
+  // (`Bash(git reset *)` 等) がプレフィックス一致なので、`-C` / `--git-dir` 等の
+  // global option を挟まれると素通りしていた。global option 正規化後の
+  // サブコマンドで捕捉し、ディレクトリ迂回でも同じ判定になることを固定する。
+  describe("破壊的サブコマンドは global option を挟んでも true", () => {
+    for (const cmd of [
+      "git -C /tmp/x reset --hard",
+      "git -C /tmp/x rebase main",
+      "git -C /tmp/x checkout -- .",
+      "git --git-dir /tmp/x/.git reset --hard",
+      "git --work-tree /tmp/x checkout main",
+      "git -c core.pager=cat reset --hard",
+      "git reset --hard",
+      "git rebase main",
+      "git checkout main",
+    ]) {
+      test(cmd, () => expect(checkDangerousGitFlags(cmd)).toBe(true));
+    }
+  });
+
+  // 区切り文字がタブでも、サブコマンドがクォートされていても迂回できないこと。
+  // どちらも settings.json の deny (リテラルスペース前提のプレフィックス一致) では
+  // 捕捉できないため、このガードが最後の砦になる。
+  describe("タブ区切り / クォートでも迂回できない", () => {
+    for (const cmd of [
+      "git\t-C /tmp/x reset --hard",
+      "git\treset --hard",
+      "git\tpush --force origin main",
+      "git 'reset' --hard",
+      'git "reset" --hard',
+      "git re'set' --hard",
+      "git -C /tmp/x 'checkout' -- .",
+    ]) {
+      test(JSON.stringify(cmd), () => expect(checkDangerousGitFlags(cmd)).toBe(true));
+    }
+  });
+
+  // bash 標準の一時環境変数前置 (`VAR=val cmd`)。`env VAR=val` 形式は
+  // stripShellPrefixes が剥がすのに素の形は剥がしていなかったため、
+  // 先頭トークンが `FOO=bar` になって git 判定で早期 return していた。
+  // 特に GIT_DIR= / GIT_WORK_TREE= は -C と同型のディレクトリ迂回になる。
+  describe("一時環境変数の前置でも迂回できない", () => {
+    for (const cmd of [
+      "FOO=bar git reset --hard",
+      "GIT_DIR=/tmp/x/.git git reset --hard",
+      "GIT_WORK_TREE=/tmp/x git checkout -- .",
+      "A=1 B=2 git push --force origin main",
+      "FOO=bar git -C /tmp/x rebase main",
+      "FOO= git reset --hard",
+    ]) {
+      test(JSON.stringify(cmd), () => expect(checkDangerousGitFlags(cmd)).toBe(true));
+    }
+
+    test("前置があっても読み取り系は false", () => {
+      expect(checkDangerousGitFlags("FOO=bar git status")).toBe(false);
+    });
+
+    test("環境変数前置に見えるだけの引数を巻き込まない", () => {
+      // `git log` の引数に = が含まれるだけのケース
+      expect(checkDangerousGitFlags("git log --format=%H")).toBe(false);
+    });
+
+    // 値に空白が含まれる形。`\S*` で値を読むと途中までしか剥がせず、
+    // 残りの先頭トークンが `baz'` のようになって git 判定を素通りする。
+    // 空白入り env 値は GIT_AUTHOR_DATE 等で実運用にも普通に現れる。
+    describe("値に空白を含んでも剥がせる", () => {
+      for (const cmd of [
+        "FOO='bar baz' git reset --hard",
+        'FOO="bar baz" git push --force origin main',
+        "FOO=bar\\ baz git reset --hard",
+        "GIT_WORK_TREE='/a b' git checkout -- .",
+        "GIT_AUTHOR_DATE='2020-01-01 00:00:00' git commit --no-verify -m x",
+        "A=1 B='x y' git push --force origin main",
+        "FOO=$'bar baz' git reset --hard",
+        "FOO='bar baz' git -C /tmp/x rebase main",
+      ]) {
+        test(JSON.stringify(cmd), () => expect(checkDangerousGitFlags(cmd)).toBe(true));
+      }
+
+      test("空白入り値でも読み取り系は false", () => {
+        expect(checkDangerousGitFlags("FOO='bar baz' git status")).toBe(false);
+      });
+
+      // コマンド置換の中の空白でも値が切れないこと。切れると残余が壊れ、
+      // 最上位ガード (alwaysDangerous) すら false に落ちる。
+      test("コマンド置換 / バッククォートを跨いで値を消費する", () => {
+        expect(checkDangerousGitFlags("FOO=$(evil arg) git reset --hard")).toBe(true);
+        expect(checkDangerousGitFlags("FOO=$(evil) git reset --hard")).toBe(true);
+        expect(checkDangerousGitFlags("FOO=`evil arg` git reset --hard")).toBe(true);
+        expect(checkDangerousGitFlags("FOO=$(a $(b c)) git reset --hard")).toBe(true);
+      });
+    });
+  });
+
+  // ANSI-C quoting ($'...')。tokenizeCommand が $ を通常文字として扱うと
+  // トークンが `$--force` に化けて normalizeArg の ANSI-C 分岐にも二度と入らず、
+  // フラグ比較から漏れる (split(/\s+/) 時代は素の `$'--force'` が normalizeArg で
+  // 正規化されて deny になっていたため、トークナイザ導入時の退行になりうる)。
+  describe("ANSI-C quoting ($'...') でも迂回できない", () => {
+    for (const cmd of [
+      "git push $'--force' origin main",
+      "git $'reset' --hard",
+      "git -C /tmp/x $'reset' --hard",
+      "git commit $'--no-verify' -m x",
+      "git $'-C' /tmp/x reset --hard",
+    ]) {
+      test(JSON.stringify(cmd), () => expect(checkDangerousGitFlags(cmd)).toBe(true));
+    }
+
+    test("ANSI-C quoting でも読み取り系は false", () => {
+      expect(checkDangerousGitFlags("git $'status'")).toBe(false);
+    });
+
+    // bash は $'...' 内のエスケープシーケンスを実際に展開する。リテラル文字形だけを
+    // 通してもエスケープ形が素通りするので、デコードまでやらないとガードにならない。
+    describe("エスケープシーケンスを復号する", () => {
+      for (const [cmd, why] of [
+        ["git $'\\x72eset' --hard", "\\xHH (16進)"],
+        ["git $'\\162eset' --hard", "\\nnn (8進)"],
+        ["git $'\\u0072eset' --hard", "\\uHHHH"],
+        ["git $'\\U00000072eset' --hard", "\\UHHHHHHHH"],
+        ["git push $'\\x2d\\x2dforce' origin main", "16進を連結して --force"],
+        ["git $'\\x2dC' /tmp/x reset --hard", "global option 側を 16進で"],
+        ["git commit $'\\x2d\\x2dno\\x2dverify' -m x", "16進で --no-verify"],
+      ] as const) {
+        test(`${why}: ${JSON.stringify(cmd)}`, () =>
+          expect(checkDangerousGitFlags(cmd)).toBe(true));
+      }
+
+      test("復号しても読み取り系は false", () => {
+        // $'\x73tatus' → "status"
+        expect(checkDangerousGitFlags("git $'\\x73tatus'")).toBe(false);
+      });
+    });
+  });
+
+  // コマンド名側の迂回。matchCommand は checkDangerousGitFlags に正規化前の生コマンドを
+  // 渡すため、入口の git 判定でもクォート除去とベース名抽出が要る。
+  // `-C` 無しの形は normalizeCommandName 経由の候補が deny ルールに当たるので塞がっているが、
+  // `Bash(git -C *)` の deny を外した本 PR では `-C` 付きがこのガード頼みになる。
+  describe("コマンド名がクォート / フルパスでも迂回できない", () => {
+    for (const cmd of [
+      '"git" -C /tmp/x reset --hard',
+      "'git' -C /tmp/x rebase main",
+      "/usr/bin/git -C /tmp/x checkout -- .",
+      "/opt/homebrew/bin/git -C /tmp/x reset --hard",
+      'g"i"t -C /tmp/x reset --hard',
+    ]) {
+      test(JSON.stringify(cmd), () => expect(checkDangerousGitFlags(cmd)).toBe(true));
+    }
+
+    test("読み取り系は素通ししない (false のまま)", () => {
+      expect(checkDangerousGitFlags("/usr/bin/git -C /tmp/x status")).toBe(false);
+      expect(checkDangerousGitFlags('"git" -C /tmp/x log')).toBe(false);
+    });
+
+    test("git 以外のコマンドを巻き込まない", () => {
+      expect(checkDangerousGitFlags("/usr/bin/gitk -C /tmp/x reset --hard")).toBe(false);
+      expect(checkDangerousGitFlags("/usr/bin/legit -C /tmp/x reset --hard")).toBe(false);
+    });
+  });
+
+  // -C の引数にスペースが含まれると split(/\s+/) がパスを分割してしまい、
+  // サブコマンドを取り違えて判定を落としていた。
+  describe("-C 引数にスペースを含んでも迂回できない", () => {
+    for (const cmd of [
+      "git -C '/tmp/repo with spaces' reset --hard",
+      'git -C "/tmp/repo with spaces" reset --hard',
+      "git -C /tmp/repo\\ with\\ spaces reset --hard",
+      "git -C '/tmp/repo with spaces' checkout -- .",
+    ]) {
+      test(JSON.stringify(cmd), () => expect(checkDangerousGitFlags(cmd)).toBe(true));
+    }
+
+    test("スペース入りパスでも読み取り系は false", () => {
+      expect(checkDangerousGitFlags("git -C '/tmp/repo with spaces' status")).toBe(false);
+    });
+  });
+
+  // `git rm` / `git stash` 等は allow リストに載っているが、それは「プロジェクトの
+  // CWD 内」を前提とした許可。-C / --git-dir / --work-tree でディレクトリを
+  // 付け替えるとプロジェクト外の任意リポジトリに同じ操作が届くのでリスクの性質が
+  // 変わる。ディレクトリ付け替えがある場合に限って危険側に倒す。
+  describe("ディレクトリ付け替え時のみ危険なサブコマンド", () => {
+    for (const cmd of [
+      "git -C /tmp/x rm -rf .",
+      "git -C /tmp/x stash drop",
+      "git -C /tmp/x stash clear",
+      "git -C /tmp/x update-ref -d refs/heads/main",
+      "git --git-dir /tmp/x/.git rm -rf .",
+      "git --work-tree=/tmp/x stash drop",
+    ]) {
+      test(JSON.stringify(cmd), () => expect(checkDangerousGitFlags(cmd)).toBe(true));
+    }
+
+    test("CWD 内なら従来通り false (allow リストの意図を維持)", () => {
+      expect(checkDangerousGitFlags("git rm -rf .")).toBe(false);
+      expect(checkDangerousGitFlags("git stash drop")).toBe(false);
+      expect(checkDangerousGitFlags("git update-ref -d refs/heads/main")).toBe(false);
+    });
+
+    test("-c (config) はディレクトリ付け替えではないので false", () => {
+      expect(checkDangerousGitFlags("git -c core.pager=cat stash drop")).toBe(false);
+    });
+
+    test("付け替えても読み取り系は false", () => {
+      expect(checkDangerousGitFlags("git -C /tmp/x stash list")).toBe(false);
+    });
+
+    // 環境変数によるディレクトリ付け替えも -C と同型。stripShellPrefixes が
+    // env 前置を剥がした後に findGitSubcommand が走るので、剥がす前に検出して
+    // 伝搬しないと redirect 情報が失われる。
+    describe("環境変数によるディレクトリ付け替えも redirect として扱う", () => {
+      for (const cmd of [
+        "GIT_DIR=/tmp/x/.git git rm -rf .",
+        "GIT_DIR=/tmp/x/.git git update-ref -d refs/heads/main",
+        "GIT_DIR=/tmp/x/.git git filter-branch --force",
+        "GIT_WORK_TREE=/tmp/x git stash drop",
+        "GIT_OBJECT_DIRECTORY=/tmp/x/.git/objects git rm -rf .",
+        "env GIT_DIR=/tmp/x/.git git rm -rf .",
+        "GIT_DIR='/tmp/repo with spaces/.git' git rm -rf .",
+      ]) {
+        test(JSON.stringify(cmd), () => expect(checkDangerousGitFlags(cmd)).toBe(true));
+      }
+
+      test("git と無関係な env 前置は redirect にしない", () => {
+        expect(checkDangerousGitFlags("FOO=bar git rm -rf .")).toBe(false);
+        expect(checkDangerousGitFlags("GIT_AUTHOR_NAME=x git rm -rf .")).toBe(false);
+      });
+
+      test("env 付け替えでも読み取り系は false", () => {
+        expect(checkDangerousGitFlags("GIT_DIR=/tmp/x/.git git status")).toBe(false);
+      });
+
+      // GIT_REDIRECT_ENV_VARS の残り 2 つも同様に redirect として効くこと。
+      test("GIT_COMMON_DIR / GIT_INDEX_FILE も redirect 扱い", () => {
+        expect(checkDangerousGitFlags("GIT_COMMON_DIR=/tmp/x/.git git rm -rf .")).toBe(true);
+        expect(checkDangerousGitFlags("GIT_INDEX_FILE=/tmp/x/.git/index git rm -rf .")).toBe(true);
+        expect(checkDangerousGitFlags("GIT_COMMON_DIR=/tmp/x/.git git status")).toBe(false);
+      });
+    });
+
+    // denylist の追加候補 (レビュー指摘)。いずれも付け替え時のみ危険。
+    describe("redirect 依存の破壊系 (追加分)", () => {
+      for (const cmd of [
+        "git -C /tmp/x reflog expire --expire=now --all",
+        "git -C /tmp/x reflog delete refs/heads/main@{0}",
+        "git -C /tmp/x symbolic-ref HEAD refs/heads/other",
+        "git -C /tmp/x stash push",
+        "git -C /tmp/x notes prune",
+      ]) {
+        test(JSON.stringify(cmd), () => expect(checkDangerousGitFlags(cmd)).toBe(true));
+      }
+
+      test("読み取り系サブコマンドは false のまま", () => {
+        expect(checkDangerousGitFlags("git -C /tmp/x reflog show")).toBe(false);
+        expect(checkDangerousGitFlags("git -C /tmp/x notes list")).toBe(false);
+      });
+
+      test("CWD 内なら従来通り false", () => {
+        expect(checkDangerousGitFlags("git reflog expire --expire=now --all")).toBe(false);
+        expect(checkDangerousGitFlags("git stash push")).toBe(false);
+      });
+    });
+
+    // 他リポジトリにコミット / 作業ツリーを作る系と、省略形の stash。
+    describe("redirect 依存の破壊系 (書き換え・生成系)", () => {
+      for (const cmd of [
+        "git -C /tmp/x cherry-pick deadbeef",
+        "git -C /tmp/x revert HEAD",
+        "git -C /tmp/x worktree add /tmp/y",
+        "git -C /tmp/x stash", // 引数無し = stash push の省略形
+      ]) {
+        test(JSON.stringify(cmd), () => expect(checkDangerousGitFlags(cmd)).toBe(true));
+      }
+
+      test("既定が読み取りのものは引数無しでも false", () => {
+        // 引数無しの reflog は reflog show 相当、notes は一覧表示
+        expect(checkDangerousGitFlags("git -C /tmp/x reflog")).toBe(false);
+        expect(checkDangerousGitFlags("git -C /tmp/x notes")).toBe(false);
+      });
+
+      test("CWD 内なら従来通り false", () => {
+        expect(checkDangerousGitFlags("git cherry-pick deadbeef")).toBe(false);
+        expect(checkDangerousGitFlags("git stash")).toBe(false);
+      });
+    });
+  });
+
+  // 先頭のリダイレクト演算子。`>/dev/null git reset --hard` は parts[0] が
+  // `>/dev/null` になって入口の git 判定で早期 return していた。
+  // deny リストもプレフィックス一致なので当たらない。
+  describe("先頭リダイレクト演算子でも迂回できない", () => {
+    for (const cmd of [
+      ">/dev/null git reset --hard",
+      "2>/dev/null git push --force origin main",
+      ">/dev/null git -C /tmp/x reset --hard",
+      "> /dev/null git reset --hard",
+      ">>out.txt git reset --hard",
+      "2>&1 git reset --hard",
+      ">/dev/null FOO=bar git reset --hard",
+      ">/dev/null GIT_DIR=/tmp/x/.git git rm -rf .",
+    ]) {
+      test(JSON.stringify(cmd), () => expect(checkDangerousGitFlags(cmd)).toBe(true));
+    }
+
+    test("リダイレクト付きでも読み取り系は false", () => {
+      expect(checkDangerousGitFlags(">/dev/null git status")).toBe(false);
+    });
+
+    // リダイレクト先がクォート / 空白を含む形。`\S*` だとクォート内の空白で
+    // 切れて残余が壊れ、先頭トークンが git にならなくなる。
+    test("リダイレクト先にクォート/空白があっても剥がせる", () => {
+      expect(checkDangerousGitFlags(">'a b' git reset --hard")).toBe(true);
+      expect(checkDangerousGitFlags('>"a b" git reset --hard')).toBe(true);
+      expect(checkDangerousGitFlags("> 'a b' git reset --hard")).toBe(true);
+      expect(checkDangerousGitFlags("2>'a b' git push --force origin main")).toBe(true);
+      expect(checkDangerousGitFlags(">/tmp/ab git reset --hard")).toBe(true);
+    });
+  });
+
+  // $"..." は bash の locale translation quoting。翻訳が無ければリテラルなので
+  // $'...' と同じく迂回に使える。
+  describe('$"..." (locale translation quoting) でも迂回できない', () => {
+    for (const cmd of [
+      'git $"reset" --hard',
+      'git push $"--force" origin main',
+      'git -C /tmp/x $"checkout" -- .',
+      'git $"-C" /tmp/x reset --hard',
+    ]) {
+      test(JSON.stringify(cmd), () => expect(checkDangerousGitFlags(cmd)).toBe(true));
+    }
+
+    test('$"..." でも読み取り系は false', () => {
+      expect(checkDangerousGitFlags('git $"status"')).toBe(false);
+    });
+  });
+
+  // インライン -c による任意コマンド実行。core.fsmonitor 等は status / index 操作で
+  // 即実行されるので、ディレクトリ付け替えすら不要。config サブコマンド経由を
+  // 塞いでいる以上、より容易なこちらを開けておく理由が無い。
+  describe("インライン -c の RCE 設定キー", () => {
+    for (const cmd of [
+      "git -c core.fsmonitor=/evil status",
+      "git -c core.hooksPath=/evil status",
+      "git -c core.sshCommand=/evil fetch",
+      "git -c alias.x=!/evil x",
+      "git -C /tmp/x -c core.fsmonitor=/evil status",
+      "git -c CORE.FSMONITOR=/evil status",
+    ]) {
+      test(JSON.stringify(cmd), () => expect(checkDangerousGitFlags(cmd)).toBe(true));
+    }
+
+    // git は環境変数経由でも config を注入できる。-c だけ塞いでも同じ RCE が通る。
+    test("環境変数経由の config 注入も塞ぐ", () => {
+      expect(
+        checkDangerousGitFlags(
+          "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.fsmonitor GIT_CONFIG_VALUE_0=/evil git status",
+        ),
+      ).toBe(true);
+      expect(
+        checkDangerousGitFlags("GIT_CONFIG_PARAMETERS=\"'core.fsmonitor=/evil'\" git status"),
+      ).toBe(true);
+      expect(
+        checkDangerousGitFlags("GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.x GIT_CONFIG_VALUE_0=!/evil git x"),
+      ).toBe(true);
+      expect(
+        checkDangerousGitFlags("env GIT_CONFIG_PARAMETERS=\"'core.hooksPath=/evil'\" git status"),
+      ).toBe(true);
+    });
+
+    // config 経由でなく env 変数そのものがコマンドを走らせる形。
+    test("コマンドを実行する git env 変数も塞ぐ", () => {
+      expect(checkDangerousGitFlags("GIT_SSH_COMMAND=/evil git fetch")).toBe(true);
+      expect(checkDangerousGitFlags("GIT_SSH=/evil git fetch")).toBe(true);
+      expect(checkDangerousGitFlags("GIT_EXTERNAL_DIFF=/evil git diff")).toBe(true);
+      expect(checkDangerousGitFlags("GIT_ASKPASS=/evil git fetch")).toBe(true);
+      expect(checkDangerousGitFlags("GIT_PROXY_COMMAND=/evil git fetch")).toBe(true);
+      expect(checkDangerousGitFlags("GIT_SEQUENCE_EDITOR=/evil git rebase -i HEAD~2")).toBe(true);
+      expect(checkDangerousGitFlags("env GIT_SSH_COMMAND=/evil git fetch")).toBe(true);
+    });
+
+    test("GIT_PAGER / GIT_EDITOR は -c core.pager と同じ理由で対象外", () => {
+      expect(checkDangerousGitFlags("GIT_PAGER=cat git log")).toBe(false);
+      expect(checkDangerousGitFlags("GIT_EDITOR=vim git status")).toBe(false);
+    });
+
+    test("config 注入 env でも無害なキーは false", () => {
+      expect(
+        checkDangerousGitFlags(
+          "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=user.name GIT_CONFIG_VALUE_0=x git status",
+        ),
+      ).toBe(false);
+      expect(
+        checkDangerousGitFlags("GIT_CONFIG_PARAMETERS=\"'core.pager=cat'\" git log"),
+      ).toBe(false);
+    });
+
+    // 走査範囲は「git サブコマンドより前の global option / env 前置」に限る。
+    // 全トークンを見るとコミットメッセージ等の引数で誤 deny する。
+    test("サブコマンドの引数は inline config / config env と誤認しない", () => {
+      expect(checkDangerousGitFlags("git commit -m GIT_SSH_COMMAND=/evil")).toBe(false);
+      expect(checkDangerousGitFlags('git commit -m "GIT_SSH_COMMAND=1"')).toBe(false);
+      expect(checkDangerousGitFlags("git commit -c core.fsmonitor=x -m msg")).toBe(false);
+      expect(checkDangerousGitFlags("git commit -m GIT_CONFIG_KEY_0=core.fsmonitor")).toBe(false);
+      expect(checkDangerousGitFlags("git log --grep=core.fsmonitor=x")).toBe(false);
+    });
+
+    test("--config-env= 形式の config 注入も塞ぐ", () => {
+      expect(checkDangerousGitFlags("git --config-env=core.hooksPath=EVIL status")).toBe(true);
+      expect(checkDangerousGitFlags("git --config-env=user.name=X status")).toBe(false);
+    });
+
+    test("通常の -c は巻き込まない", () => {
+      expect(checkDangerousGitFlags("git -c core.pager=cat log")).toBe(false);
+      expect(checkDangerousGitFlags("git -c user.name=x commit -m y")).toBe(false);
+      expect(checkDangerousGitFlags("git -c advice.detachedHead=false checkout-index")).toBe(false);
+    });
+  });
+
+  // git 自身が任意コマンドを起動する transport ヘルパー。
+  // settings.json の広い allow (Bash(git fetch *) 等) にプレフィックス一致するため、
+  // ここで拾わないと auto-allow になる。
+  describe("transport ヘルパー経由の RCE", () => {
+    for (const cmd of [
+      "git fetch 'ext::sh -c evil'",
+      "git fetch --upload-pack=/tmp/evil.sh origin",
+      "git pull --upload-pack=/tmp/evil.sh",
+      "git push --receive-pack=/tmp/evil.sh origin main",
+      "git clone --upload-pack=/tmp/evil.sh https://example.com/r.git",
+      "git clone 'ext::sh -c evil' dst",
+    ]) {
+      test(JSON.stringify(cmd), () => expect(checkDangerousGitFlags(cmd)).toBe(true));
+    }
+
+    test("通常の fetch / pull / push は巻き込まない", () => {
+      expect(checkDangerousGitFlags("git fetch origin main")).toBe(false);
+      expect(checkDangerousGitFlags("git pull --rebase origin main")).toBe(false);
+      expect(checkDangerousGitFlags("git push origin main")).toBe(false);
+      expect(checkDangerousGitFlags("git clone https://github.com/x/y.git")).toBe(false);
+    });
+  });
+
+  // データ喪失を伴う付け替え系の追加分。
+  describe("redirect 依存の破壊系 (データ喪失系の追加分)", () => {
+    for (const cmd of [
+      "git -C /other restore file.txt",
+      "git -C /other mv a b",
+      "git -C /other apply /tmp/p.patch",
+      "git -C /other checkout-index -f -a",
+      "git -C /other gc --prune=now",
+      "git -C /other prune",
+      "git -C /other sparse-checkout set x",
+    ]) {
+      test(JSON.stringify(cmd), () => expect(checkDangerousGitFlags(cmd)).toBe(true));
+    }
+
+    test("CWD 内なら従来通り (restore の . は元から deny)", () => {
+      expect(checkDangerousGitFlags("git restore file.txt")).toBe(false);
+      expect(checkDangerousGitFlags("git restore .")).toBe(true);
+      expect(checkDangerousGitFlags("git mv a b")).toBe(false);
+    });
+  });
+
+  // `-c core.worktree=<dir>` は -c 経由だが実質ディレクトリ付け替え。
+  test("-c core.worktree= もディレクトリ付け替えとして扱う", () => {
+    expect(checkDangerousGitFlags("git -c core.worktree=/other rm -rf .")).toBe(true);
+    expect(checkDangerousGitFlags("git -c core.worktree=/other stash")).toBe(true);
+    // 付け替えでない -c は従来通り
+    expect(checkDangerousGitFlags("git -c core.pager=cat stash drop")).toBe(false);
+  });
+
+  // hasGitRedirectEnv の前置スキップは stripShellPrefixes と揃っている必要がある。
+  // 揃っていないと `exec GIT_DIR=... git rm -rf .` のように、コマンド本体は
+  // 正しく取り出せるのに redirect 情報だけが落ちる。
+  describe("シェルキーワード / コマンド前置を挟んでも redirect 検出が落ちない", () => {
+    for (const cmd of [
+      "exec GIT_DIR=/other/.git git rm -rf .",
+      "then GIT_DIR=/other/.git git update-ref -d refs/heads/main",
+      "nohup GIT_DIR=/other/.git git stash drop",
+      "command GIT_DIR=/other/.git git worktree add /tmp/y",
+      "time GIT_WORK_TREE=/other git rm -rf .",
+      "nice GIT_DIR=/other/.git git cherry-pick deadbeef",
+      "do GIT_DIR=/other/.git git notes prune",
+      "else GIT_DIR=/other/.git git symbolic-ref HEAD refs/heads/other",
+      "elif GIT_DIR=/other/.git git filter-branch --force",
+    ]) {
+      test(JSON.stringify(cmd), () => expect(checkDangerousGitFlags(cmd)).toBe(true));
+    }
+
+    test("前置があっても読み取り系は false", () => {
+      expect(checkDangerousGitFlags("exec GIT_DIR=/other/.git git status")).toBe(false);
+    });
+  });
+
+  // 空白なしのサブシェル / ブレースグループ。stripShellPrefixes は先頭の `(` を
+  // 文字単位で剥がすので subcommand 判定は通るが、env 検出は生のコマンドを
+  // tokenize するため `(GIT_SSH_COMMAND=/evil` が 1 トークンになって落ちていた。
+  describe("空白なしサブシェル / ブレースでも env 検出が落ちない", () => {
+    for (const cmd of [
+      "(GIT_SSH_COMMAND=/evil git fetch)",
+      "(GIT_DIR=/other/.git git rm -rf .)",
+      "((GIT_DIR=/other/.git git rm -rf .))",
+      "{GIT_SSH_COMMAND=/evil git fetch;}",
+      "( GIT_SSH_COMMAND=/evil git fetch )",
+    ]) {
+      test(JSON.stringify(cmd), () => expect(checkDangerousGitFlags(cmd)).toBe(true));
+    }
+
+    test("サブシェルでも読み取り系は false", () => {
+      expect(checkDangerousGitFlags("(GIT_DIR=/other/.git git status)")).toBe(false);
+    });
+  });
+
+  // 付け替え先リポジトリへの書き込み系。config は core.fsmonitor / core.hooksPath /
+  // alias 経由でそのリポジトリでの任意コマンド実行につながりうるので優先度が高い。
+  describe("redirect 依存の書き込み系 (config / commit / tag)", () => {
+    for (const cmd of [
+      "git -C /tmp/x config core.fsmonitor /tmp/evil.sh",
+      "git -C /tmp/x config core.hooksPath /tmp/evil",
+      "git -C /tmp/x tag -d v1.0",
+      "git -C /tmp/x tag --delete v1.0",
+      "GIT_DIR=/other/.git git config core.pager /tmp/evil.sh",
+    ]) {
+      test(JSON.stringify(cmd), () => expect(checkDangerousGitFlags(cmd)).toBe(true));
+    }
+
+    test("タグ一覧のような読み取りは false", () => {
+      expect(checkDangerousGitFlags("git -C /tmp/x tag -l")).toBe(false);
+      expect(checkDangerousGitFlags("git -C /tmp/x tag")).toBe(false);
+    });
+
+    // `git -C <repo> commit` はエージェントが絶対パスでリポジトリを操作する
+    // 正当な常用パターンで、コミット作成自体はデータを失わない。
+    // ここを塞ぐと通常の作業が止まるので意図的に allow のままにする。
+    test("git -C <repo> commit は allow のまま", () => {
+      expect(checkDangerousGitFlags("git -C /tmp/x commit -m x")).toBe(false);
+      expect(checkDangerousGitFlags("git -C /tmp/x commit -F /tmp/msg.txt")).toBe(false);
+    });
+
+    test("CWD 内なら従来通り false", () => {
+      expect(checkDangerousGitFlags("git config core.fsmonitor /tmp/x.sh")).toBe(false);
+      expect(checkDangerousGitFlags("git tag -d v1.0")).toBe(false);
+    });
+  });
+
+  test("env -u NAME を挟んでも redirect 検出が落ちない", () => {
+    expect(checkDangerousGitFlags("env -u FOO GIT_DIR=/tmp/x/.git git rm -rf .")).toBe(true);
+    expect(checkDangerousGitFlags("env --unset FOO GIT_DIR=/tmp/x/.git git rm -rf .")).toBe(true);
+    expect(checkDangerousGitFlags("env --unset=FOO GIT_DIR=/tmp/x/.git git rm -rf .")).toBe(true);
+  });
+
+  test("読み取り系は -C 付きでも false", () => {
+    expect(checkDangerousGitFlags("git -C /tmp/x status")).toBe(false);
+    expect(checkDangerousGitFlags("git -C /tmp/x log")).toBe(false);
+    expect(checkDangerousGitFlags("git -C /tmp/x diff")).toBe(false);
+  });
+
+  test("git switch はブランチ切替なら対象外（allow のまま）", () => {
+    expect(checkDangerousGitFlags("git -C /tmp/x switch main")).toBe(false);
+    expect(checkDangerousGitFlags("git switch -c feature/x")).toBe(false);
+  });
+
+  // switch -f / --discard-changes は checkout -- . と同じくローカル変更を破棄する。
+  // checkout を alwaysDangerous にした以上、こちらだけ通す非対称は残せない。
+  test("git switch の破壊フラグは危険", () => {
+    expect(checkDangerousGitFlags("git switch -f main")).toBe(true);
+    expect(checkDangerousGitFlags("git switch --discard-changes main")).toBe(true);
+    expect(checkDangerousGitFlags("git -C /other switch -f main")).toBe(true);
+  });
 });
 
 /**
@@ -430,8 +1004,6 @@ describe("統合テスト: settings.json ルールでの判定", () => {
   });
 
   describe("deny 系: 禁止コマンド", () => {
-    test("ls", () => expect(judgeCommand("ls")).toBe("deny"));
-    test("ls -la", () => expect(judgeCommand("ls -la")).toBe("deny"));
     test("cat foo.txt", () => expect(judgeCommand("cat foo.txt")).toBe("deny"));
     test("cd /tmp", () => expect(judgeCommand("cd /tmp")).toBe("deny"));
     test("rm -rf /tmp", () => expect(judgeCommand("rm -rf /tmp")).toBe("deny"));
@@ -460,6 +1032,81 @@ describe("統合テスト: settings.json ルールでの判定", () => {
   describe("未マッチ → pass-through allow", () => {
     test("python script.py", () => expect(judgeCommand("python script.py")).toBe("allow"));
     test("node index.js", () => expect(judgeCommand("node index.js")).toBe("allow"));
+    // `Bash(ls *)` は settings.json の deny から意図的に除外した (allow にも無く未マッチ)。
+    test("ls", () => expect(judgeCommand("ls")).toBe("allow"));
+    test("ls -la", () => expect(judgeCommand("ls -la")).toBe("allow"));
+
+    // `Bash(git -C *)` も deny から意図的に除外した。別ディレクトリに対する
+    // 読み取り系 git を通すための緩和で、以下はその意図を固定するテスト。
+    //
+    // 姉妹オプションの `Bash(git --git-dir *)` / `Bash(git --work-tree *)` は deny の
+    // ままで、扱いは揃っていない。緩和したのは実運用で使う `-C` だけ、というのが
+    // 現状で、`--git-dir` / `--work-tree` を同じく緩和すべきかは未判断
+    // (使う場面が無いので deny のまま倒している)。
+    // なお破壊的サブコマンドはどのオプション形式でも checkDangerousGitFlags が
+    // 捕捉するので、この非対称は読み取り系が通るかどうかの差でしかない。
+    //
+    // 緩和されるのは読み取り系だけで、破壊的サブコマンドは -C を挟んでも
+    // checkDangerousGitFlags が deny にする (下の deny 系テストを参照)。
+    //
+    // CWD 内では allow されている破壊系 (`rm` / `stash drop` / `update-ref` 等) も、
+    // `-C` で付け替えるとプロジェクト外に届いてリスクの性質が変わるため、
+    // dangerousWhenRedirected ルールで付け替え時のみ deny にしている
+    // (「ディレクトリ付け替え時のみ危険なサブコマンド」のテスト群を参照)。
+    //
+    // ⚠️ deny になるのは DANGEROUS_GIT_FLAGS に載っているものだけで、この表は
+    // denylist なので網羅ではない。他の破壊系が見つかったら表に足すこと。
+    test("git -C /tmp/x status", () => expect(judgeCommand("git -C /tmp/x status")).toBe("allow"));
+    test("git -C /tmp/x log", () => expect(judgeCommand("git -C /tmp/x log")).toBe("allow"));
+    test("git -C /tmp/x diff", () => expect(judgeCommand("git -C /tmp/x diff")).toBe("allow"));
+  });
+
+  describe("deny 系: -C でディレクトリ迂回した破壊的 git", () => {
+    test("git -C /tmp/x reset --hard", () =>
+      expect(judgeCommand("git -C /tmp/x reset --hard")).toBe("deny"));
+    test("git -C /tmp/x rebase main", () =>
+      expect(judgeCommand("git -C /tmp/x rebase main")).toBe("deny"));
+    test("git -C /tmp/x checkout -- .", () =>
+      expect(judgeCommand("git -C /tmp/x checkout -- .")).toBe("deny"));
+    test("タブ区切り: git\\t-C /tmp/x reset --hard", () =>
+      expect(judgeCommand("git\t-C /tmp/x reset --hard")).toBe("deny"));
+    test("クォート: git 'reset' --hard", () =>
+      expect(judgeCommand("git 'reset' --hard")).toBe("deny"));
+    test('コマンド名クォート: "git" -C /tmp/x reset --hard', () =>
+      expect(judgeCommand('"git" -C /tmp/x reset --hard')).toBe("deny"));
+    test("フルパス: /usr/bin/git -C /tmp/x checkout -- .", () =>
+      expect(judgeCommand("/usr/bin/git -C /tmp/x checkout -- .")).toBe("deny"));
+    test("スペース入りパス: git -C '/tmp/repo with spaces' reset --hard", () =>
+      expect(judgeCommand("git -C '/tmp/repo with spaces' reset --hard")).toBe("deny"));
+    test("ANSI-C quoting: git $'reset' --hard", () =>
+      expect(judgeCommand("git $'reset' --hard")).toBe("deny"));
+    test("ANSI-C quoting: git push $'--force' origin main", () =>
+      expect(judgeCommand("git push $'--force' origin main")).toBe("deny"));
+    test("ANSI-C escape: git $'\\x72eset' --hard", () =>
+      expect(judgeCommand("git $'\\x72eset' --hard")).toBe("deny"));
+    test("ANSI-C escape: git push $'\\x2d\\x2dforce' origin main", () =>
+      expect(judgeCommand("git push $'\\x2d\\x2dforce' origin main")).toBe("deny"));
+    test("環境変数前置: FOO=bar git -C /tmp/x reset --hard", () =>
+      expect(judgeCommand("FOO=bar git -C /tmp/x reset --hard")).toBe("deny"));
+    test("環境変数前置: GIT_DIR=/tmp/x/.git git reset --hard", () =>
+      expect(judgeCommand("GIT_DIR=/tmp/x/.git git reset --hard")).toBe("deny"));
+    test("空白入り env 値: FOO='bar baz' git reset --hard", () =>
+      expect(judgeCommand("FOO='bar baz' git reset --hard")).toBe("deny"));
+    test("空白入り env 値: env FOO='bar baz' git reset --hard", () =>
+      expect(judgeCommand("env FOO='bar baz' git reset --hard")).toBe("deny"));
+  });
+
+  describe("deny 系: git branch の強制付け替え", () => {
+    test("git branch -f main HEAD~10", () =>
+      expect(judgeCommand("git branch -f main HEAD~10")).toBe("deny"));
+    test("git branch --force main HEAD~10", () =>
+      expect(judgeCommand("git branch --force main HEAD~10")).toBe("deny"));
+    test("git -C /tmp/x branch -f main HEAD~10", () =>
+      expect(judgeCommand("git -C /tmp/x branch -f main HEAD~10")).toBe("deny"));
+    test("git branch (一覧) は allow のまま", () =>
+      expect(judgeCommand("git branch")).toBe("allow"));
+    test("git branch feature/x は allow のまま", () =>
+      expect(judgeCommand("git branch feature/x")).toBe("allow"));
   });
 
   describe("複合コマンド（パイプ / && / リダイレクト）", () => {
@@ -483,8 +1130,9 @@ describe("統合テスト: settings.json ルールでの判定", () => {
       expect(judgeCommand("git diff HEAD~1 2>&1 | head -20")).toBe("allow");
     });
 
-    test("git status && ls → deny (ls が deny)", () => {
-      expect(judgeCommand("git status && ls")).toBe("deny");
+    // `Bash(ls *)` を deny から意図的に除外したため、ls は未マッチ pass-through allow。
+    test("git status && ls → allow (両方 allow)", () => {
+      expect(judgeCommand("git status && ls")).toBe("allow");
     });
 
     test("pnpm build 2>&1 | tail -20 → allow (pnpm は未マッチで pass-through)", () => {
