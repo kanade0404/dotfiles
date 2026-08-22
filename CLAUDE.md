@@ -82,11 +82,16 @@ install.sh                  # Nix 管理外ファイルの symlink 作成スク�
 Claude Code の metrics / logs を OTLP エンドポイントへ export する設定。
 **トークンは絶対にコミットしない**方針で、設定本体とトークンの供給経路を分離している。
 
+構成: `Claude Code → OpenTelemetry Collector (Cloud Run) → Findy AI+ + Grafana Cloud` の
+ファンアウト。以前は Findy AI+ への直送だったが、Collector 経由で複数バックエンドへ
+分岐する形に変更した。Collector は受信を `bearertokenauth` で認証している。Collector 自体は
+**別リポジトリ (private-infra) で Terraform 管理**しており、本リポジトリでは管理しない。
+
 | 対象 | 置き場所 | 備考 |
 |------|---------|------|
-| エンドポイント・protocol・export interval 等 | `.claude/settings.json` の `env` (コミット済み) | `OTEL_EXPORTER_OTLP_HEADERS` はここに**入れない** |
+| エンドポイント・protocol・export interval 等 | `.claude/settings.json` の `env` (コミット済み) | `OTEL_EXPORTER_OTLP_HEADERS` はここに**入れない**。送信先は Collector (Cloud Run) |
 | `Authorization: Bearer <token>` ヘッダー | `.claude/settings.json` の `otelHeadersHelper` → `.claude/hooks/otel-headers.sh` | helper が実行時にトークンを解決して JSON で返す |
-| トークン実体 (ローカル) | macOS Keychain (service: `claude-code-otel`) | dotfiles には一切書かない |
+| トークン実体 (ローカル) | macOS Keychain (service: `claude-code-otel`) | 値は Collector の受信トークン (`otel-collector-receiver-token`)。以前の Findy トークンから差し替え。dotfiles には一切書かない |
 | トークン実体 (cloud) | claude.ai/code の Environment variables で `OTEL_EXPORTER_TOKEN` | 同上 |
 
 トークンの解決順序 (`.claude/hooks/otel-headers.sh`):
@@ -161,8 +166,9 @@ security add-generic-password -s "claude-code-otel" -a "$USER" -w '<token>' -U
   初回の **workspace trust (このフォルダのファイルを信頼するか) を承認した後は**
   テレメトリ export が試みられる。トークンを持たないため `Authorization` ヘッダーは付かないが、
   **リクエスト自体は送信される** (trust を承認しなければ project settings の `env` は
-  有効にならないので、無条件に送信されるわけではない)。受信側 (API Gateway) の authorizer で
-  無認証リクエストを弾く前提の設計であり、設定ファイル側ではガードしていない
+  有効にならないので、無条件に送信されるわけではない)。受信側 (Collector の
+  `bearertokenauth`) で無認証リクエストを弾く前提の設計であり、設定ファイル側では
+  ガードしていない
 
 ## 危険 git コマンドのガード (rule-matcher)
 
