@@ -258,6 +258,7 @@ Claude Code は helper を起動時に再実行してトークンをディスク
 既存の `~/.codex/config.toml` に手書きの `[otel]` / `[otel.*]` table がある場合は、重複 table で Codex config を壊さないため
 生成を失敗させる。手書き設定を削除するか、managed block 側へ移行してから再実行する。
 `cc` alias は通常起動向けに `.local/bin/codex-otel` を通す。config 更新に失敗しても警告だけ出し、テレメトリ都合で Codex セッションを落とさない。
+`cc` は interactive zsh alias として意図的に Codex 用に使う。C コンパイラが必要な対話操作では `/usr/bin/cc` などフルパスで呼ぶ。
 
 ## herdr hook スクリプト (SessionStart → pane/agent通知)
 
