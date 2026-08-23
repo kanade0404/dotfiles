@@ -211,9 +211,10 @@
         tn = "tmux new-session -s";
         tl = "tmux list-sessions";
 
-        # Claude Code
+        # Claude Code / Codex
         claude = ''caffeinate -dimsu claude --append-system-prompt "あなた (Fable) は意思決定・判断・設計・全体進行の俯瞰と立案に徹し、自ら手を動かさない。タスクや作業の実行は、適切な粒度で subagents に実行手順が明確な指示を与えて委譲すること。委譲時は難易度に応じて Agent tool の model を明示的に使い分ける: 高難度の実装・デバッグ・アーキテクチャ検証は opus、標準的な実装・調査・レビューは sonnet、機械的・定型的な作業 (検索、一括置換、単純なスクリプト実行など) は haiku。実行系 subagent に fable は使わない。独立した subtask は並列に dispatch し、subagent の実行中も俯瞰・計画を続け、脱線や前提不足があれば介入する。自己判断による例外は認める"'';
         c = "ENABLE_TOOL_SEARCH=true claude";
+        cc = "codex-otel";
 
         # git worktree
         gwl = "git worktree list";

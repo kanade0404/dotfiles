@@ -43,7 +43,7 @@ nix/
 rulesync-claude/            # Claude 用 skill の rulesync 隔離パイプライン (config + lock)
 .agents/skills/             # Codex 用 skills — rulesync で生成 (rulesync.jsonc) + install.sh でsymlink
 .github/workflows/          # GitHub Actions (PR conflict 自動解決 etc.)
-.local/bin/                 # ヘルパースクリプト (tmux-project, gw) — install.sh でsymlink
+.local/bin/                 # ヘルパースクリプト (tmux-project, gw, codex-otel) — install.sh でsymlink
 .gitignore                  # ⚠️ global な core.excludesFile (下記の注意を参照)
 bootstrap.sh                # 初回セットアップ (Homebrew + nix-darwin bootstrap + install.sh)
 bootstrap-codex-cloud.sh    # Codex Cloud 用の依存関係セットアップ
@@ -75,6 +75,7 @@ install.sh                  # Nix 管理外ファイルの symlink 作成スク�
 | Codex 用 skill のソース変更 | kanade0404/skills は `ref` でタグ固定 (push だけでは取得されない)。tag 更新が必要 | `rulesync.jsonc` / `rulesync-claude/rulesync.jsonc` **両方**の `ref` を更新 → `bun run rulesync:skills:update` + `bun run rulesync:skills:claude:update` + `install.sh` (両ファイルは同じ source を参照するため ref 更新は常に両パイプライン同時。`.agents/skills` はグローバル symlink のため反映に必須) |
 | GitHub Actions workflow | `.github/workflows/` を編集 | push (Actions が自動検出) |
 | Claude Code テレメトリ (OTEL) のエンドポイント/挙動 | `.claude/settings.json` の `env` | `install.sh` (トークンは別管理。「Claude Code テレメトリ (OpenTelemetry)」節を参照) |
+| Codex テレメトリ (OTEL) の生成ロジック | `.local/bin/codex-otel` (`.codex/config.toml` は tokenless template) | `install.sh` (トークンは別管理。「Codex テレメトリ (OpenTelemetry)」節を参照) |
 | herdr hook (pane⇔agentセッション通知) | `.claude/hooks/herdr-agent-state.sh` (Claude用) / `.codex/herdr-agent-state.sh` (Codex用) | `install.sh` (実装は herdr 管理下。「herdr hook スクリプト」節を参照) |
 
 ## Claude Code テレメトリ (OpenTelemetry)
@@ -221,6 +222,49 @@ ANSI-C quoting (`$'\x72eset'`)・フルパス (`/usr/bin/git`) を正規化す�
   `git -c core.fsmonitor= -c core.pager=cat --no-pager -C <path> ...` のように
   明示的に無効化するか、そもそも `-C` で触らないこと
 
+## Codex テレメトリ (OpenTelemetry)
+
+Codex CLI の logs / metrics / traces を Claude Code と同じ Collector へ export する設定。
+Codex の `[otel]` は `~/.codex/config.toml` の user-level config で有効。
+headers は静的値なので **トークンを dotfiles にコミットしない**ために、`install.sh` が
+`.local/bin/codex-otel --write-config-only` を実行して `~/.codex/config.toml` に managed block を追記する。
+
+構成: `.codex/config.toml (tokenless template) → install.sh → ~/.codex/config.toml (生成・0600) → codex`。
+これにより `codex` / `cc` の通常起動でも OTEL 設定が有効になる。
+
+| 対象 | 置き場所 | 備考 |
+|------|----------|------|
+| OTEL endpoint / protocol / export 対象 | `.local/bin/codex-otel` (コミット済み) | logs `/v1/logs`, metrics `/v1/metrics`, traces `/v1/traces`, `protocol = "json"` |
+| Codex が読む OTEL config | `~/.codex/config.toml` (`install.sh` が生成) | `# BEGIN CODEX OTEL MANAGED` block にトークンを含みうるため repo に入れない |
+| トークン実体 | 環境変数 `OTEL_EXPORTER_TOKEN` / macOS Keychain | 解決順は `OTEL_EXPORTER_TOKEN` → service `codex-otel` → service `claude-code-otel` |
+
+Collector endpoint は `.claude/settings.json` と `.local/bin/codex-otel` の 2 箇所にあるため、変更時は両方を同時に更新する。
+Claude Code の OTEL env var は `http/json` を使うが、Codex TOML の `protocol` は Codex config schema に合わせて `json` を使う。
+
+Keychain へ Codex 専用 service として登録する場合:
+
+```bash
+security add-generic-password -s "codex-otel" -a "$USER" -w '<token>' -U
+```
+
+既存の Claude Code 用 `claude-code-otel` service も fallback で読むので、同じ Collector token を共有するだけなら追加登録なしでよい。
+`CODEX_OTEL_ENVIRONMENT` / `CODEX_OTEL_LOGS_ENDPOINT` / `CODEX_OTEL_METRICS_ENDPOINT` /
+`CODEX_OTEL_TRACES_ENDPOINT` で生成値を上書きできる。
+
+Claude Code は helper を起動時に再実行してトークンをディスクへ書かないが、Codex は headers が静的 TOML のため
+`~/.codex/config.toml` の managed block に bearer token を平文 (mode 600) で保持する。token をローテーションしたら
+`install.sh` または `.local/bin/codex-otel --write-config-only` を再実行して managed block を再生成すること。
+一時的に token を解決できない場合、既存 managed block に `Authorization` が残っていれば書き換えをスキップし、既存ヘッダーを保持する。
+`install.sh` はリポジトリの `.codex/config.toml` を正として `~/.codex/config.toml` を置き換えるため、
+既存のローカル Codex 設定は保持しない。手書き設定が必要な場合は、実行前にバックアップして
+`.codex/config.toml` へ移行するか、`install.sh` ではなく `.local/bin/codex-otel --write-config-only` を直接実行し、
+`CODEX_OTEL_CONFIG_TARGET` で別ファイルへ生成する。
+既存の `~/.codex/config.toml` に手書きの `[otel]` / `[otel.*]` table がある場合は、重複 table で Codex config を壊さないため
+生成を失敗させる。手書き設定を削除するか、managed block 側へ移行してから再実行する。
+`~/.codex/config.toml` の更新は read-modify-write で lock しないため、`cc` 同時起動や Codex runtime の同時書き込みがあると last-writer-wins になる。
+`cc` alias は通常起動向けに `.local/bin/codex-otel` を通す。config 更新に失敗しても警告だけ出し、テレメトリ都合で Codex セッションを落とさない。
+`cc` は interactive zsh alias として意図的に Codex 用に使う。C コンパイラが必要な対話操作では `/usr/bin/cc` などフルパスで呼ぶ。
+
 ## herdr hook スクリプト (SessionStart → pane/agent通知)
 
 tmux pane と AI agent セッションを紐付けるための herdr 向け SessionStart hook。
@@ -285,7 +329,7 @@ tmux pane と AI agent セッションを紐付けるための herdr 向け Sess
 - **ターミナル**: Ghostty
 - **エディタ**: Neovim (LazyVim) + GitHub Copilot
 - **多重化**: tmux (prefix: `C-a`)
-- **AI**: Claude Code (`cc` alias, tmux Window 4)
+- **AI**: Claude Code (`c` alias, tmux Window 4) / Codex (`cc` alias)
 - **Git**: lazygit (tmux Window 5) + git worktree (`gw` コマンド)
 - **テーマ**: GitHub Light で統一 (Ghostty, tmux, fzf, bat, delta, Neovim)
 

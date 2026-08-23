@@ -8,6 +8,26 @@ set -euo pipefail
 
 DOTFILES="${DOTFILES:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 OS="$(uname)"
+codex_config_backup=""
+codex_config_backup_retained=""
+
+cleanup_codex_config_backup() {
+  if [ -n "${codex_config_backup:-}" ]; then
+    rm -f "$codex_config_backup"
+  fi
+}
+
+retain_codex_config_backup() {
+  local retained_backup
+
+  [ -n "${codex_config_backup:-}" ] || return 0
+  retained_backup="$(mktemp "$HOME/.codex/config.toml.bak.XXXXXX")"
+  mv "$codex_config_backup" "$retained_backup"
+  codex_config_backup=""
+  codex_config_backup_retained="$retained_backup"
+}
+
+trap cleanup_codex_config_backup EXIT
 
 echo "==> Linking Neovim config (LazyVim, managed outside Nix)"
 mkdir -p "$HOME/.config"
@@ -25,13 +45,25 @@ echo "==> Linking helper scripts"
 mkdir -p "$HOME/.local/bin"
 ln -sf "$DOTFILES/.local/bin/tmux-project" "$HOME/.local/bin/tmux-project"
 ln -sf "$DOTFILES/.local/bin/gw" "$HOME/.local/bin/gw"
+ln -sf "$DOTFILES/.local/bin/codex-otel" "$HOME/.local/bin/codex-otel"
 
 echo "==> Installing Codex user settings"
 mkdir -p "$HOME/.codex"
 # Replace an old symlink so Codex runtime writes stay in ~/.codex only.
 # Re-running install.sh resets local Codex state such as project trust prompts.
+if [ -f "$HOME/.codex/config.toml" ]; then
+  codex_config_backup="$(mktemp "${TMPDIR:-/tmp}/codex-config.XXXXXX")"
+  cp "$HOME/.codex/config.toml" "$codex_config_backup"
+fi
 rm -f "$HOME/.codex/config.toml"
 install -m 600 "$DOTFILES/.codex/config.toml" "$HOME/.codex/config.toml"
+if ! CODEX_OTEL_CONFIG_TARGET="$HOME/.codex/config.toml" CODEX_OTEL_PRESERVE_AUTH_FROM="$codex_config_backup" "$DOTFILES/.local/bin/codex-otel" --write-config-only; then
+  retain_codex_config_backup
+  echo "warning: failed to refresh Codex OTEL config; continuing install.sh" >&2
+  if [ -n "$codex_config_backup_retained" ]; then
+    echo "warning: retained previous Codex config backup at $codex_config_backup_retained" >&2
+  fi
+fi
 ln -sf "$DOTFILES/.codex/hooks.json" "$HOME/.codex/hooks.json"
 # herdr の Codex 連携スクリプト。hooks.json が $HOME/.codex/ 直下を指しており、
 # かつ .claude/hooks/* は ~/.codex/hooks/ にも配布される (同名だと Claude 版に
