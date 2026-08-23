@@ -251,6 +251,9 @@ security add-generic-password -s "codex-otel" -a "$USER" -w '<token>' -U
 Claude Code は helper を起動時に再実行してトークンをディスクへ書かないが、Codex は headers が静的 TOML のため
 `~/.codex/config.toml` の managed block に bearer token を平文 (mode 600) で保持する。token をローテーションしたら
 `install.sh` または `.local/bin/codex-otel --write-config-only` を再実行して managed block を再生成すること。
+`install.sh` はリポジトリの `.codex/config.toml` を正として `~/.codex/config.toml` を置き換えるため、
+既存のローカル Codex 設定は保持しない。手書き設定が必要な場合は、実行前にバックアップして
+`.codex/config.toml` へ移行するか、`CODEX_OTEL_CONFIG_TARGET` を使って別ファイルへ生成する。
 既存の `~/.codex/config.toml` に手書きの `[otel]` / `[otel.*]` table がある場合は、重複 table で Codex config を壊さないため
 生成を失敗させる。手書き設定を削除するか、managed block 側へ移行してから再実行する。
 通常起動向けの `.local/bin/codex-otel` は config 更新に失敗しても警告だけ出し、テレメトリ都合で Codex セッションを落とさない。

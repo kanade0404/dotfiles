@@ -95,12 +95,21 @@ write_managed_config() {
         sub(/[[:space:]]+$/, "", value)
         return value
       }
+      function is_otel_table_header(value, inner) {
+        value = trim(value)
+        if (value !~ /^\[/) { return 0 }
+        inner = value
+        sub(/^\[/, "", inner)
+        sub(/\].*$/, "", inner)
+        gsub(/[[:space:]]+/, "", inner)
+        return inner == "otel" || inner ~ /^otel[.]/ || inner == "\"otel\"" || inner ~ /^"otel"[.]/
+      }
       {
         line = trim($0)
         if (line == begin) { skip = 1; next }
         if (line == end) { skip = 0; next }
         if (skip) { next }
-        if (line ~ /^\[otel(\]|[.])/) {
+        if (is_otel_table_header(line)) {
           unmanaged_otel = 1
           next
         }
