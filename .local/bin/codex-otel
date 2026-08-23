@@ -23,6 +23,7 @@ metrics_endpoint="${CODEX_OTEL_METRICS_ENDPOINT:-$default_metrics_endpoint}"
 traces_endpoint="${CODEX_OTEL_TRACES_ENDPOINT:-$default_traces_endpoint}"
 
 token="${OTEL_EXPORTER_TOKEN:-}"
+preserve_auth_from="${CODEX_OTEL_PRESERVE_AUTH_FROM:-}"
 
 trim_spaces() {
   local value="$1"
@@ -106,6 +107,10 @@ write_otel_tables() {
 }
 
 managed_block_has_authorization() {
+  managed_block_authorization_token "$1" >/dev/null
+}
+
+managed_block_authorization_token() {
   local target="$1"
   local begin_marker="# BEGIN CODEX OTEL MANAGED"
   local end_marker="# END CODEX OTEL MANAGED"
@@ -113,23 +118,41 @@ managed_block_has_authorization() {
   [ -f "$target" ] || return 1
 
   awk -v begin="$begin_marker" -v end="$end_marker" '
+    function trim(value) {
+      sub(/^[[:space:]]+/, "", value)
+      sub(/[[:space:]]+$/, "", value)
+      return value
+    }
+    function print_authorization_token(value) {
+      value = trim(value)
+      if (value !~ /^Authorization[[:space:]]*=[[:space:]]*"Bearer [^"]+"[[:space:]]*$/) {
+        return 0
+      }
+      sub(/^Authorization[[:space:]]*=[[:space:]]*"Bearer /, "", value)
+      sub(/"[[:space:]]*$/, "", value)
+      print value
+      return 1
+    }
     {
       line = $0
       sub(/^[[:space:]]+/, "", line)
       sub(/[[:space:]]+$/, "", line)
       if (line == begin) {
+        if (in_managed) { malformed_managed = 1 }
         in_managed = 1
         next
       }
       if (line == end) {
+        if (!in_managed) { malformed_managed = 1 }
         in_managed = 0
         next
       }
-      if (in_managed && line ~ /^Authorization[[:space:]]*=/) {
-        found = 1
+      if (!found && in_managed && line ~ /^Authorization[[:space:]]*=/) {
+        found = print_authorization_token(line)
       }
     }
     END {
+      if (in_managed || malformed_managed) { exit 2 }
       exit found ? 0 : 1
     }
   ' "$target"
@@ -145,8 +168,14 @@ write_managed_config() {
   local has_unmanaged_content=0
 
   target_dir="$(dirname "$target")"
-  mkdir -p "$target_dir" || return 1
-  tmp_config="$(mktemp "$target_dir/.codex-config.XXXXXX")" || return 1
+  mkdir -p "$target_dir" || {
+    echo "codex-otel: failed to create config directory $target_dir" >&2
+    return 1
+  }
+  tmp_config="$(mktemp "$target_dir/.codex-config.XXXXXX")" || {
+    echo "codex-otel: failed to create temporary config in $target_dir" >&2
+    return 1
+  }
   install_tmp_config_traps
   chmod 600 "$tmp_config" 2>/dev/null || true
 
@@ -200,8 +229,37 @@ write_managed_config() {
           value ~ /^"otel"[[:space:]]*([.=])/ ||
           value ~ /^'\''otel'\''[[:space:]]*([.=])/
       }
+      function update_multiline_state(value, basic_pos, literal_pos, pos, delimiter, rest) {
+        rest = value
+        while (1) {
+          basic_pos = index(rest, "\"\"\"")
+          literal_pos = index(rest, "'\'''\'''\''")
+          if (!basic_pos && !literal_pos) { return }
+          if (basic_pos && (!literal_pos || basic_pos < literal_pos)) {
+            pos = basic_pos
+            delimiter = "\"\"\""
+          } else {
+            pos = literal_pos
+            delimiter = "'\'''\'''\''"
+          }
+          if (multiline_delimiter == "") {
+            multiline_delimiter = delimiter
+          } else if (multiline_delimiter == delimiter) {
+            multiline_delimiter = ""
+          }
+          rest = substr(rest, pos + 3)
+        }
+      }
       {
+        was_in_multiline = multiline_delimiter != ""
         line = trim($0)
+        if (was_in_multiline) {
+          update_multiline_state($0)
+          printf "%s", blanks
+          blanks = ""
+          print
+          next
+        }
         if (line == begin) {
           if (skip) { malformed_managed = 1 }
           skip = 1
@@ -213,6 +271,7 @@ write_managed_config() {
           next
         }
         if (skip) { next }
+        update_multiline_state($0)
         if (line ~ /^\[/) { in_table = 1 }
         if (is_otel_table_header(line)) {
           unmanaged_otel = 1
@@ -241,6 +300,8 @@ write_managed_config() {
         echo "codex-otel: unmanaged [otel] config already exists in $target; remove or migrate it before writing the managed block" >&2
       elif [ "$filter_status" -eq 43 ]; then
         echo "codex-otel: managed OTEL block markers in $target are unbalanced; refusing to rewrite" >&2
+      else
+        echo "codex-otel: failed to filter existing config $target (awk exit $filter_status)" >&2
       fi
       cleanup_tmp_config
       clear_tmp_config_traps
@@ -261,12 +322,14 @@ write_managed_config() {
     write_otel_tables
     printf '\n%s\n' "$end_marker"
   } >>"$tmp_config" || {
+    echo "codex-otel: failed to append managed OTEL block for $target" >&2
     cleanup_tmp_config
     clear_tmp_config_traps
     return 1
   }
 
   mv "$tmp_config" "$target" || {
+    echo "codex-otel: failed to replace $target with refreshed OTEL config" >&2
     cleanup_tmp_config
     clear_tmp_config_traps
     return 1
@@ -302,6 +365,18 @@ esac
 if [ -z "$token" ] && managed_block_has_authorization "$config_target"; then
   echo "codex-otel: no token; preserving existing Authorization header in $config_target" >&2
 else
+  if [ -z "$token" ] && [ -n "$preserve_auth_from" ]; then
+    preserved_token="$(managed_block_authorization_token "$preserve_auth_from")"
+    preserve_status=$?
+    if [ "$preserve_status" -eq 0 ]; then
+      token="$(trim_spaces "$preserved_token")"
+    elif [ "$preserve_status" -eq 2 ]; then
+      echo "codex-otel: managed OTEL block markers in $preserve_auth_from are unbalanced; refusing to preserve Authorization" >&2
+      if [ "$mode" = "write-config" ]; then
+        exit 1
+      fi
+    fi
+  fi
   if ! write_managed_config "$config_target"; then
     if [ "$mode" = "write-config" ]; then
       exit 1

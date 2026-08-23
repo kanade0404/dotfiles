@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
 const script = resolve(".local/bin/codex-otel");
+const installScript = resolve("install.sh");
 
 let root: string;
 
@@ -47,6 +48,15 @@ function writeConfig(name: string, content: string): string {
   return path;
 }
 
+function prepareDotfilesFixture(template = 'model = "template"\n'): string {
+  const fixture = join(root, "dotfiles");
+  mkdirSync(join(fixture, ".codex"), { recursive: true });
+  mkdirSync(join(fixture, ".local", "bin"), { recursive: true });
+  writeFileSync(join(fixture, ".codex", "config.toml"), template);
+  symlinkSync(script, join(fixture, ".local", "bin", "codex-otel"));
+  return fixture;
+}
+
 describe("codex-otel", () => {
   test.each([
     "[ otel ]\nenvironment = \"manual\"\n",
@@ -77,6 +87,17 @@ describe("codex-otel", () => {
     expect(generated).toContain("[\"ot el\"]");
     expect(generated).toContain("# BEGIN CODEX OTEL MANAGED");
     expect(generated).toContain("[otel]");
+  });
+
+  test("does not treat otel table text inside multiline strings as unmanaged config", () => {
+    const target = writeConfig("config.toml", 'instructions = """\n[otel]\n"""\n');
+
+    const result = runCodexOtel(target);
+
+    expect(result.status).toBe(0);
+    const generated = readFileSync(target, "utf8");
+    expect(generated).toContain('instructions = """\n[otel]\n"""');
+    expect(generated).toContain("# BEGIN CODEX OTEL MANAGED");
   });
 
   test("writes bearer token headers for all exporters", () => {
@@ -133,6 +154,51 @@ describe("codex-otel", () => {
 
     expect(result.status).toBe(0);
     expect(result.stderr).toContain("preserving existing Authorization header");
+    expect(readFileSync(target, "utf8")).toBe(before);
+  });
+
+  test("install preserves existing Authorization when token lookup fails", () => {
+    const dotfiles = prepareDotfilesFixture();
+    const home = join(root, "home");
+    mkdirSync(join(home, ".codex"), { recursive: true });
+    writeFileSync(
+      join(home, ".codex", "config.toml"),
+      'model = "old"\n# BEGIN CODEX OTEL MANAGED\n[otel]\nenvironment = "dev"\n\n[otel.exporter."otlp-http".headers]\nAuthorization = "Bearer existing-token"\n\n[otel.metrics_exporter."otlp-http".headers]\nAuthorization = "Bearer existing-token"\n\n[otel.trace_exporter."otlp-http".headers]\nAuthorization = "Bearer existing-token"\n# END CODEX OTEL MANAGED\n',
+    );
+
+    const result = spawnSync("bash", [installScript], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        DOTFILES: dotfiles,
+        HOME: home,
+        OTEL_EXPORTER_TOKEN: "",
+        PATH: pathWithMissingSecurity(),
+      },
+    });
+
+    expect(result.status).toBe(0);
+    const generated = readFileSync(join(home, ".codex", "config.toml"), "utf8");
+    expect(generated).toContain('model = "template"');
+    expect(generated).not.toContain('model = "old"');
+    expect(generated.match(/Authorization = "Bearer existing-token"/g)).toHaveLength(3);
+  });
+
+  test("does not preserve Authorization from an unbalanced managed block", () => {
+    const target = writeConfig(
+      "config.toml",
+      'model = "gpt-5"\n# BEGIN CODEX OTEL MANAGED\n[otel.exporter."otlp-http".headers]\nAuthorization = "Bearer existing-token"\n',
+    );
+    const before = readFileSync(target, "utf8");
+
+    const result = runCodexOtel(target, {
+      OTEL_EXPORTER_TOKEN: "",
+      PATH: pathWithMissingSecurity(),
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("markers in");
+    expect(result.stderr).toContain("are unbalanced");
     expect(readFileSync(target, "utf8")).toBe(before);
   });
 

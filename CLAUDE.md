@@ -75,7 +75,7 @@ install.sh                  # Nix 管理外ファイルの symlink 作成スク�
 | Codex 用 skill のソース変更 | kanade0404/skills は `ref` でタグ固定 (push だけでは取得されない)。tag 更新が必要 | `rulesync.jsonc` / `rulesync-claude/rulesync.jsonc` **両方**の `ref` を更新 → `bun run rulesync:skills:update` + `bun run rulesync:skills:claude:update` + `install.sh` (両ファイルは同じ source を参照するため ref 更新は常に両パイプライン同時。`.agents/skills` はグローバル symlink のため反映に必須) |
 | GitHub Actions workflow | `.github/workflows/` を編集 | push (Actions が自動検出) |
 | Claude Code テレメトリ (OTEL) のエンドポイント/挙動 | `.claude/settings.json` の `env` | `install.sh` (トークンは別管理。「Claude Code テレメトリ (OpenTelemetry)」節を参照) |
-| Codex テレメトリ (OTEL) の user-level config | `.codex/config.toml` + `.local/bin/codex-otel` | `install.sh` (トークンは別管理。「Codex テレメトリ (OpenTelemetry)」節を参照) |
+| Codex テレメトリ (OTEL) の生成ロジック | `.local/bin/codex-otel` (`.codex/config.toml` は tokenless template) | `install.sh` (トークンは別管理。「Codex テレメトリ (OpenTelemetry)」節を参照) |
 | herdr hook (pane⇔agentセッション通知) | `.claude/hooks/herdr-agent-state.sh` (Claude用) / `.codex/herdr-agent-state.sh` (Codex用) | `install.sh` (実装は herdr 管理下。「herdr hook スクリプト」節を参照) |
 
 ## Claude Code テレメトリ (OpenTelemetry)
@@ -239,6 +239,7 @@ headers は静的値なので **トークンを dotfiles にコミットしな�
 | トークン実体 | 環境変数 `OTEL_EXPORTER_TOKEN` / macOS Keychain | 解決順は `OTEL_EXPORTER_TOKEN` → service `codex-otel` → service `claude-code-otel` |
 
 Collector endpoint は `.claude/settings.json` と `.local/bin/codex-otel` の 2 箇所にあるため、変更時は両方を同時に更新する。
+Claude Code の OTEL env var は `http/json` を使うが、Codex TOML の `protocol` は Codex config schema に合わせて `json` を使う。
 
 Keychain へ Codex 専用 service として登録する場合:
 

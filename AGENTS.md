@@ -59,7 +59,7 @@ install.sh               # Nix 管理外ファイルの symlink 作成スクリ�
 | Ghostty設定 | `.config/ghostty/config` | `install.sh` + Ghostty再起動 |
 | ヘルパースクリプト追加 | `.local/bin/` に作成 + `install.sh` にsymlink追加 | `install.sh` |
 | Codex設定/rules/hooks/commands | `.codex/` 配下を編集 | `install.sh` |
-| Codex テレメトリ (OTEL) | `.codex/config.toml` + `.local/bin/codex-otel` | `install.sh` |
+| Codex テレメトリ (OTEL) | `.local/bin/codex-otel` (`.codex/config.toml` は tokenless template) | `install.sh` |
 | Codex skills | `rulesync.jsonc` (sources) → `.agents/skills/` | `bun run rulesync:skills:update` + `install.sh` |
 | OpenCode skills | `rulesync.jsonc` (sources) → `.opencode/skills/` | `bun run rulesync:skills:update` + `install.sh` |
 | Claude skills | `rulesync-claude/rulesync.jsonc` (sources) → `.claude/skills/` (project 単位。`~/.claude/skills` へのグローバル symlink 配布はしない) | `bun run rulesync:skills:claude:update` |

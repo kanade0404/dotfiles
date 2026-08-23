@@ -8,6 +8,15 @@ set -euo pipefail
 
 DOTFILES="${DOTFILES:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 OS="$(uname)"
+codex_config_backup=""
+
+cleanup_codex_config_backup() {
+  if [ -n "${codex_config_backup:-}" ]; then
+    rm -f "$codex_config_backup"
+  fi
+}
+
+trap cleanup_codex_config_backup EXIT
 
 echo "==> Linking Neovim config (LazyVim, managed outside Nix)"
 mkdir -p "$HOME/.config"
@@ -31,9 +40,13 @@ echo "==> Installing Codex user settings"
 mkdir -p "$HOME/.codex"
 # Replace an old symlink so Codex runtime writes stay in ~/.codex only.
 # Re-running install.sh resets local Codex state such as project trust prompts.
+if [ -f "$HOME/.codex/config.toml" ]; then
+  codex_config_backup="$(mktemp "${TMPDIR:-/tmp}/codex-config.XXXXXX")"
+  cp "$HOME/.codex/config.toml" "$codex_config_backup"
+fi
 rm -f "$HOME/.codex/config.toml"
 install -m 600 "$DOTFILES/.codex/config.toml" "$HOME/.codex/config.toml"
-CODEX_OTEL_CONFIG_TARGET="$HOME/.codex/config.toml" "$DOTFILES/.local/bin/codex-otel" --write-config-only
+CODEX_OTEL_CONFIG_TARGET="$HOME/.codex/config.toml" CODEX_OTEL_PRESERVE_AUTH_FROM="$codex_config_backup" "$DOTFILES/.local/bin/codex-otel" --write-config-only
 ln -sf "$DOTFILES/.codex/hooks.json" "$HOME/.codex/hooks.json"
 # herdr の Codex 連携スクリプト。hooks.json が $HOME/.codex/ 直下を指しており、
 # かつ .claude/hooks/* は ~/.codex/hooks/ にも配布される (同名だと Claude 版に
