@@ -75,6 +75,7 @@ install.sh                  # Nix 管理外ファイルの symlink 作成スク�
 | Codex 用 skill のソース変更 | kanade0404/skills は `ref` でタグ固定 (push だけでは取得されない)。tag 更新が必要 | `rulesync.jsonc` / `rulesync-claude/rulesync.jsonc` **両方**の `ref` を更新 → `bun run rulesync:skills:update` + `bun run rulesync:skills:claude:update` + `install.sh` (両ファイルは同じ source を参照するため ref 更新は常に両パイプライン同時。`.agents/skills` はグローバル symlink のため反映に必須) |
 | GitHub Actions workflow | `.github/workflows/` を編集 | push (Actions が自動検出) |
 | Claude Code テレメトリ (OTEL) のエンドポイント/挙動 | `.claude/settings.json` の `env` | `install.sh` (トークンは別管理。「Claude Code テレメトリ (OpenTelemetry)」節を参照) |
+| Codex テレメトリ (OTEL) の user-level config | `.codex/config.toml` + `.local/bin/codex-otel` | `install.sh` (トークンは別管理。「Codex テレメトリ (OpenTelemetry)」節を参照) |
 | herdr hook (pane⇔agentセッション通知) | `.claude/hooks/herdr-agent-state.sh` (Claude用) / `.codex/herdr-agent-state.sh` (Codex用) | `install.sh` (実装は herdr 管理下。「herdr hook スクリプト」節を参照) |
 
 ## Claude Code テレメトリ (OpenTelemetry)
@@ -220,6 +221,32 @@ ANSI-C quoting (`$'\x72eset'`)・フルパス (`/usr/bin/git`) を正規化す�
   ガードの原理的な射程外。信頼できないリポジトリを触るときは
   `git -c core.fsmonitor= -c core.pager=cat --no-pager -C <path> ...` のように
   明示的に無効化するか、そもそも `-C` で触らないこと
+
+## Codex テレメトリ (OpenTelemetry)
+
+Codex CLI の logs / metrics / traces を Claude Code と同じ Collector へ export する設定。
+Codex の `[otel]` は `~/.codex/config.toml` の user-level config で有効。
+headers は静的値なので **トークンを dotfiles にコミットしない**ために、`install.sh` が
+`.local/bin/codex-otel --write-config-only` を実行して `~/.codex/config.toml` に managed block を追記する。
+
+構成: `.codex/config.toml (tokenless template) → install.sh → ~/.codex/config.toml (生成・0600) → codex`。
+これにより `codex` / `cc` の通常起動でも OTEL 設定が有効になる。
+
+| 対象 | 置き場所 | 備考 |
+|------|----------|------|
+| OTEL endpoint / protocol / export 対象 | `.local/bin/codex-otel` (コミット済み) | logs `/v1/logs`, metrics `/v1/metrics`, traces `/v1/traces`, `protocol = "json"` |
+| Codex が読む OTEL config | `~/.codex/config.toml` (`install.sh` が生成) | `# BEGIN CODEX OTEL MANAGED` block にトークンを含みうるため repo に入れない |
+| トークン実体 | 環境変数 `OTEL_EXPORTER_TOKEN` / macOS Keychain | 解決順は `OTEL_EXPORTER_TOKEN` → service `codex-otel` → service `claude-code-otel` |
+
+Keychain へ Codex 専用 service として登録する場合:
+
+```bash
+security add-generic-password -s "codex-otel" -a "$USER" -w '<token>' -U
+```
+
+既存の Claude Code 用 `claude-code-otel` service も fallback で読むので、同じ Collector token を共有するだけなら追加登録なしでよい。
+`CODEX_OTEL_ENVIRONMENT` / `CODEX_OTEL_LOGS_ENDPOINT` / `CODEX_OTEL_METRICS_ENDPOINT` /
+`CODEX_OTEL_TRACES_ENDPOINT` / `CODEX_OTEL_CONFIG_TARGET` で生成値や書き込み先を上書きできる。
 
 ## herdr hook スクリプト (SessionStart → pane/agent通知)
 

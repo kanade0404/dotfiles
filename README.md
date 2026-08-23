@@ -92,7 +92,7 @@ nix/
 .agents/skills/          # Codex skills (rulesync generated)
 .claude/                 # Claude Code (settings, hooks, commands, skills)
 .github/workflows/       # PR conflict 自動解決 workflows
-.local/bin/              # ヘルパースクリプト (tmux-project, gw)
+.local/bin/              # ヘルパースクリプト (tmux-project, gw, codex-otel)
 bootstrap.sh             # 初回セットアップ (Homebrew インストール + nix-darwin bootstrap + install.sh)
 bootstrap-codex-cloud.sh # Codex Cloud 用の依存関係セットアップ
 bootstrap-worktree.sh    # git worktree を参照元にして適用

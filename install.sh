@@ -25,6 +25,7 @@ echo "==> Linking helper scripts"
 mkdir -p "$HOME/.local/bin"
 ln -sf "$DOTFILES/.local/bin/tmux-project" "$HOME/.local/bin/tmux-project"
 ln -sf "$DOTFILES/.local/bin/gw" "$HOME/.local/bin/gw"
+ln -sf "$DOTFILES/.local/bin/codex-otel" "$HOME/.local/bin/codex-otel"
 
 echo "==> Installing Codex user settings"
 mkdir -p "$HOME/.codex"
@@ -32,6 +33,7 @@ mkdir -p "$HOME/.codex"
 # Re-running install.sh resets local Codex state such as project trust prompts.
 rm -f "$HOME/.codex/config.toml"
 install -m 600 "$DOTFILES/.codex/config.toml" "$HOME/.codex/config.toml"
+CODEX_OTEL_CONFIG_TARGET="$HOME/.codex/config.toml" "$DOTFILES/.local/bin/codex-otel" --write-config-only
 ln -sf "$DOTFILES/.codex/hooks.json" "$HOME/.codex/hooks.json"
 # herdr の Codex 連携スクリプト。hooks.json が $HOME/.codex/ 直下を指しており、
 # かつ .claude/hooks/* は ~/.codex/hooks/ にも配布される (同名だと Claude 版に
