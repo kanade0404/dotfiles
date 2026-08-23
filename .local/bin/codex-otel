@@ -13,6 +13,7 @@ if [ "${1:-}" = "--write-config-only" ]; then
 fi
 
 default_otel_environment="dev"
+# Keep these Collector endpoints in sync with .claude/settings.json.
 default_logs_endpoint="https://otel-collector-vr35tgknva-an.a.run.app/v1/logs"
 default_metrics_endpoint="https://otel-collector-vr35tgknva-an.a.run.app/v1/metrics"
 default_traces_endpoint="https://otel-collector-vr35tgknva-an.a.run.app/v1/traces"
@@ -102,6 +103,36 @@ write_otel_tables() {
   print_otlp_http_exporter 'otel.exporter."otlp-http"' "$logs_endpoint"
   print_otlp_http_exporter 'otel.metrics_exporter."otlp-http"' "$metrics_endpoint"
   print_otlp_http_exporter 'otel.trace_exporter."otlp-http"' "$traces_endpoint"
+}
+
+managed_block_has_authorization() {
+  local target="$1"
+  local begin_marker="# BEGIN CODEX OTEL MANAGED"
+  local end_marker="# END CODEX OTEL MANAGED"
+
+  [ -f "$target" ] || return 1
+
+  awk -v begin="$begin_marker" -v end="$end_marker" '
+    {
+      line = $0
+      sub(/^[[:space:]]+/, "", line)
+      sub(/[[:space:]]+$/, "", line)
+      if (line == begin) {
+        in_managed = 1
+        next
+      }
+      if (line == end) {
+        in_managed = 0
+        next
+      }
+      if (in_managed && line ~ /^Authorization[[:space:]]*=/) {
+        found = 1
+      }
+    }
+    END {
+      exit found ? 0 : 1
+    }
+  ' "$target"
 }
 
 write_managed_config() {
@@ -209,7 +240,7 @@ write_managed_config() {
       if [ "$filter_status" -eq 42 ]; then
         echo "codex-otel: unmanaged [otel] config already exists in $target; remove or migrate it before writing the managed block" >&2
       elif [ "$filter_status" -eq 43 ]; then
-        echo "codex-otel: managed OTEL block in $target is missing the end marker; refusing to rewrite" >&2
+        echo "codex-otel: managed OTEL block markers in $target are unbalanced; refusing to rewrite" >&2
       fi
       cleanup_tmp_config
       clear_tmp_config_traps
@@ -251,15 +282,14 @@ metrics_endpoint="$(sanitize_config_value CODEX_OTEL_METRICS_ENDPOINT "$metrics_
 traces_endpoint="$(sanitize_config_value CODEX_OTEL_TRACES_ENDPOINT "$traces_endpoint" "$default_traces_endpoint")"
 
 token="$(trim_spaces "$token")"
+os="$(uname -s)"
 
-if [ -z "$token" ] && [ "$(uname -s)" = "Darwin" ]; then
-  token="$(find_keychain_token "codex-otel")"
-  token="$(trim_spaces "$token")"
-fi
-
-if [ -z "$token" ] && [ "$(uname -s)" = "Darwin" ]; then
-  token="$(find_keychain_token "claude-code-otel")"
-  token="$(trim_spaces "$token")"
+if [ -z "$token" ] && [ "$os" = "Darwin" ]; then
+  for service in codex-otel claude-code-otel; do
+    token="$(find_keychain_token "$service")"
+    token="$(trim_spaces "$token")"
+    [ -n "$token" ] && break
+  done
 fi
 
 case "$token" in
@@ -269,11 +299,15 @@ case "$token" in
     ;;
 esac
 
-if ! write_managed_config "$config_target"; then
-  if [ "$mode" = "write-config" ]; then
-    exit 1
+if [ -z "$token" ] && managed_block_has_authorization "$config_target"; then
+  echo "codex-otel: no token; preserving existing Authorization header in $config_target" >&2
+else
+  if ! write_managed_config "$config_target"; then
+    if [ "$mode" = "write-config" ]; then
+      exit 1
+    fi
+    echo "codex-otel: failed to refresh OTEL config; launching codex without refreshing telemetry" >&2
   fi
-  echo "codex-otel: failed to refresh OTEL config; launching codex without refreshing telemetry" >&2
 fi
 
 if [ -z "$token" ]; then

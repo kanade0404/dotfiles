@@ -238,6 +238,8 @@ headers は静的値なので **トークンを dotfiles にコミットしな�
 | Codex が読む OTEL config | `~/.codex/config.toml` (`install.sh` が生成) | `# BEGIN CODEX OTEL MANAGED` block にトークンを含みうるため repo に入れない |
 | トークン実体 | 環境変数 `OTEL_EXPORTER_TOKEN` / macOS Keychain | 解決順は `OTEL_EXPORTER_TOKEN` → service `codex-otel` → service `claude-code-otel` |
 
+Collector endpoint は `.claude/settings.json` と `.local/bin/codex-otel` の 2 箇所にあるため、変更時は両方を同時に更新する。
+
 Keychain へ Codex 専用 service として登録する場合:
 
 ```bash
@@ -251,12 +253,14 @@ security add-generic-password -s "codex-otel" -a "$USER" -w '<token>' -U
 Claude Code は helper を起動時に再実行してトークンをディスクへ書かないが、Codex は headers が静的 TOML のため
 `~/.codex/config.toml` の managed block に bearer token を平文 (mode 600) で保持する。token をローテーションしたら
 `install.sh` または `.local/bin/codex-otel --write-config-only` を再実行して managed block を再生成すること。
+一時的に token を解決できない場合、既存 managed block に `Authorization` が残っていれば書き換えをスキップし、既存ヘッダーを保持する。
 `install.sh` はリポジトリの `.codex/config.toml` を正として `~/.codex/config.toml` を置き換えるため、
 既存のローカル Codex 設定は保持しない。手書き設定が必要な場合は、実行前にバックアップして
 `.codex/config.toml` へ移行するか、`install.sh` ではなく `.local/bin/codex-otel --write-config-only` を直接実行し、
 `CODEX_OTEL_CONFIG_TARGET` で別ファイルへ生成する。
 既存の `~/.codex/config.toml` に手書きの `[otel]` / `[otel.*]` table がある場合は、重複 table で Codex config を壊さないため
 生成を失敗させる。手書き設定を削除するか、managed block 側へ移行してから再実行する。
+`~/.codex/config.toml` の更新は read-modify-write で lock しないため、`cc` 同時起動や Codex runtime の同時書き込みがあると last-writer-wins になる。
 `cc` alias は通常起動向けに `.local/bin/codex-otel` を通す。config 更新に失敗しても警告だけ出し、テレメトリ都合で Codex セッションを落とさない。
 `cc` は interactive zsh alias として意図的に Codex 用に使う。C コンパイラが必要な対話操作では `/usr/bin/cc` などフルパスで呼ぶ。
 

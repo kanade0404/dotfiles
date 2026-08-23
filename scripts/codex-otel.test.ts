@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -22,10 +22,23 @@ function runCodexOtel(target: string, env: Record<string, string> = {}) {
     env: {
       ...process.env,
       CODEX_OTEL_CONFIG_TARGET: target,
+      CODEX_OTEL_ENVIRONMENT: "",
+      CODEX_OTEL_LOGS_ENDPOINT: "",
+      CODEX_OTEL_METRICS_ENDPOINT: "",
+      CODEX_OTEL_TRACES_ENDPOINT: "",
       OTEL_EXPORTER_TOKEN: "test-token",
       ...env,
     },
   });
+}
+
+function pathWithMissingSecurity(): string {
+  const bin = join(root, "bin");
+  mkdirSync(bin, { recursive: true });
+  const security = join(bin, "security");
+  writeFileSync(security, "#!/usr/bin/env sh\nexit 1\n");
+  chmodSync(security, 0o755);
+  return `${bin}:${process.env.PATH ?? ""}`;
 }
 
 function writeConfig(name: string, content: string): string {
@@ -66,6 +79,63 @@ describe("codex-otel", () => {
     expect(generated).toContain("[otel]");
   });
 
+  test("writes bearer token headers for all exporters", () => {
+    const target = join(root, "config.toml");
+
+    const result = runCodexOtel(target);
+
+    expect(result.status).toBe(0);
+    const generated = readFileSync(target, "utf8");
+    expect(generated).toContain('[otel.exporter."otlp-http".headers]');
+    expect(generated).toContain('[otel.metrics_exporter."otlp-http".headers]');
+    expect(generated).toContain('[otel.trace_exporter."otlp-http".headers]');
+    expect(generated.match(/Authorization = "Bearer test-token"/g)).toHaveLength(3);
+  });
+
+  test("omits headers when no token is available", () => {
+    const target = join(root, "config.toml");
+
+    const result = runCodexOtel(target, {
+      OTEL_EXPORTER_TOKEN: "",
+      PATH: pathWithMissingSecurity(),
+    });
+
+    expect(result.status).toBe(0);
+    const generated = readFileSync(target, "utf8");
+    expect(generated).not.toContain(".headers]");
+    expect(generated).not.toContain("Authorization");
+  });
+
+  test("replaces old bearer tokens when token changes", () => {
+    const target = join(root, "config.toml");
+
+    const first = runCodexOtel(target, { OTEL_EXPORTER_TOKEN: "old-token" });
+    expect(first.status).toBe(0);
+    const second = runCodexOtel(target, { OTEL_EXPORTER_TOKEN: "new-token" });
+    expect(second.status).toBe(0);
+
+    const generated = readFileSync(target, "utf8");
+    expect(generated).not.toContain("old-token");
+    expect(generated.match(/Authorization = "Bearer new-token"/g)).toHaveLength(3);
+  });
+
+  test("preserves existing Authorization when token lookup fails", () => {
+    const target = writeConfig(
+      "config.toml",
+      'model = "gpt-5"\n# BEGIN CODEX OTEL MANAGED\n[otel]\nenvironment = "dev"\n\n[otel.exporter."otlp-http".headers]\nAuthorization = "Bearer existing-token"\n# END CODEX OTEL MANAGED\n',
+    );
+    const before = readFileSync(target, "utf8");
+
+    const result = runCodexOtel(target, {
+      OTEL_EXPORTER_TOKEN: "",
+      PATH: pathWithMissingSecurity(),
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain("preserving existing Authorization header");
+    expect(readFileSync(target, "utf8")).toBe(before);
+  });
+
   test("does not replace config when managed block is unclosed", () => {
     const target = writeConfig("config.toml", "model = \"gpt-5\"\n# BEGIN CODEX OTEL MANAGED\n[otel]\n");
     const before = readFileSync(target, "utf8");
@@ -73,7 +143,8 @@ describe("codex-otel", () => {
     const result = runCodexOtel(target);
 
     expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("missing the end marker");
+    expect(result.stderr).toContain("markers in");
+    expect(result.stderr).toContain("are unbalanced");
     expect(readFileSync(target, "utf8")).toBe(before);
   });
 
@@ -84,7 +155,8 @@ describe("codex-otel", () => {
     const result = runCodexOtel(target);
 
     expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("missing the end marker");
+    expect(result.stderr).toContain("markers in");
+    expect(result.stderr).toContain("are unbalanced");
     expect(readFileSync(target, "utf8")).toBe(before);
   });
 
@@ -98,7 +170,8 @@ describe("codex-otel", () => {
     const result = runCodexOtel(target);
 
     expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("missing the end marker");
+    expect(result.stderr).toContain("markers in");
+    expect(result.stderr).toContain("are unbalanced");
     expect(readFileSync(target, "utf8")).toBe(before);
   });
 
