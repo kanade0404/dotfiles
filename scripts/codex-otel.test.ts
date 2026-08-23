@@ -77,6 +77,31 @@ describe("codex-otel", () => {
     expect(readFileSync(target, "utf8")).toBe(before);
   });
 
+  test("does not replace config when managed block has an orphan end marker", () => {
+    const target = writeConfig("config.toml", "model = \"gpt-5\"\n# END CODEX OTEL MANAGED\nkeep = \"after\"\n");
+    const before = readFileSync(target, "utf8");
+
+    const result = runCodexOtel(target);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("missing the end marker");
+    expect(readFileSync(target, "utf8")).toBe(before);
+  });
+
+  test("does not replace config when managed block has a nested begin marker", () => {
+    const target = writeConfig(
+      "config.toml",
+      "model = \"gpt-5\"\n# BEGIN CODEX OTEL MANAGED\n[otel]\n# BEGIN CODEX OTEL MANAGED\nkeep = \"skipped\"\n# END CODEX OTEL MANAGED\nkeep = \"after\"\n# END CODEX OTEL MANAGED\n",
+    );
+    const before = readFileSync(target, "utf8");
+
+    const result = runCodexOtel(target);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("missing the end marker");
+    expect(readFileSync(target, "utf8")).toBe(before);
+  });
+
   test("preserves unmanaged content and is idempotent", () => {
     const target = writeConfig("config.toml", "model = \"gpt-5\"\n\n[profiles.default]\nmodel = \"gpt-5-codex\"\n");
 

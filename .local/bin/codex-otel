@@ -171,8 +171,16 @@ write_managed_config() {
       }
       {
         line = trim($0)
-        if (line == begin) { skip = 1; next }
-        if (line == end) { skip = 0; next }
+        if (line == begin) {
+          if (skip) { malformed_managed = 1 }
+          skip = 1
+          next
+        }
+        if (line == end) {
+          if (!skip) { malformed_managed = 1 }
+          skip = 0
+          next
+        }
         if (skip) { next }
         if (line ~ /^\[/) { in_table = 1 }
         if (is_otel_table_header(line)) {
@@ -192,7 +200,7 @@ write_managed_config() {
         print
       }
       END {
-        if (skip) { exit 43 }
+        if (skip || malformed_managed) { exit 43 }
         if (unmanaged_otel) { exit 42 }
       }
     ' "$target" >"$tmp_config"
