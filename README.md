@@ -207,6 +207,6 @@ deep-night cron ──▶ scan-pr-conflicts
 - **ターミナル**: Ghostty
 - **エディタ**: Neovim (LazyVim) + GitHub Copilot
 - **多重化**: tmux (prefix: `C-a`)
-- **AI**: Claude Code
+- **AI**: Claude Code (`c` alias) / Codex (`cc` alias)
 - **Git**: lazygit + git worktree
 - **テーマ**: GitHub Light

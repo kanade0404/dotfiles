@@ -43,7 +43,7 @@ nix/
 rulesync-claude/            # Claude 用 skill の rulesync 隔離パイプライン (config + lock)
 .agents/skills/             # Codex 用 skills — rulesync で生成 (rulesync.jsonc) + install.sh でsymlink
 .github/workflows/          # GitHub Actions (PR conflict 自動解決 etc.)
-.local/bin/                 # ヘルパースクリプト (tmux-project, gw) — install.sh でsymlink
+.local/bin/                 # ヘルパースクリプト (tmux-project, gw, codex-otel) — install.sh でsymlink
 .gitignore                  # ⚠️ global な core.excludesFile (下記の注意を参照)
 bootstrap.sh                # 初回セットアップ (Homebrew + nix-darwin bootstrap + install.sh)
 bootstrap-codex-cloud.sh    # Codex Cloud 用の依存関係セットアップ
@@ -248,6 +248,13 @@ security add-generic-password -s "codex-otel" -a "$USER" -w '<token>' -U
 `CODEX_OTEL_ENVIRONMENT` / `CODEX_OTEL_LOGS_ENDPOINT` / `CODEX_OTEL_METRICS_ENDPOINT` /
 `CODEX_OTEL_TRACES_ENDPOINT` / `CODEX_OTEL_CONFIG_TARGET` で生成値や書き込み先を上書きできる。
 
+Claude Code は helper を起動時に再実行してトークンをディスクへ書かないが、Codex は headers が静的 TOML のため
+`~/.codex/config.toml` の managed block に bearer token を平文 (mode 600) で保持する。token をローテーションしたら
+`install.sh` または `.local/bin/codex-otel --write-config-only` を再実行して managed block を再生成すること。
+既存の `~/.codex/config.toml` に手書きの `[otel]` / `[otel.*]` table がある場合は、重複 table で Codex config を壊さないため
+生成を失敗させる。手書き設定を削除するか、managed block 側へ移行してから再実行する。
+通常起動向けの `.local/bin/codex-otel` は config 更新に失敗しても警告だけ出し、テレメトリ都合で Codex セッションを落とさない。
+
 ## herdr hook スクリプト (SessionStart → pane/agent通知)
 
 tmux pane と AI agent セッションを紐付けるための herdr 向け SessionStart hook。
@@ -312,7 +319,7 @@ tmux pane と AI agent セッションを紐付けるための herdr 向け Sess
 - **ターミナル**: Ghostty
 - **エディタ**: Neovim (LazyVim) + GitHub Copilot
 - **多重化**: tmux (prefix: `C-a`)
-- **AI**: Claude Code (`cc` alias, tmux Window 4)
+- **AI**: Claude Code (`c` alias) / Codex (`cc` alias, tmux Window 4)
 - **Git**: lazygit (tmux Window 5) + git worktree (`gw` コマンド)
 - **テーマ**: GitHub Light で統一 (Ghostty, tmux, fzf, bat, delta, Neovim)
 
