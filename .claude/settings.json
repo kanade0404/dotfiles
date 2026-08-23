@@ -169,12 +169,9 @@
     ],
     "deny": [
       "Read(.env*)",
-      "Write(.env*)",
       "Edit(.env*)",
       "Read(*.tfvars)",
       "Read(*.tfvars.json)",
-      "Write(*.tfvars)",
-      "Write(*.tfvars.json)",
       "Edit(*.tfvars)",
       "Edit(*.tfvars.json)",
       "Bash(sudo *)",
