@@ -28,18 +28,15 @@ jobs:
     #     スキップする。これが根本対策で、自己変更 PR でもレビューが正常に走る。
     # - 保険として Run step に continue-on-error: true も付ける。レビューは助言であり
     #   一時障害等で落ちても PR の CI を赤にすべきでないため。
-    # - fork PR は secrets (CLAUDE_CODE_OAUTH_TOKEN) が渡らず動かない。renovate /
-    #   dependabot / claude / github-actions 等の bot PR はレビュー不要 (claude[bot] は
-    #   Linear → Anthropic Routines パイプラインが作成する PR。セルフレビューを避ける)。
-    #   いずれもノイズ低減目的で下記 if で除外する。
-    #   bot 判定は「実行をトリガーした人」ではなく PR 作成者 (pull_request.user.login)
-    #   で行う。トリガー実行者だとメンテナが bot の PR を再実行した際に判定が外れるため。
+    # - fork PR は secrets (CLAUDE_CODE_OAUTH_TOKEN) が渡らず動かない。bot PR は
+    #   レビュー不要のためノイズ低減目的で下記 if で除外する。
+    #   bot 判定は特定 login の列挙ではなく PR 作成者のアカウント種別
+    #   (pull_request.user.type) で行い、GitHub が Bot として扱う全アカウントを除外する。
+    #   「実行をトリガーした人」ではなく PR 作成者で判定するのは、メンテナが bot の
+    #   PR を再実行した際に判定が外れるのを防ぐため。
     if: >-
       github.event.pull_request.head.repo.fork == false &&
-      github.event.pull_request.user.login != 'renovate[bot]' &&
-      github.event.pull_request.user.login != 'dependabot[bot]' &&
-      github.event.pull_request.user.login != 'github-actions[bot]' &&
-      github.event.pull_request.user.login != 'claude[bot]'
+      github.event.pull_request.user.type != 'Bot'
     runs-on: ubuntu-latest
     # Claude やステップがハングした場合の暴走を防ぐ
     timeout-minutes: 30
