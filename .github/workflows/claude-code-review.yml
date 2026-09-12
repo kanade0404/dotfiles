@@ -91,7 +91,7 @@ jobs:
         # レビューは助言。根本対策 (github_token 明示) で異常終了は解消済みだが、
         # 万一 action 側の一時障害等で落ちても PR の CI を失敗扱いにしない保険。
         continue-on-error: true
-        uses: anthropics/claude-code-action@0a8d3c9443bbff909ab973b6a17a340b913f229f # v1.0.221
+        uses: anthropics/claude-code-action@56cf60fde42f7b19c3abfd5c9c48b69a1288461f # v1.0.222
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # github_token を明示的に渡すと action は OIDC→GitHub App トークン交換を
