@@ -35,10 +35,11 @@ nix/
 
 .config/nvim/               # Neovim (LazyVim) — install.sh でsymlink
 .config/ghostty/config      # Ghostty — install.sh でsymlink
-.claude/settings.json       # Claude Code user設定 — install.sh でsymlink
+.claude/settings.json       # Claude Code user設定 — install.sh で実体生成 (`~/.claude/settings.json` へ install -m 644。symlinkではない。詳細は「Orca による hook 自動注入と実体生成方式」節)
 .claude/hooks/              # Claude Code hooks — install.sh でsymlink
 .claude/commands/           # Claude Code commands — install.sh でsymlink
 .claude/skills/             # Claude Code skills — rulesync で生成 (rulesync-claude/, kanade0404/skills を ref 固定取得。現在の tag は rulesync-claude/rulesync.jsonc の ref を参照)。project 単位のため install.sh でのグローバル symlink はしない
+.codex/hooks.json           # Codex hooks — install.sh で実体生成 (`~/.codex/hooks.json` へ install -m 644。symlinkではない。詳細は「Orca による hook 自動注入と実体生成方式」節)
 .codex/herdr-agent-state.sh # herdr hook (Codex用) — install.sh で個別に ~/.codex/herdr-agent-state.sh へsymlink。詳細は「herdr hook スクリプト」節
 rulesync-claude/            # Claude 用 skill の rulesync 隔離パイプライン (config + lock)
 .agents/skills/             # Codex 用 skills — rulesync で生成 (rulesync.jsonc) + install.sh でsymlink
@@ -69,7 +70,7 @@ install.sh                  # Nix 管理外ファイルの symlink 作成スク�
 | Neovimプラグイン/設定 | `.config/nvim/lua/` | `install.sh` + nvim再起動 |
 | Ghostty設定 | `.config/ghostty/config` | `install.sh` + Ghostty再起動 |
 | ヘルパースクリプト追加 | `.local/bin/` に作成 + `install.sh` にsymlink追加 | `install.sh` |
-| Claude Code設定/hooks/commands | `.claude/` 配下を編集 | `install.sh` |
+| Claude Code設定/hooks/commands | `.claude/` 配下を編集 | `install.sh` (`.claude/settings.json` は symlink ではなく実体生成。「Orca による hook 自動注入と実体生成方式」節を参照) |
 | Claude Code skill 追加 (自作) | [kanade0404/skills](https://github.com/kanade0404/skills) に `skills/<name>/SKILL.md` を追加 → push だけでは取得されない。kanade0404/skills は `ref` でタグ固定 (`rulesync-claude/rulesync.jsonc` の skills 配列は列挙不要) | 新 tag をリリース後、`rulesync.jsonc` / `rulesync-claude/rulesync.jsonc` の `ref` を更新 → `bun run rulesync:skills:claude:update` + `bun run rulesync:skills:update` + `install.sh` (両ファイルとも同じ source を参照するため、ref 更新時は両パイプラインの再解決が必要) |
 | Claude/Codex skill の更新取込 | (kanade0404/skills の新 tag リリース後) `ref` を更新して再解決 | `bun run rulesync:skills:claude:update` / `rulesync:skills:update` |
 | Codex 用 skill のソース変更 | kanade0404/skills は `ref` でタグ固定 (push だけでは取得されない)。tag 更新が必要 | `rulesync.jsonc` / `rulesync-claude/rulesync.jsonc` **両方**の `ref` を更新 → `bun run rulesync:skills:update` + `bun run rulesync:skills:claude:update` + `install.sh` (両ファイルは同じ source を参照するため ref 更新は常に両パイプライン同時。`.agents/skills` はグローバル symlink のため反映に必須) |
@@ -305,6 +306,59 @@ tmux pane と AI agent セッションを紐付けるための herdr 向け Sess
   dotfiles リポジトリ内の実体が書き換わり git diff として現れる** (追跡できるのは利点だが、
   意図しない差分に見えうるので注意)
 
+## Orca による hook 自動注入と実体生成方式
+
+**Orca** (`/Applications/Orca.app`、bundle id `com.stablyai.orca`) は tmux pane と AI agent
+セッションを紐付けるローカル専用ツール。herdr と役割は近いが別の仕組みで、Orca は
+**新しい pane / PTY を開くたびに** `~/.claude/settings.json` (13 イベント分) と
+`~/.codex/hooks.json` (8 イベント分) へ自分の hook を注入する。ファイル監視による
+自動修復ではなく、あくまで pane 起動のタイミングでのみ書き込む。
+
+以前はこの 2 ファイルを dotfiles への symlink で配布していたため、**Orca の注入が
+git 管理下の実体を直接書き換えてしまっていた**。実際に以下が発生していた:
+
+- `$HOME` へ正規化されているべきパスが `/Users/kanade0404/...` のようなハードコードへ
+  巻き戻る
+- `.claude/settings.json` から `model` キーが脱落する
+
+⚠️ `model` 脱落は Orca が意図的に削除したものではなく、**ロック無しの read-modify-write
+によるレース**が原因。Orca が「全文読み込み → hooks だけ差し替え → 全文書き戻し」する窓の
+間に Claude Code がローカルの `model` 設定を書き込むと、Orca の書き戻しでその変更が
+上書きされて消える。
+
+対応として `install.sh` を `.codex/config.toml` と同じパターン (`rm -f` + `install -m 644`)
+に揃え、この 2 ファイルを **symlink 配布から実体生成方式へ移行**した (commit 3366ca2)。
+加えて、両ファイルの template から Orca 用 hook 定義そのものを除去した。理由は Orca hook が
+**ローカル専用**だから: cloud session (claude.ai/code) には Orca が存在しないため、repo 内
+`.claude/settings.json` に残しても毎イベント空振りの存在チェックが走るだけのコストにしか
+ならない (「cloud session は `~/.claude/settings.json` (user settings) を読まない」ので
+そもそも repo 内の設定は cloud に影響しないが、リポジトリ側の記述としても不要な情報になる)。
+Orca hook は pane 起動時に Orca 自身がローカルの実体へ注入するのに任せる。
+
+⚠️ **install.sh を再実行するとローカルの hook 登録がリセットされる**。Orca hook は次に
+pane を開けば Orca が再注入するため実害は無いが、Claude Code 自身がローカルに書いた設定
+(`/model` で選んだモデル、`/config` でのテーマ変更など) は `install.sh` の `rm -f` +
+`install -m 644` で dotfiles 側の内容に巻き戻り、失われる。
+
+参考: Codex は `CODEX_HOME` と `ORCA_CODEX_HOME` が一致していれば Orca の隔離ホーム
+(`~/Library/Application Support/orca/codex-runtime-home/home`) を使うが、Orca の worktree
+管理下でない実フォルダを pane で開くと隔離が効かず実ホームに直接書く。**Claude Code 側には
+この隔離ホーム機構自体が存在しない**。
+
+Orca 側で注入自体を止める手段もある (未検証・参考情報として記載):
+
+| 範囲 | 方法 | 備考 |
+|------|------|------|
+| エージェント単位 | `~/Library/Application Support/orca/profiles/local-default/orca-data.json` の `state.settings.disabledTuiAgents` に `"claude"` / `"codex"` を追加 | Orca の Settings UI 経由と推測。CLI セッターは未発見 |
+| 全体一括 | `orca agent hooks off` / `on` / `status` | 未公開 CLI サブコマンド (`--help` に出ない) |
+
+ただしどちらの方法も Orca の pane 紐付け機能自体を失う。
+
+⚠️ **このリポジトリは PUBLIC**。実体生成方式に変えても `.claude/settings.json` /
+`.codex/hooks.json` の内容自体は引き続きコミット済みで誰でも読める。今回変えたのは
+「ローカルの実体が Orca に書き換えられて git diff に紛れ込む」問題への対処であって、
+機密情報の扱いは変わらない (トークンは従来通り Keychain / helper 経由で別管理)。
+
 ## Nix-specific Notes
 
 - `nix.enable = true` — nix-darwin に `/etc/nix/nix.conf` を管理させる (`experimental-features = nix-command flakes` もここで設定)。Determinate Nix を入れる場合は `false` に戻すこと
@@ -321,7 +375,7 @@ tmux pane と AI agent セッションを紐付けるための herdr 向け Sess
 | Shell/Git/tmux設定 | `home.nix` (home-manager) | 宣言的管理 + 自動symlink |
 | Neovim設定 | dotfiles直接管理 + install.sh | LazyVim (lazy.nvim) との競合回避 |
 | Ghostty設定 | dotfiles直接管理 + install.sh | home-manager module未対応 |
-| Claude Code設定 | dotfiles直接管理 + install.sh | プロジェクト横断で統一 |
+| Claude Code設定 | dotfiles直接管理 + install.sh (`.claude/settings.json` は実体生成) | プロジェクト横断で統一 + Orca 等ローカルツールによる書き換えから git 管理下の実体を守る |
 | Node.js | mise (nixpkgs 管理) | プロジェクト毎のバージョン管理。将来的に Nix devShell へ移行検討 |
 
 ## 開発ワークフロー
