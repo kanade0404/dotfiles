@@ -64,7 +64,10 @@ if ! CODEX_OTEL_CONFIG_TARGET="$HOME/.codex/config.toml" CODEX_OTEL_PRESERVE_AUT
     echo "warning: retained previous Codex config backup at $codex_config_backup_retained" >&2
   fi
 fi
-ln -sf "$DOTFILES/.codex/hooks.json" "$HOME/.codex/hooks.json"
+# Replace an old symlink so Orca/agent runtime writes stay in ~/.codex only.
+# Re-running install.sh resets local hook registrations (Orca re-injects on next pane).
+rm -f "$HOME/.codex/hooks.json"
+install -m 644 "$DOTFILES/.codex/hooks.json" "$HOME/.codex/hooks.json"
 # herdr の Codex 連携スクリプト。hooks.json が $HOME/.codex/ 直下を指しており、
 # かつ .claude/hooks/* は ~/.codex/hooks/ にも配布される (同名だと Claude 版に
 # 上書きされる) ため、hooks/ ではなく .codex/ 直下へ個別に symlink する。
@@ -140,7 +143,10 @@ fi
 
 echo "==> Linking Claude Code user settings"
 mkdir -p "$HOME/.claude"
-ln -sf "$DOTFILES/.claude/settings.json" "$HOME/.claude/settings.json"
+# Replace an old symlink so Orca/agent runtime writes stay in ~/.claude only.
+# Re-running install.sh resets local hook registrations (Orca re-injects on next pane).
+rm -f "$HOME/.claude/settings.json"
+install -m 644 "$DOTFILES/.claude/settings.json" "$HOME/.claude/settings.json"
 ln -sf "$DOTFILES/.claude/statusline.py" "$HOME/.claude/statusline.py"
 # hooks: symlink each file to both ~/.claude/hooks/ and ~/.codex/hooks/
 # (directory symlink would hide each tool's own hooks; .claude/hooks/ is the
