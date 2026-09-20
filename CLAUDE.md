@@ -395,7 +395,7 @@ allow/deny が install.sh のたびに巻き戻って同じ承認を繰り返す
 dest が再び変化していた** 場合 — Orca の再注入や `/permissions` の再追加など — 元の内容は
 失われる。2 回目までに dest が変化していなければ下記の `cmp -s` で退避が no-op になり、
 1 回目の退避が残る)。
-退避の細かい規律は 4 つ:
+退避の細かい規律は 5 つ:
 
 - **退避は source の staging に成功してから**行う (`install_managed_file` の第 4 引数
   `backup` 経由で、`install` 成功後・`mv` の直前に呼ぶ)。呼び出し側で先に退避すると、
@@ -406,8 +406,13 @@ dest が再び変化していた** 場合 — Orca の再注入や `/permissions
 - **`<dest>.bak` が regular file でなければ退避をスキップして警告**する。directory だと
   `cp` は「中へコピー」、symlink だとリンク先へ書き込みになり、「`.bak` から手で戻せる」
   契約が黙って破れる (`[ -d "$dest" ]` ガードと同じ趣旨)
+- **退避も temp + `mv` で差し替える**。`cp` は出力先を `O_TRUNC` で開くので、既存の
+  `.bak` へ直接書くと書き込み開始時点で旧内容が失われ、途中で失敗 (ENOSPC 等) すると
+  唯一の復旧コピーが壊れた断片に化けたまま dest も巻き戻ってしまう
 - **第 4 引数が `backup` でも空でもなければ `return 1`**。stringly-typed なフラグなので、
-  typo (`bakcup` 等) が黙って「退避なし」に落ちないよう `case` で明示的に弾く
+  typo (`bakcup` 等) が黙って「退避なし」に落ちないよう `case` で明示的に弾く。
+  検証は `mktemp` / `install` の副作用より**前**に置き、失敗パスを「何もしていない
+  状態からの `return 1`」に保つ
 
 `~/.codex/config.toml` は対象外: Authorization の引き継ぎを
 `CODEX_OTEL_PRESERVE_AUTH_FROM` で別に持っており、bearer token の平文コピーを

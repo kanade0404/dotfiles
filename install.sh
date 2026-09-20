@@ -56,6 +56,18 @@ install_managed_file() {
   local mode="$1" src="$2" dest="$3" backup="${4:-}"
   local tmp
 
+  # 第 4 引数は stringly-typed なので、typo が黙って「退避なし」に落ちないよう
+  # 未知の値は失敗させる (安全性を呼び出し文脈に委ねない方針の一環)。
+  # 引数の検証は mktemp / install の副作用より**前**に済ませ、失敗パスを
+  # 「何もしていない状態からの return 1」に保つ。
+  case "$backup" in
+    backup | "") ;;
+    *)
+      echo "error: unknown backup flag '$backup' for $dest" >&2
+      return 1
+      ;;
+  esac
+
   # dest が directory (または directory への symlink) だと `mv -f` は置き換えではなく
   # 「tmp を dest の中へ移動」になり 0 を返す = 置き換わっていないのに成功してしまう。
   # 安全性を呼び出し文脈に委ねない方針に揃えて、関数側で先に弾く。
@@ -71,16 +83,9 @@ install_managed_file() {
   # `&&` の右辺) では install の失敗後も次行が走り、mktemp が作った空ファイルを dest に
   # 被せたうえで 0 を返してしまう。安全性を呼び出し文脈ではなく関数内に閉じる。
   install -m "$mode" "$src" "$tmp" || return 1
-  # 第 4 引数は stringly-typed なので、typo が黙って「退避なし」に落ちないよう
-  # 未知の値は失敗させる (安全性を呼び出し文脈に委ねない方針の一環)。
-  case "$backup" in
-    backup) backup_local_settings "$dest" "$tmp" ;;
-    "") ;;
-    *)
-      echo "error: unknown backup flag '$backup' for $dest" >&2
-      return 1
-      ;;
-  esac
+  if [ "$backup" = "backup" ]; then
+    backup_local_settings "$dest" "$tmp"
+  fi
   mv -f "$tmp" "$dest"
 }
 
@@ -96,6 +101,7 @@ install_managed_file() {
 # 第 2 引数は staging 済みの新しい内容 (install_managed_file の temp)。
 backup_local_settings() {
   local dest="$1" staged="$2"
+  local bak_tmp
 
   [ -f "$dest" ] || return 0
   # ローカル差分が無いなら退避しても情報が増えず、以前の意味ある退避を
@@ -110,7 +116,19 @@ backup_local_settings() {
     echo "warning: $dest.bak is not a regular file; skipping backup of $dest" >&2
     return 0
   fi
-  cp -p "$dest" "$dest.bak" || echo "warning: failed to back up $dest" >&2
+  # `cp` は出力先を O_TRUNC で開くため、既存の `.bak` へ直接書くと書き込み開始時点で
+  # 旧内容が失われる。途中で失敗 (ENOSPC 等) すると唯一の復旧コピーが壊れた断片に化け、
+  # そのまま `mv -f` で dest も巻き戻って復旧手段が消える。dest 側と同じ規律で
+  # temp へ取ってから rename(2) で差し替える。
+  bak_tmp="$(mktemp "$dest.bak.tmp.XXXXXX")" || {
+    echo "warning: failed to back up $dest" >&2
+    return 0
+  }
+  managed_file_temps+=("$bak_tmp")
+  if cp -p "$dest" "$bak_tmp" && mv -f "$bak_tmp" "$dest.bak"; then
+    return 0
+  fi
+  echo "warning: failed to back up $dest" >&2
   return 0
 }
 

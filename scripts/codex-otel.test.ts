@@ -514,6 +514,78 @@ describe("codex-otel", () => {
     expect(result.status).toBe(0);
     expect(readFileSync(`${dest}.bak`, "utf8")).toBe(local);
     expect(readFileSync(dest, "utf8")).toBe(readFileSync(join(dotfiles, ...relative.split("/")), "utf8"));
+    // 退避も temp 経由で差し替えるので、temp が残っていないこと。
+    expect(leftoverTempFiles(join(home, dir), `${basename}.bak`)).toHaveLength(0);
+  });
+
+  // 既存の `.bak` は `cp` の O_TRUNC でいきなり失われるため、直接書くと cp の途中失敗で
+  // 唯一の復旧コピーが壊れた断片に化ける。temp 経由の差し替えであることを固定する。
+  // 判別オラクルは inode: in-place な `cp` は既存 `.bak` を truncate して同じ inode に
+  // 書き込むが、temp + `mv` (rename(2)) なら inode が入れ替わる。
+  test("install replaces .bak through a temp file instead of truncating it in place", () => {
+    const dotfiles = prepareDotfilesFixture();
+    const home = join(root, "home-bak-atomic");
+    mkdirSync(join(home, ".claude"), { recursive: true });
+    const dest = join(home, ".claude", "settings.json");
+    const local = '{\n  "local": true\n}\n';
+    writeFileSync(dest, local);
+    const bak = `${dest}.bak`;
+    writeFileSync(bak, "# previous recovery copy\n");
+    const inodeBefore = statSync(bak).ino;
+
+    const result = runInstall(dotfiles, home);
+
+    expect(result.status).toBe(0);
+    expect(readFileSync(bak, "utf8")).toBe(local);
+    expect(statSync(bak).ino).not.toBe(inodeBefore);
+    expect(leftoverTempFiles(join(home, ".claude"), "settings.json.bak")).toHaveLength(0);
+  });
+
+  // 引数の検証は mktemp / install の副作用より前に済ませる。
+  test("install_managed_file rejects an unknown backup flag before creating a temp", () => {
+    const dir = join(root, "unknown-flag-no-temp");
+    mkdirSync(dir, { recursive: true });
+    const dest = join(dir, "settings.json");
+    const existing = '{\n  "local": true\n}\n';
+    writeFileSync(dest, existing);
+
+    const { status, stderr } = runInstallManagedFile(
+      "unknown-flag-no-temp-harness",
+      join(dir, "missing-source.json"),
+      dest,
+      "bakcup",
+    );
+
+    // source が存在しないので、検証が staging より後ろにあると install の失敗で
+    // 先に return し、このメッセージは出ない = 順序の判別オラクルになる。
+    expect(status).not.toBe(0);
+    expect(stderr).toContain("unknown backup flag");
+    expect(readFileSync(dest, "utf8")).toBe(existing);
+    expect(leftoverTempFiles(dir, "settings.json")).toHaveLength(0);
+  });
+
+  // mktemp は dest と同じディレクトリに作るため、親が書き込み不可なら staging 以前に失敗する。
+  test("install_managed_file fails without touching dest when the temp cannot be created", () => {
+    if (process.getuid?.() === 0) return;
+    const dir = join(root, "readonly-dest-dir");
+    mkdirSync(dir, { recursive: true });
+    const src = join(root, "readonly-source.json");
+    writeFileSync(src, '{\n  "hooks": {}\n}\n');
+    const dest = join(dir, "settings.json");
+    const existing = '{\n  "local": true\n}\n';
+    writeFileSync(dest, existing);
+    chmodSync(dir, 0o555);
+
+    let outcome;
+    try {
+      outcome = runInstallManagedFile("readonly-dest-harness", src, dest);
+    } finally {
+      chmodSync(dir, 0o755);
+    }
+
+    expect(outcome.status).not.toBe(0);
+    expect(readFileSync(dest, "utf8")).toBe(existing);
+    expect(leftoverTempFiles(dir, "settings.json")).toHaveLength(0);
   });
 
   // 退避は source の staging に成功した後にだけ行う。source 不在で install が失敗する
