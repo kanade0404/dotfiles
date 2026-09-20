@@ -70,8 +70,13 @@ function writeConfig(name: string, content: string): string {
 function prepareDotfilesFixture(template = 'model = "template"\n'): string {
   const fixture = join(root, "dotfiles");
   mkdirSync(join(fixture, ".codex"), { recursive: true });
+  mkdirSync(join(fixture, ".claude"), { recursive: true });
   mkdirSync(join(fixture, ".local", "bin"), { recursive: true });
   writeFileSync(join(fixture, ".codex", "config.toml"), template);
+  // install.sh copies these two unconditionally (`install -m 644`); they must exist in the
+  // fixture or install.sh aborts. If install.sh gains more unconditionally-installed files, update this too.
+  writeFileSync(join(fixture, ".codex", "hooks.json"), '{\n  "hooks": {}\n}\n');
+  writeFileSync(join(fixture, ".claude", "settings.json"), '{\n  "hooks": {}\n}\n');
   symlinkSync(script, join(fixture, ".local", "bin", "codex-otel"));
   return fixture;
 }
