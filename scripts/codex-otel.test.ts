@@ -148,10 +148,13 @@ function runInstallManagedFile(
       extractShellFunction("backup_local_settings"),
       extractShellFunction("cleanup_managed_file_temps"),
       "managed_file_temps=()",
+      // install.sh 本体と同じく EXIT trap 経由で掃除する (明示呼び出しにすると、
+      // temp 残骸の assertion が「trap 経路」ではなくこの呼び出しだけを見てしまう)。
+      // ただし trap 登録は harness 側なので、install.sh の trap 行はここでは通らない。
+      "trap cleanup_managed_file_temps EXIT",
       "status=0",
       'install_managed_file 644 "$1" "$2" "$3" || status=$?',
       'printf "status=%s\\n" "$status"',
-      "cleanup_managed_file_temps",
       "",
     ].join("\n"),
   );
@@ -773,6 +776,22 @@ describe("codex-otel", () => {
     expect(result.stderr).toContain(join(dotfiles, ".claude", "settings.json"));
     expect(readFileSync(`${dest}.bak`, "utf8")).toBe(recovery);
     expect(readFileSync(dest, "utf8")).toBe(current);
+  });
+
+  // herdr の hook script は herdr 管理下の生成物で、再インストール/更新のたびに
+  // symlink 越しに dotfiles 内の実体が書き換わる。CLAUDE.md の版数表は第三者の更新で
+  // 黙って陳腐化する構造なので、script 側の版数と一致していることを CI で見る。
+  test.each([
+    [".claude/hooks/herdr-agent-state.sh", "claude"],
+    [".codex/herdr-agent-state.sh", "codex"],
+  ] as const)("CLAUDE.md records the herdr integration version of %s", (relative, id) => {
+    const script = readFileSync(resolve(relative), "utf8");
+    const version = /^# HERDR_INTEGRATION_VERSION=(\d+)$/m.exec(script);
+
+    expect(version).not.toBeNull();
+    expect(readFileSync(resolve("CLAUDE.md"), "utf8")).toContain(
+      `\`HERDR_INTEGRATION_ID=${id}\`, v${version![1]}`,
+    );
   });
 
   // MANAGED_FIXTURE_FILES は install.sh の手動ミラーなので、install.sh 側に 4 つ目の

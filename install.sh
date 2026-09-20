@@ -273,7 +273,9 @@ fi
 codex_config_backup_pending_removal="$codex_config_backup"
 codex_config_backup=""
 if [ -n "$codex_config_backup_pending_removal" ]; then
-  rm -f "$codex_config_backup_pending_removal"
+  # cleanup 系と同じく失敗許容。ここで abort すると以降の hooks.json /
+  # settings.json の install に到達しない (掃除は EXIT trap 側が冪等に担保する)。
+  rm -f "$codex_config_backup_pending_removal" || true
 fi
 # Replace an old symlink so Orca/agent runtime writes stay in ~/.codex only.
 # Re-running install.sh resets local hook registrations (Orca re-injects on next pane).
