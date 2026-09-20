@@ -642,7 +642,9 @@ describe("codex-otel", () => {
     // いない。この窓では backup が旧 config の唯一のコピーになるので、消してはいけない。
     writeFileSync(join(home, ".codex", "config.toml"), "# previous codex config\n");
 
-    const result = runInstall(dotfiles, home);
+    // kept ファイルは `${TMPDIR:-/tmp}` に作られるので、fixture 配下へ落として
+    // afterEach の rmSync(root) が回収できるようにする (OS の /tmp を汚さない)。
+    const result = runInstall(dotfiles, home, { TMPDIR: home });
 
     expect(result.status).toBe(143);
     const kept = /backup kept at (\S+)/.exec(result.stderr ?? "");
@@ -757,6 +759,32 @@ describe("codex-otel", () => {
     // 2 回目は dest が dotfiles と同一なので退避をスキップし、1 回目の退避を残す。
     expect(runInstall(dotfiles, home).status).toBe(0);
     expect(readFileSync(`${dest}.bak`, "utf8")).toBe(local);
+  });
+
+  // 比較は「dest が前回から変化したか」ではなく `cmp -s "$dest" "$staged"` なので、
+  // dest がローカルで無変化でも **source が更新されていれば**退避が走り、貴重な `.bak` が
+  // 「素の前回 dotfiles 内容」で潰れる。CLAUDE.md が明記している 1 世代退避の限界で、
+  // 「dest vs 前回 .bak」や mtime 比較へ退行したら落ちる。
+  test("install overwrites .bak when the dotfiles source changed even if dest is unchanged", () => {
+    const dotfiles = prepareDotfilesFixture();
+    const home = join(root, "home-bak-source-changed");
+    mkdirSync(join(home, ".claude"), { recursive: true });
+    const dest = join(home, ".claude", "settings.json");
+    const local = '{\n  "permissions": {\n    "deny": ["Bash(rm -rf /)"]\n  }\n}\n';
+    writeFileSync(dest, local);
+
+    expect(runInstall(dotfiles, home).status).toBe(0);
+    expect(readFileSync(`${dest}.bak`, "utf8")).toBe(local);
+    const v1 = readFileSync(dest, "utf8");
+
+    // dest はローカルでは一切触らず、dotfiles 側だけ更新する。
+    const v2 = '{\n  "hooks": {},\n  "v": 2\n}\n';
+    writeFileSync(join(dotfiles, ".claude", "settings.json"), v2);
+
+    expect(runInstall(dotfiles, home).status).toBe(0);
+    expect(readFileSync(dest, "utf8")).toBe(v2);
+    expect(readFileSync(`${dest}.bak`, "utf8")).toBe(v1);
+    expect(readFileSync(`${dest}.bak`, "utf8")).not.toBe(local);
   });
 
   // `.bak` が directory / symlink だと `cp -p` は「中へコピー」「リンク先へ書き込み」に

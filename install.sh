@@ -10,6 +10,7 @@ DOTFILES="${DOTFILES:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 OS="$(uname)"
 codex_config_backup=""
 codex_config_backup_retained=""
+codex_config_backup_done=""
 managed_file_temps=()
 
 cleanup_codex_config_backup() {
@@ -227,8 +228,13 @@ fi
 # 書き戻し済み、失敗時は retain 済み)。窓の外で中断したときに bearer token を平文で
 # 含むコピーが `${TMPDIR:-/tmp}` へ残らないよう、明示的に掃除して signal trap の
 # 保持対象からも外す。
-cleanup_codex_config_backup
+# **先に変数を空にしてから消す**。逆順だと `rm` と変数クリアの間で signal を受けたときに、
+# trap が既に消えたパスを "backup kept at ..." と案内してしまう。
+codex_config_backup_done="$codex_config_backup"
 codex_config_backup=""
+if [ -n "$codex_config_backup_done" ]; then
+  rm -f "$codex_config_backup_done"
+fi
 # Replace an old symlink so Orca/agent runtime writes stay in ~/.codex only.
 # Re-running install.sh resets local hook registrations (Orca re-injects on next pane).
 install_managed_file 644 "$DOTFILES/.codex/hooks.json" "$HOME/.codex/hooks.json" backup
