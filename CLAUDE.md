@@ -476,7 +476,12 @@ allow/deny が install.sh のたびに巻き戻って同じ承認を繰り返す
   検証は `mktemp` / `install` の副作用より**前**に置き、失敗パスを「何もしていない
   状態からの `return 1`」に保つ
 
-`~/.codex/config.toml` は対象外: Authorization の引き継ぎを
+`codex-otel` の書き戻しが失敗した場合だけは、`~/.codex/config.toml.bak.XXXXXX` として
+旧 config が退避される (`retain_codex_config_backup`)。これも **1 世代だけ**で、退避のたびに
+古い `config.toml.bak.*` は剪定される (bearer token を平文で含む mode 600 のコピーが
+無期限に溜まらないようにするため)。
+
+`~/.codex/config.toml` は `<dest>.bak` の対象外: Authorization の引き継ぎを
 `CODEX_OTEL_PRESERVE_AUTH_FROM` で別に持っており、bearer token の平文コピーを
 `$HOME` に増やさないため。なお「差分があれば**警告する**」(`cmp -s` の警告用途) は
 採っていない — Orca が pane 起動のたびに hook を注入する以上 dest は**ほぼ常に**

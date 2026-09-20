@@ -199,7 +199,7 @@ backup_local_settings() {
 # EXIT trap がそのコピーを消してしまう (`backup_local_settings` / signal trap と同じ
 # 「退避が取れないなら唯一のコピーを消さない」規律)。
 retain_codex_config_backup() {
-  local retained_backup
+  local retained_backup old_backup
 
   [ -n "${codex_config_backup:-}" ] || return 0
   retained_backup="$(mktemp "$HOME/.codex/config.toml.bak.XXXXXX")" || return 1
@@ -211,6 +211,14 @@ retain_codex_config_backup() {
   fi
   codex_config_backup=""
   codex_config_backup_retained_in_codex_home="$retained_backup"
+  # 剪定しないと codex-otel が失敗するたびに bearer token 平文入りのコピー (mode 600) が
+  # 無期限に溜まる。`backup_local_settings` の「1 世代だけ」と同じ規律に揃え、最新以外を消す。
+  for old_backup in "$HOME/.codex/config.toml.bak."*; do
+    if [ -f "$old_backup" ] && [ "$old_backup" != "$retained_backup" ]; then
+      rm -f "$old_backup" || true
+    fi
+  done
+  return 0
 }
 
 trap cleanup_install EXIT

@@ -734,6 +734,27 @@ describe("codex-otel", () => {
     expect(readFileSync(kept![1], "utf8")).toBe("# previous codex config\n");
   });
 
+  // retain した backup は bearer token を平文で含む (mode 600)。剪定しないと codex-otel が
+  // 失敗するたびに溜まるので、`.bak` 側と同じく 1 世代だけ残す。
+  test("install keeps only one retained codex config backup", () => {
+    const dotfiles = prepareDotfilesFixture();
+    const stub = join(dotfiles, ".local", "bin", "codex-otel");
+    rmSync(stub, { force: true });
+    writeFileSync(stub, "#!/usr/bin/env sh\nexit 1\n");
+    chmodSync(stub, 0o755);
+    const home = join(root, "home-retain-prune");
+    mkdirSync(join(home, ".codex"), { recursive: true });
+    writeFileSync(join(home, ".codex", "config.toml"), "# previous codex config\n");
+
+    expect(runInstall(dotfiles, home, { TMPDIR: home }).status).toBe(0);
+    expect(runInstall(dotfiles, home, { TMPDIR: home }).status).toBe(0);
+
+    const retained = readdirSync(join(home, ".codex")).filter((name) =>
+      name.startsWith("config.toml.bak."),
+    );
+    expect(retained).toHaveLength(1);
+  });
+
   // 上のテストが通す経路と違い、こちらは cleanup 関数群そのものの振る舞いを見る
   // (trap 登録は harness 側で行うため、install.sh の trap 行はカバーしない)。
   test("cleanup_install_and_exit removes temps and exits 128+signum when a TERM trap fires", () => {
