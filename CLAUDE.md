@@ -308,7 +308,7 @@ tmux pane と AI agent セッションを紐付けるための herdr 向け Sess
     紐付かないときはまず `tmux show-environment -g CURSOR_VERSION` / hook プロセスの
     environ を疑うこと。スクリプトは herdr 管理下なので直接編集はせず、
     「hook 入力の `cursor_version` のみで判定する」形を upstream へ報告するのが筋
-    (追跡は #242。**未報告**の状態で、報告したら issue 側を更新すること)
+    (追跡は #242。報告状況は issue 側を見ること)
   - **Codex 用 (v8)**: `hook_event_name` が空でなく `SessionStart` 以外なら exit。
     `transcript_path` は **必須ゲート**で、欠落 / 空白のみなら送信せず exit する
     (ゲートに使うだけで params には載せない)。さらに `CODEX_THREAD_ID` が
@@ -316,7 +316,7 @@ tmux pane と AI agent セッションを紐付けるための herdr 向け Sess
     exit する (**未設定なら通過する** — fresh pane はこちら)
 - ⚠️ Codex の SessionStart 入力に `transcript_path` が**常に**含まれるかは未検証。
   Codex 公式の hook 仕様では nullable なので、含まれないケースがあると Codex 側の
-  herdr 連携は**無言で全停止**する (追跡は #242。**未報告**。#239 の既知懸念と同根)
+  herdr 連携は**無言で全停止**する (追跡は #242。#239 の既知懸念と同根)
 - 配布: `.claude/hooks/*` は install.sh のワイルドカードで `~/.claude/hooks/` と
   `~/.codex/hooks/` の両方へ symlink。`.codex/herdr-agent-state.sh` は個別の `ln -sf` 行で
   `~/.codex/herdr-agent-state.sh` へ配布
@@ -380,9 +380,18 @@ Orca 自身がローカルの実体へ注入するのに任せる。
 `$HOME` に残り、temp の記録はプロセス内の配列にしか無いので**次回実行でも掃除されない**。
 exit code を 128 + signum にしているのは、通常の install 失敗 (exit 1) と中断を
 呼び出し元 (`bootstrap.sh` 等) から区別できるようにするため。
-残余リスク: `mktemp` が返ってから配列へ append するまでの極小窓で signal を受けると、
-trap は配列しか見ないのでその temp だけ掃除から漏れる (stray file 1 個)。glob ベースの
-掃除にすれば塞げるが、複雑さに見合わないので受容している。
+受容している残余リスクは 3 つ:
+
+- `mktemp` が返ってから配列へ append するまでの極小窓で signal を受けると、trap は配列
+  しか見ないのでその temp だけ掃除から漏れる (stray file 1 個)。glob ベースの掃除に
+  すれば塞げるが、複雑さに見合わない
+- `codex-otel` の成功直後から下記の変数クリアまでの窓で中断すると、Authorization は
+  書き戻し済みなのに trap が token 入りの TMPDIR コピーを "backup kept at ..." として
+  保持する (mode 600 + stderr 通知ありなので受容)
+- **signal trap は foreground の子プロセス実行中には走らない** (bash は子の待機中に
+  受けた signal の trap を子の終了後に実行する)。untrapped だった頃より中断の応答性は
+  下がっており、`codex-otel` が hang すると trap も `exit` も走らない。現状の子は
+  いずれも短命なので問題にならないが、**長命な子を挟む変更をするときは要注意**
 なお signal 経路では **codex config のバックアップは消さない**。`~/.codex/config.toml` を
 template で置換してから `codex-otel --write-config-only` が Authorization を書き戻すまでの
 窓で中断すると、そのバックアップが旧 config の唯一のコピーになるため。変数を空にしてから

@@ -432,6 +432,9 @@ describe("codex-otel", () => {
     expect(lstatSync(dest).isSymbolicLink()).toBe(false);
     expect(readFileSync(dest, "utf8")).toBe(sourceBefore);
     expectInstalledMode(home, relative);
+    // 初回 migration では dest (symlink 先 = source) と staged が同一内容なので
+    // `cmp -s` で退避がスキップされ、`.bak` は生えない。
+    expect(existsSync(`${dest}.bak`)).toBe(false);
 
     // dest への書き込みが repo 側へ届かないこと (= symlink が本当に切れていること)。
     writeFileSync(dest, '{\n  "hooks": {},\n  "localOnly": true\n}\n');
