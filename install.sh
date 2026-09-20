@@ -21,9 +21,15 @@ cleanup_codex_config_backup() {
 cleanup_managed_file_temps() {
   local tmp
 
-  for tmp in "${managed_file_temps[@]:-}"; do
-    [ -n "$tmp" ] && rm -f "$tmp"
-  done
+  # macOS 既定の /bin/bash (3.2) は空配列の "${a[@]}" を set -u で unbound 扱いに
+  # するため、要素数で先に抜ける。`[ ... ] && rm` 形式にすると最終評価が 1 になり
+  # trap が非ゼロで返りうるので、素直に if/for で書く。
+  if [ "${#managed_file_temps[@]}" -gt 0 ]; then
+    for tmp in "${managed_file_temps[@]}"; do
+      rm -f "$tmp"
+    done
+  fi
+  return 0
 }
 
 cleanup_install() {
@@ -173,7 +179,7 @@ if [ -d "$DOTFILES/.agents/skills" ] && [ "$(ls -A "$DOTFILES/.agents/skills" 2>
   done
 fi
 
-echo "==> Linking Claude Code user settings"
+echo "==> Installing Claude Code user settings"
 mkdir -p "$HOME/.claude"
 # Replace an old symlink so Orca/agent runtime writes stay in ~/.claude only
 # (same rationale as the ~/.codex/hooks.json replacement above).
