@@ -470,6 +470,9 @@ describe("codex-otel", () => {
     const result = runInstall(dotfiles, home);
 
     expect(result.status).not.toBe(0);
+    // 「どの失敗で落ちたか」まで固定する。assert が status だけだと、対象ファイルより
+    // 手前で無関係に abort しても dest は無傷のまま pass してしまう。
+    expect(result.stderr).toContain(join(dotfiles, ...relative.split("/")));
     expect(existsSync(join(home, dir, basename))).toBe(true);
     expect(readFileSync(join(home, dir, basename), "utf8")).toBe(existing);
     expect(leftoverTempFiles(join(home, dir), basename)).toHaveLength(0);
@@ -767,6 +770,7 @@ describe("codex-otel", () => {
     const result = runInstall(dotfiles, home);
 
     expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(join(dotfiles, ".claude", "settings.json"));
     expect(readFileSync(`${dest}.bak`, "utf8")).toBe(recovery);
     expect(readFileSync(dest, "utf8")).toBe(current);
   });

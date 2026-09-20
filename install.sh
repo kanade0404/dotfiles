@@ -14,14 +14,17 @@ codex_config_backup_pending_removal=""
 codex_config_backup_kept_in_tmpdir=""
 managed_file_temps=()
 
+# cleanup 系の `rm -f` には一律 `|| true` を付ける。`set -e` は trap 本体にも効くため、
+# 親ディレクトリの EACCES 等で `rm -f` が非ゼロを返すとそこで trap が abort し、
+# 後続の掃除や `exit $((128 + signum))` に到達しなくなる (`echo ... || true` と同じ規律)。
 cleanup_codex_config_backup() {
   if [ -n "${codex_config_backup:-}" ]; then
-    rm -f "$codex_config_backup"
+    rm -f "$codex_config_backup" || true
   fi
   # 「窓が閉じたので消す」と決めたパス。変数クリアと `rm` の間で中断しても
   # token 入りのコピーが残らないよう、掃除側でも冪等に消す。
   if [ -n "${codex_config_backup_pending_removal:-}" ]; then
-    rm -f "$codex_config_backup_pending_removal"
+    rm -f "$codex_config_backup_pending_removal" || true
   fi
 }
 
@@ -33,7 +36,7 @@ cleanup_managed_file_temps() {
   # trap が非ゼロで返りうるので、素直に if/for で書く。
   if [ "${#managed_file_temps[@]}" -gt 0 ]; then
     for tmp in "${managed_file_temps[@]}"; do
-      rm -f "$tmp"
+      rm -f "$tmp" || true
     done
   fi
   return 0
@@ -68,7 +71,7 @@ cleanup_install_and_exit() {
   # (exit code も 128+signum でなくなる)。echo 自体にも `|| true` を付ける。
   codex_config_backup=""
   if [ -n "${codex_config_backup_pending_removal:-}" ]; then
-    rm -f "$codex_config_backup_pending_removal"
+    rm -f "$codex_config_backup_pending_removal" || true
     # `_pending_removal` への代入とクリアの間で signal を受けると両者が同じパスを指す。
     # いま消したばかりのパスを "kept" として案内しない。
     if [ "$kept" = "$codex_config_backup_pending_removal" ]; then
