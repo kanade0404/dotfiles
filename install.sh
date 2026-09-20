@@ -204,7 +204,9 @@ retain_codex_config_backup() {
   [ -n "${codex_config_backup:-}" ] || return 0
   retained_backup="$(mktemp "$HOME/.codex/config.toml.bak.XXXXXX")" || return 1
   if ! mv "$codex_config_backup" "$retained_backup"; then
-    rm -f "$retained_backup"
+    # 空の退避先を残さない。cleanup 系と同じく失敗許容 (ここで errexit に落ちると、
+    # この関数が守ろうとしている「唯一のコピー」を EXIT trap が消してしまう)。
+    rm -f "$retained_backup" || true
     return 1
   fi
   codex_config_backup=""
