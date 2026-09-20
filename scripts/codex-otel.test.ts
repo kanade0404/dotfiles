@@ -137,6 +137,7 @@ function runInstallManagedFile(
   harnessName: string,
   src: string,
   dest: string,
+  backup = "",
 ): { status: number; stderr: string } {
   const harness = join(root, `${harnessName}.sh`);
   writeFileSync(
@@ -148,14 +149,14 @@ function runInstallManagedFile(
       extractShellFunction("cleanup_managed_file_temps"),
       "managed_file_temps=()",
       "status=0",
-      'install_managed_file 644 "$1" "$2" || status=$?',
+      'install_managed_file 644 "$1" "$2" "$3" || status=$?',
       'printf "status=%s\\n" "$status"',
       "cleanup_managed_file_temps",
       "",
     ].join("\n"),
   );
 
-  const result = spawnSync("bash", [harness, src, dest], { encoding: "utf8" });
+  const result = spawnSync("bash", [harness, src, dest, backup], { encoding: "utf8" });
   const reported = /^status=(\d+)$/m.exec(result.stdout ?? "");
   if (reported === null) {
     throw new Error(`harness did not report a status. stderr: ${result.stderr ?? ""}`);
@@ -553,21 +554,72 @@ describe("codex-otel", () => {
 
   // `.bak` が directory / symlink だと `cp -p` は「中へコピー」「リンク先へ書き込み」に
   // なり、「<dest>.bak から手で戻せる」という契約が黙って破れる。
-  test("install skips the backup when .bak is not a regular file", () => {
-    const dotfiles = prepareDotfilesFixture();
-    const home = join(root, "home-bak-directory");
-    mkdirSync(join(home, ".claude"), { recursive: true });
-    const dest = join(home, ".claude", "settings.json");
-    writeFileSync(dest, '{\n  "local": true\n}\n');
-    mkdirSync(`${dest}.bak`);
+  // ガードは `[ -L ]` と「存在するが `-f` でない」の 2 条件なので、directory だけでなく
+  // symlink (通常 / dangling) も固定する。
+  test.each(["directory", "symlink-to-file", "dangling-symlink"] as const)(
+    "install skips the backup when .bak is a %s",
+    (kind) => {
+      const dotfiles = prepareDotfilesFixture();
+      const home = join(root, `home-bak-${kind}`);
+      mkdirSync(join(home, ".claude"), { recursive: true });
+      const dest = join(home, ".claude", "settings.json");
+      writeFileSync(dest, '{\n  "local": true\n}\n');
+      const bak = `${dest}.bak`;
+      const linkTarget = join(home, ".claude", "bak-target.json");
+      const targetBefore = "# untouched\n";
+      if (kind === "directory") {
+        mkdirSync(bak);
+      } else if (kind === "symlink-to-file") {
+        writeFileSync(linkTarget, targetBefore);
+        symlinkSync(linkTarget, bak);
+      } else {
+        symlinkSync(join(home, ".claude", "missing-target.json"), bak);
+      }
 
-    const result = runInstall(dotfiles, home);
+      const result = runInstall(dotfiles, home);
 
-    expect(result.status).toBe(0);
-    expect(result.stderr).toContain("skipping backup");
-    expect(statSync(`${dest}.bak`).isDirectory()).toBe(true);
-    expect(readdirSync(`${dest}.bak`)).toHaveLength(0);
-    expectInstalledAsRealFile(home, dotfiles, ".claude/settings.json");
+      expect(result.status).toBe(0);
+      expect(result.stderr).toContain("skipping backup");
+      if (kind === "directory") {
+        expect(statSync(bak).isDirectory()).toBe(true);
+        expect(readdirSync(bak)).toHaveLength(0);
+      } else {
+        // symlink はリンク先へ書き込まれず、リンクのまま残る。
+        expect(lstatSync(bak).isSymbolicLink()).toBe(true);
+      }
+      if (kind === "symlink-to-file") {
+        expect(readFileSync(linkTarget, "utf8")).toBe(targetBefore);
+      }
+      if (kind === "dangling-symlink") {
+        expect(existsSync(bak)).toBe(false);
+      }
+      expectInstalledAsRealFile(home, dotfiles, ".claude/settings.json");
+    },
+  );
+
+  // 第 4 引数は stringly-typed なので、typo (`bakcup` 等) が黙って「退避なし」に
+  // 落ちないよう、未知の値は明示的に失敗させる。
+  test("install_managed_file rejects an unknown backup flag", () => {
+    const dir = join(root, "unknown-backup-flag");
+    mkdirSync(dir, { recursive: true });
+    const src = join(dir, "source.json");
+    writeFileSync(src, '{\n  "hooks": {}\n}\n');
+    const dest = join(dir, "settings.json");
+    const existing = '{\n  "local": true\n}\n';
+    writeFileSync(dest, existing);
+
+    const { status, stderr } = runInstallManagedFile(
+      "unknown-backup-flag-harness",
+      src,
+      dest,
+      "bakcup",
+    );
+
+    expect(status).not.toBe(0);
+    expect(stderr).toContain("unknown backup flag");
+    expect(readFileSync(dest, "utf8")).toBe(existing);
+    expect(existsSync(`${dest}.bak`)).toBe(false);
+    expect(leftoverTempFiles(dir, "settings.json")).toHaveLength(0);
   });
 
   // config.toml は bearer token を平文で持つため、退避コピーを増やさない。

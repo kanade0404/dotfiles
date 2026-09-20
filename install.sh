@@ -71,9 +71,16 @@ install_managed_file() {
   # `&&` の右辺) では install の失敗後も次行が走り、mktemp が作った空ファイルを dest に
   # 被せたうえで 0 を返してしまう。安全性を呼び出し文脈ではなく関数内に閉じる。
   install -m "$mode" "$src" "$tmp" || return 1
-  if [ "$backup" = "backup" ]; then
-    backup_local_settings "$dest" "$tmp"
-  fi
+  # 第 4 引数は stringly-typed なので、typo が黙って「退避なし」に落ちないよう
+  # 未知の値は失敗させる (安全性を呼び出し文脈に委ねない方針の一環)。
+  case "$backup" in
+    backup) backup_local_settings "$dest" "$tmp" ;;
+    "") ;;
+    *)
+      echo "error: unknown backup flag '$backup' for $dest" >&2
+      return 1
+      ;;
+  esac
   mv -f "$tmp" "$dest"
 }
 
