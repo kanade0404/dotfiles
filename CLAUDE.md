@@ -298,8 +298,9 @@ tmux pane と AI agent セッションを紐付けるための herdr 向け Sess
 - python 側のガードは v10 / v8 で異なる。シェル側 4 段ガードの後に以下が走る:
   - **Claude 用 (v10)**: 環境変数 `CURSOR_VERSION` か hook 入力の `cursor_version` が
     あれば exit (Cursor 経由の起動を除外)。`hook_event_name` が `SessionStart` 以外
-    (空文字含む) なら exit。`transcript_path` は**あれば** `agent_session_path` として
-    params に載せる — 必須ではない
+    (空文字含む) なら exit。hook 入力に `agent_id` があれば subagent とみなして exit
+    (v8 の `CODEX_THREAD_ID` 判定に相当する段)。`transcript_path` は**あれば**
+    `agent_session_path` として params に載せる — 必須ではない
   - ⚠️ `CURSOR_VERSION` は**環境変数**判定なので誤爆しうる。tmux server は最初に起動した
     クライアントの環境を継承して以後の全 pane に伝播するため、一度でも Cursor の統合
     ターミナルから tmux server を起動すると、その server 上の**正規の Claude Code

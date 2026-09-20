@@ -612,6 +612,40 @@ describe("codex-otel", () => {
     },
   );
 
+  // EXIT trap は untrapped fatal signal では走らないので、signal 側にも trap を張って
+  // temp を掃除し `exit 128+signum` で抜ける。`kill -s TERM $$` は同期発火なので
+  // flaky にならない。
+  test("install.sh traps fatal signals to clean temps and exit 128+signum", () => {
+    const dir = join(root, "signal-trap");
+    mkdirSync(dir, { recursive: true });
+    const dest = join(dir, "settings.json");
+    const harness = join(root, "signal-trap-harness.sh");
+    writeFileSync(
+      harness,
+      [
+        "set -euo pipefail",
+        extractShellFunction("cleanup_codex_config_backup"),
+        extractShellFunction("cleanup_managed_file_temps"),
+        extractShellFunction("cleanup_install"),
+        extractShellFunction("cleanup_install_and_exit"),
+        'codex_config_backup=""',
+        "managed_file_temps=()",
+        "trap cleanup_install EXIT",
+        "trap 'cleanup_install_and_exit 15' TERM",
+        'tmp="$(mktemp "$1.tmp.XXXXXX")"',
+        'managed_file_temps+=("$tmp")',
+        "kill -s TERM $$",
+        "sleep 5",
+        "",
+      ].join("\n"),
+    );
+
+    const result = spawnSync("bash", [harness, dest], { encoding: "utf8" });
+
+    expect(result.status).toBe(143);
+    expect(leftoverTempFiles(dir, "settings.json")).toHaveLength(0);
+  });
+
   // 退避は source の staging に成功した後にだけ行う。source 不在で install が失敗する
   // ケースで既存の `.bak` を潰すと、巻き戻りからの復旧手段そのものが消える。
   test("install keeps an existing .bak when the dotfiles source is missing", () => {
