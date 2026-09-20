@@ -69,6 +69,11 @@ cleanup_install_and_exit() {
   codex_config_backup=""
   if [ -n "${codex_config_backup_done:-}" ]; then
     rm -f "$codex_config_backup_done"
+    # `_done` への代入とクリアの間で signal を受けると両者が同じパスを指す。
+    # いま消したばかりのパスを "kept" として案内しない。
+    if [ "$kept" = "$codex_config_backup_done" ]; then
+      kept=""
+    fi
   fi
   if [ -n "$kept" ]; then
     echo "note: interrupted; previous Codex config backup kept at $kept" >&2 || true
@@ -129,7 +134,7 @@ install_managed_file() {
   if [ "$backup" = "backup" ]; then
     backup_local_settings "$dest" "$tmp" || return 1
   fi
-  mv -f "$tmp" "$dest"
+  mv -f "$tmp" "$dest" || return 1
 }
 
 # install.sh の再実行は dest を dotfiles の内容へ巻き戻すため、ローカルに溜まった設定

@@ -656,6 +656,33 @@ describe("codex-otel", () => {
     // HUP / INT / QUIT の trap 行は TERM と同形のため個別テストを持たない。
   });
 
+  // codex-otel が失敗し、かつ retain 先へ移せなかった場合。バックアップは TMPDIR に
+  // 置き去りにしたうえで場所を警告に出す (EXIT trap にも消させない)。
+  // stub が `chmod 500 "$HOME/.codex"` してから exit 1 すると、retain の mktemp が
+  // 決定的に失敗する。(root は permission bit を無視するので skip。)
+  test.skipIf(process.getuid?.() === 0)("install keeps the codex backup in TMPDIR when it cannot be retained", () => {
+    const dotfiles = prepareDotfilesFixture();
+    const stub = join(dotfiles, ".local", "bin", "codex-otel");
+    rmSync(stub, { force: true });
+    writeFileSync(stub, '#!/usr/bin/env sh\nchmod 500 "$HOME/.codex"\nexit 1\n');
+    chmodSync(stub, 0o755);
+    const home = join(root, "home-retain-failure");
+    mkdirSync(join(home, ".codex"), { recursive: true });
+    writeFileSync(join(home, ".codex", "config.toml"), "# previous codex config\n");
+
+    let result;
+    try {
+      result = runInstall(dotfiles, home, { TMPDIR: home });
+    } finally {
+      chmodSync(join(home, ".codex"), 0o755);
+    }
+
+    expect(result.stderr).toContain("failed to refresh Codex OTEL config");
+    const kept = /keeping it at (\S+)/.exec(result.stderr ?? "");
+    expect(kept).not.toBeNull();
+    expect(readFileSync(kept![1], "utf8")).toBe("# previous codex config\n");
+  });
+
   // 上のテストが通す経路と違い、こちらは cleanup 関数群そのものの振る舞いを見る
   // (trap 登録は harness 側で行うため、install.sh の trap 行はカバーしない)。
   test("cleanup_install_and_exit removes temps and exits 128+signum when a TERM trap fires", () => {
