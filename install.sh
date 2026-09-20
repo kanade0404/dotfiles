@@ -51,6 +51,14 @@ install_managed_file() {
   local mode="$1" src="$2" dest="$3"
   local tmp
 
+  # dest が directory (または directory への symlink) だと `mv -f` は置き換えではなく
+  # 「tmp を dest の中へ移動」になり 0 を返す = 置き換わっていないのに成功してしまう。
+  # 安全性を呼び出し文脈に委ねない方針に揃えて、関数側で先に弾く。
+  if [ -d "$dest" ]; then
+    echo "error: $dest is a directory; refusing to install" >&2
+    return 1
+  fi
+
   tmp="$(mktemp "$dest.tmp.XXXXXX")" || return 1
   managed_file_temps+=("$tmp")
   # `install; mv` と行を分けない: 呼び出し側の errexit が抑止された文脈

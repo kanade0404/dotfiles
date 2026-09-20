@@ -472,6 +472,24 @@ describe("codex-otel", () => {
     expect(leftoverTempFiles(dir, "settings.json")).toHaveLength(0);
   });
 
+  // dest が directory だと `mv -f tmp dest` は「置き換え」ではなく「dest の中へ移動」に
+  // なって 0 を返す。置き換わっていないのに成功する経路を関数内で塞ぐ。
+  test("install_managed_file refuses a directory dest instead of succeeding silently", () => {
+    const dir = join(root, "directory-dest");
+    mkdirSync(dir, { recursive: true });
+    const src = join(dir, "source.json");
+    writeFileSync(src, '{\n  "hooks": {}\n}\n');
+    const dest = join(dir, "settings.json");
+    mkdirSync(dest);
+
+    const { status } = runInstallManagedFile("directory-dest-harness", src, dest);
+
+    expect(status).not.toBe(0);
+    expect(statSync(dest).isDirectory()).toBe(true);
+    expect(readdirSync(dest)).toHaveLength(0);
+    expect(leftoverTempFiles(dir, "settings.json")).toHaveLength(0);
+  });
+
   test("does not preserve Authorization from an unbalanced managed block", () => {
     const target = writeConfig(
       "config.toml",
