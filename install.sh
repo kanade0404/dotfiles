@@ -208,6 +208,10 @@ mkdir -p "$HOME/.codex"
 # Replace an old symlink so Codex runtime writes stay in ~/.codex only.
 # Re-running install.sh resets local Codex state such as project trust prompts.
 if [ -f "$HOME/.codex/config.toml" ]; then
+  # 残余リスク: 変数が非空になってから `cp` が終わるまでの窓で signal を受けると、
+  # trap は空 (または部分) コピーを "backup kept at ..." として案内する。この窓では
+  # dest 自体が無傷なのでデータは失われないが、案内されたパスの中身が旧 config とは
+  # 限らない。install_managed_file の mktemp→staging 窓と同クラスとして受容する。
   codex_config_backup="$(mktemp "${TMPDIR:-/tmp}/codex-config.XXXXXX")"
   cp "$HOME/.codex/config.toml" "$codex_config_backup"
 fi

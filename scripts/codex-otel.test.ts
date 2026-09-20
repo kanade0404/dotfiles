@@ -562,6 +562,9 @@ describe("codex-otel", () => {
     expect(result.stderr).toContain("refusing to overwrite");
     expect(existsSync(`${dest}.bak`)).toBe(false);
     expect(leftoverTempFiles(join(home, ".claude"), "settings.json.bak")).toHaveLength(0);
+    // staging 済みの `settings.json.tmp.*` も EXIT trap で掃除されること
+    // (`.bak` プレフィックスの assert はこちらにマッチしない)。
+    expect(leftoverTempFiles(join(home, ".claude"), "settings.json")).toHaveLength(0);
     chmodSync(dest, 0o644);
     expect(readFileSync(dest, "utf8")).toBe(local);
   });
