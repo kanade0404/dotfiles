@@ -292,8 +292,21 @@ tmux pane と AI agent セッションを紐付けるための herdr 向け Sess
 | Codex 用 | `.codex/herdr-agent-state.sh` | `HERDR_INTEGRATION_ID=codex`, v8 |
 
 - 両者は agent 種別・イベント絞り込み条件・payload が異なる別物。**統合しない**
-- 役割: hook 入力 JSON から `session_id` / `transcript_path` を抜き、herdr の Unix domain
-  socket へ `pane.report_agent_session` JSON-RPC を送信する (herdr バイナリ自体は呼ばない)
+- 役割: hook 入力 JSON から `session_id` を抜き、herdr の Unix domain socket へ
+  `pane.report_agent_session` JSON-RPC を送信する (herdr バイナリ自体は呼ばない)。
+  `session_id` が文字列として取れなければ何も送らない
+- python 側のガードは v10 / v8 で異なる。シェル側 4 段ガードの後に以下が走る:
+  - **Claude 用 (v10)**: 環境変数 `CURSOR_VERSION` か hook 入力の `cursor_version` が
+    あれば exit (Cursor 経由の起動を除外)。`hook_event_name` が `SessionStart` 以外
+    (空文字含む) なら exit。`transcript_path` は**あれば** `agent_session_path` として
+    params に載せる — 必須ではない
+  - **Codex 用 (v8)**: `hook_event_name` が空でなく `SessionStart` 以外なら exit。
+    `transcript_path` は **必須ゲート**で、欠落 / 空白のみなら送信せず exit する
+    (ゲートに使うだけで params には載せない)。さらに `CODEX_THREAD_ID` が入力の
+    `session_id` と一致しない場合は subagent とみなして exit
+- ⚠️ Codex の SessionStart 入力に `transcript_path` が**常に**含まれるかは未検証。
+  Codex 公式の hook 仕様では nullable なので、含まれないケースがあると Codex 側の
+  herdr 連携は**無言で全停止**する (upstream 報告対象。#239 の既知懸念と同根)
 - 配布: `.claude/hooks/*` は install.sh のワイルドカードで `~/.claude/hooks/` と
   `~/.codex/hooks/` の両方へ symlink。`.codex/herdr-agent-state.sh` は個別の `ln -sf` 行で
   `~/.codex/herdr-agent-state.sh` へ配布
@@ -327,10 +340,13 @@ git 管理下の実体を直接書き換えてしまっていた**。実際に�
 上書きされて消える。
 
 対応として `install.sh` を実体生成方式に変更し、この 2 ファイルを
-**symlink 配布から実体生成方式へ移行**した (#239)。加えて、両ファイルの template
-から Orca 用 hook 定義そのものを除去した。理由は Orca hook が **ローカル専用**だから:
+**symlink 配布から実体生成方式へ移行**した (#239)。
+
+加えて、両ファイルの template には **Orca 用 hook 定義を置かない**方針にしている
+(一度 commit したものを PR 内で戻しただけなので、この方針は net diff にも履歴にも
+「除去」としては現れない)。理由は Orca hook が **ローカル専用**だから:
 cloud session (claude.ai/code) には Orca が存在しないため、repo 内 `.claude/settings.json`
-に残しても毎イベント空振りの存在チェックが走るだけのコストにしかならない (「cloud session は
+に置いても毎イベント空振りの存在チェックが走るだけのコストにしかならない (「cloud session は
 `~/.claude/settings.json` (user settings) を読まない」のでそもそも repo 内の設定は cloud に
 影響しないが、リポジトリ側の記述としても不要な情報になる)。Orca hook は pane 起動時に
 Orca 自身がローカルの実体へ注入するのに任せる。
@@ -369,6 +385,15 @@ Orca の書き換えが repo 側の実体にそのまま現れて git diff で�
 「ローカルに黙って溜まり、次の install.sh 実行で黙って消える」方向に変わった。UI で承認した
 allow/deny が install.sh のたびに巻き戻って同じ承認を繰り返す、あるいは危険コマンド用に
 足した deny が消えたことに気付かないまま運用する、といった形で表面化しうる。
+緩和として `install.sh` は上書き前の内容を **1 世代だけ `<dest>.bak` へ退避**する
+(`backup_local_settings`)。`~/.claude/settings.json.bak` / `~/.codex/hooks.json.bak` から
+手で戻せるという意味であって、巻き戻り自体に気付かせる仕組みではない点に注意
+(世代は増やさないので、巻き戻りに気付く前に install.sh を 2 回走らせると元の内容は失われる)。
+`~/.codex/config.toml` は対象外: Authorization の引き継ぎを
+`CODEX_OTEL_PRESERVE_AUTH_FROM` で別に持っており、bearer token の平文コピーを
+`$HOME` に増やさないため。なお「差分があれば警告する」(`cmp -s`) 方式は採っていない —
+Orca が pane 起動のたびに hook を注入する以上 dest は**ほぼ常に** dotfiles 側と異なり、
+毎回出る警告は読まれなくなるため。
 (`/config` のテーマ変更は `~/.claude/settings.json` ではなく `~/.claude.json` 側に保存されて
 いることを確認済み (`grep -n theme ~/.claude.json` すると実際に選んだテーマが出るが、
 `~/.claude/settings.json` 側の `theme` キーはこの dotfiles にコミット済みの静的な既定値
