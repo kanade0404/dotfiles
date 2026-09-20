@@ -158,13 +158,24 @@ function runInstallManagedFile(
 
 // install.sh の関数定義だけを抜き出して単体で実行するためのヘルパー。
 // install.sh は source すると全処理が走ってしまうため、定義を切り出して harness に埋める。
-function extractShellFunction(name: string): string {
-  const lines = readFileSync(installScript, "utf8").split("\n");
+// 閉じ括弧の判定は「行全体が }」のヒューリスティックなので、本体に column-0 の }
+// (入れ子関数や heredoc 等) が入ると途中で切れる。切れた断片が偶然 parse できると
+// 「別物をテストしたまま pass」するため、抽出結果が関数定義として成立するか検証する。
+function extractShellFunction(name: string, source = readFileSync(installScript, "utf8")): string {
+  const lines = source.split("\n");
   const start = lines.indexOf(`${name}() {`);
   if (start === -1) throw new Error(`install.sh: ${name}() not found`);
   const end = lines.indexOf("}", start);
   if (end === -1) throw new Error(`install.sh: ${name}() has no closing brace`);
-  return lines.slice(start, end + 1).join("\n");
+  const snippet = lines.slice(start, end + 1).join("\n");
+
+  const check = spawnSync("bash", ["-c", `${snippet}\ndeclare -F ${name} >/dev/null`], {
+    encoding: "utf8",
+  });
+  if (check.status !== 0) {
+    throw new Error(`extracted ${name}() is not a valid function definition`);
+  }
+  return snippet;
 }
 
 // ~/.claude/settings.json と ~/.codex/hooks.json は Orca が pane 起動毎に書き換えるため、
@@ -488,6 +499,35 @@ describe("codex-otel", () => {
     expect(statSync(dest).isDirectory()).toBe(true);
     expect(readdirSync(dest)).toHaveLength(0);
     expect(leftoverTempFiles(dir, "settings.json")).toHaveLength(0);
+  });
+
+  // extractShellFunction は「行全体が }」を閉じ括弧とみなすヒューリスティックなので、
+  // 対象関数の本体に column-0 の } が入ると途中で切れる。切れた断片が偶然 parse できると
+  // 「別物をテストしたまま pass」するため、抽出結果が関数定義として成立するかを検証する。
+  test("extractShellFunction rejects a truncated extraction", () => {
+    const truncating = [
+      "sample_fn() {",
+      "  nested() {",
+      "    :",
+      "}",
+      "  echo tail",
+      "}",
+      "",
+    ].join("\n");
+
+    expect(() => extractShellFunction("sample_fn", truncating)).toThrow(
+      /not a valid function definition/,
+    );
+  });
+
+  test("extractShellFunction returns the whole body of a well-formed function", () => {
+    const wellFormed = ["sample_fn() {", "  nested() {", "    :", "  }", "  echo tail", "}", ""].join(
+      "\n",
+    );
+
+    expect(extractShellFunction("sample_fn", wellFormed)).toBe(
+      ["sample_fn() {", "  nested() {", "    :", "  }", "  echo tail", "}"].join("\n"),
+    );
   });
 
   test("does not preserve Authorization from an unbalanced managed block", () => {
