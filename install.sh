@@ -143,8 +143,8 @@ fi
 
 echo "==> Linking Claude Code user settings"
 mkdir -p "$HOME/.claude"
-# Replace an old symlink so Orca/agent runtime writes stay in ~/.claude only.
-# Re-running install.sh resets local hook registrations (Orca re-injects on next pane).
+# Replace an old symlink so Orca/agent runtime writes stay in ~/.claude only
+# (same rationale as the ~/.codex/hooks.json replacement above).
 rm -f "$HOME/.claude/settings.json"
 install -m 644 "$DOTFILES/.claude/settings.json" "$HOME/.claude/settings.json"
 ln -sf "$DOTFILES/.claude/statusline.py" "$HOME/.claude/statusline.py"
