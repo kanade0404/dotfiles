@@ -541,26 +541,29 @@ describe("codex-otel", () => {
     expect(leftoverTempFiles(join(home, ".claude"), "settings.json.bak")).toHaveLength(0);
   });
 
-  // 退避は best-effort: 失敗しても警告だけで dest の置き換えは続行する。
-  // dest を読めなくすると `cp -p` が決定的に失敗するので、この契約を固定できる。
+  // 退避が取れないまま上書きすると、保険が最も必要な瞬間にローカル設定の唯一のコピーが
+  // 不可逆に失われる。dest を読めなくすると `cp -p` が決定的に失敗するので、
+  // 「退避失敗なら置き換えを中止し dest は無傷」を固定できる。
   // (ENOSPC 等「書き込み途中で失敗」の再現は決定的にできないため未カバー。)
   // root は permission bit を無視するので skip する (silent return にすると
   // root で走る CI でこの契約が一度も検証されないまま green になる)。
-  test.skipIf(process.getuid?.() === 0)("install continues and warns when the backup copy fails", () => {
+  test.skipIf(process.getuid?.() === 0)("install aborts without overwriting dest when the backup copy fails", () => {
     const dotfiles = prepareDotfilesFixture();
     const home = join(root, "home-bak-unreadable");
     mkdirSync(join(home, ".claude"), { recursive: true });
     const dest = join(home, ".claude", "settings.json");
-    writeFileSync(dest, '{\n  "local": true\n}\n');
+    const local = '{\n  "local": true\n}\n';
+    writeFileSync(dest, local);
     chmodSync(dest, 0o000);
 
     const result = runInstall(dotfiles, home);
 
-    expect(result.status).toBe(0);
-    expect(result.stderr).toContain("failed to back up");
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("refusing to overwrite");
     expect(existsSync(`${dest}.bak`)).toBe(false);
     expect(leftoverTempFiles(join(home, ".claude"), "settings.json.bak")).toHaveLength(0);
-    expectInstalledAsRealFile(home, dotfiles, ".claude/settings.json");
+    chmodSync(dest, 0o644);
+    expect(readFileSync(dest, "utf8")).toBe(local);
   });
 
   // 引数の検証は mktemp / install の副作用より前に済ませる。
@@ -615,7 +618,28 @@ describe("codex-otel", () => {
   // EXIT trap は untrapped fatal signal では走らないので、signal 側にも trap を張って
   // temp を掃除し `exit 128+signum` で抜ける。`kill -s TERM $$` は同期発火なので
   // flaky にならない。
-  test("install.sh traps fatal signals to clean temps and exit 128+signum", () => {
+  // install.sh 本体の trap 登録行 (`trap 'cleanup_install_and_exit 15' TERM`) を通す。
+  // fixture の codex-otel を「親 (install.sh) へ SIGTERM を送る」stub に差し替えると、
+  // install.sh が動いている最中に決定的に signal を配送できる。
+  // trap が無ければ bash は signal で殺され、spawnSync の status は null になる。
+  test("install.sh registers a TERM trap and exits 128+signum", () => {
+    const dotfiles = prepareDotfilesFixture();
+    const stub = join(dotfiles, ".local", "bin", "codex-otel");
+    rmSync(stub, { force: true });
+    writeFileSync(stub, '#!/usr/bin/env sh\nkill -TERM "$PPID"\nexit 0\n');
+    chmodSync(stub, 0o755);
+    const home = join(root, "home-signal-install");
+    mkdirSync(join(home, ".codex"), { recursive: true });
+
+    const result = runInstall(dotfiles, home);
+
+    expect(result.status).toBe(143);
+    expect(leftoverTempFiles(join(home, ".codex"), "config.toml")).toHaveLength(0);
+  });
+
+  // 上のテストが通す経路と違い、こちらは cleanup 関数群そのものの振る舞いを見る
+  // (trap 登録は harness 側で行うため、install.sh の trap 行はカバーしない)。
+  test("cleanup_install_and_exit removes temps and exits 128+signum when a TERM trap fires", () => {
     const dir = join(root, "signal-trap");
     mkdirSync(dir, { recursive: true });
     const dest = join(dir, "settings.json");
@@ -683,17 +707,19 @@ describe("codex-otel", () => {
   });
 
   // `.bak` が directory / symlink だと `cp -p` は「中へコピー」「リンク先へ書き込み」に
-  // なり、「<dest>.bak から手で戻せる」という契約が黙って破れる。
+  // なり、「<dest>.bak から手で戻せる」という契約が黙って破れる。退避が取れない以上
+  // dest は上書きせず中止する。
   // ガードは `[ -L ]` と「存在するが `-f` でない」の 2 条件なので、directory だけでなく
   // symlink (通常 / dangling) も固定する。
   test.each(["directory", "symlink-to-file", "dangling-symlink"] as const)(
-    "install skips the backup when .bak is a %s",
+    "install aborts without overwriting dest when .bak is a %s",
     (kind) => {
       const dotfiles = prepareDotfilesFixture();
       const home = join(root, `home-bak-${kind}`);
       mkdirSync(join(home, ".claude"), { recursive: true });
       const dest = join(home, ".claude", "settings.json");
-      writeFileSync(dest, '{\n  "local": true\n}\n');
+      const local = '{\n  "local": true\n}\n';
+      writeFileSync(dest, local);
       const bak = `${dest}.bak`;
       const linkTarget = join(home, ".claude", "bak-target.json");
       const targetBefore = "# untouched\n";
@@ -708,8 +734,9 @@ describe("codex-otel", () => {
 
       const result = runInstall(dotfiles, home);
 
-      expect(result.status).toBe(0);
-      expect(result.stderr).toContain("skipping backup");
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("refusing to overwrite");
+      expect(readFileSync(dest, "utf8")).toBe(local);
       if (kind === "directory") {
         expect(statSync(bak).isDirectory()).toBe(true);
         expect(readdirSync(bak)).toHaveLength(0);
@@ -723,7 +750,6 @@ describe("codex-otel", () => {
       if (kind === "dangling-symlink") {
         expect(existsSync(bak)).toBe(false);
       }
-      expectInstalledAsRealFile(home, dotfiles, ".claude/settings.json");
     },
   );
 
