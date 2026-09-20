@@ -479,7 +479,10 @@ allow/deny が install.sh のたびに巻き戻って同じ承認を繰り返す
 `codex-otel` の書き戻しが失敗した場合だけは、`~/.codex/config.toml.bak.XXXXXX` として
 旧 config が退避される (`retain_codex_config_backup`)。これも **1 世代だけ**で、退避のたびに
 古い `config.toml.bak.*` は剪定される (bearer token を平文で含む mode 600 のコピーが
-無期限に溜まらないようにするため)。
+無期限に溜まらないようにするため)。ただし `.bak` 側と同じく **退避対象が dotfiles の
+template と同一内容なら退避も剪定もしない** — codex-otel が永続的に失敗する状況では、
+2 回目以降の退避対象が「1 回目が書いた素の template」になるため、剪定すると 1 回目に
+取れた意味ある退避を情報ゼロのコピーで潰してしまう。
 
 `~/.codex/config.toml` は `<dest>.bak` の対象外: Authorization の引き継ぎを
 `CODEX_OTEL_PRESERVE_AUTH_FROM` で別に持っており、bearer token の平文コピーを

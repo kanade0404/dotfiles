@@ -753,6 +753,28 @@ describe("codex-otel", () => {
       name.startsWith("config.toml.bak."),
     );
     expect(retained).toHaveLength(1);
+    // 2 回目の退避対象は 1 回目が書いた template そのもので情報を持たない。剪定で
+    // 1 回目の「意味ある退避」を潰していないことまで見る (個数だけでは検出できない)。
+    expect(readFileSync(join(home, ".codex", retained[0]), "utf8")).toBe(
+      "# previous codex config\n",
+    );
+  });
+
+  // 成功経路では bearer token 平文入りの TMPDIR コピーを残さない
+  // (`codex_config_backup_pending_removal` 経由の掃除)。
+  test("install leaves no codex config copy in TMPDIR on success", () => {
+    const dotfiles = prepareDotfilesFixture();
+    const home = join(root, "home-tmpdir-clean");
+    mkdirSync(join(home, ".codex"), { recursive: true });
+    writeFileSync(join(home, ".codex", "config.toml"), "# previous codex config\n");
+
+    const result = runInstall(dotfiles, home, { TMPDIR: home });
+
+    expect(result.status).toBe(0);
+    expect(readFileSync(join(home, ".codex", "config.toml"), "utf8")).toContain(
+      "Bearer test-token",
+    );
+    expect(readdirSync(home).filter((name) => name.startsWith("codex-config."))).toHaveLength(0);
   });
 
   // 上のテストが通す経路と違い、こちらは cleanup 関数群そのものの振る舞いを見る

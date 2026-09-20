@@ -198,10 +198,20 @@ backup_local_settings() {
 # `${TMPDIR:-/tmp}` のバックアップが旧 config の唯一のコピー」という瞬間で、abort すると
 # EXIT trap がそのコピーを消してしまう (`backup_local_settings` / signal trap と同じ
 # 「退避が取れないなら唯一のコピーを消さない」規律)。
+# 第 1 引数は dotfiles 側の template。
 retain_codex_config_backup() {
+  local template="$1"
   local retained_backup old_backup
 
   [ -n "${codex_config_backup:-}" ] || return 0
+  # 退避しようとしている内容が template と同じなら情報が増えない。ここで退避すると
+  # 下の剪定が「前回の失敗で取れた意味ある退避」を template コピーで潰してしまう
+  # (codex-otel が永続的に失敗する状況で決定的に踏む)。`.bak` 側の `cmp -s` no-op と同じ。
+  if cmp -s "$codex_config_backup" "$template"; then
+    rm -f "$codex_config_backup" || true
+    codex_config_backup=""
+    return 0
+  fi
   retained_backup="$(mktemp "$HOME/.codex/config.toml.bak.XXXXXX")" || return 1
   if ! mv "$codex_config_backup" "$retained_backup"; then
     # 空の退避先を残さない。cleanup 系と同じく失敗許容 (ここで errexit に落ちると、
@@ -264,7 +274,7 @@ if [ -f "$HOME/.codex/config.toml" ]; then
 fi
 install_managed_file 600 "$DOTFILES/.codex/config.toml" "$HOME/.codex/config.toml"
 if ! CODEX_OTEL_CONFIG_TARGET="$HOME/.codex/config.toml" CODEX_OTEL_PRESERVE_AUTH_FROM="$codex_config_backup" "$DOTFILES/.local/bin/codex-otel" --write-config-only; then
-  if ! retain_codex_config_backup && [ -n "$codex_config_backup" ]; then
+  if ! retain_codex_config_backup "$DOTFILES/.codex/config.toml" && [ -n "$codex_config_backup" ]; then
     # 退避先へ移せなかった。唯一のコピーなので EXIT trap にも消させず、場所を知らせる
     # (クリアを echo より先に置く理由は cleanup_install_and_exit と同じ)。
     codex_config_backup_kept_in_tmpdir="$codex_config_backup"
