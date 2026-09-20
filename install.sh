@@ -10,11 +10,45 @@ DOTFILES="${DOTFILES:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 OS="$(uname)"
 codex_config_backup=""
 codex_config_backup_retained=""
+managed_file_temps=()
 
 cleanup_codex_config_backup() {
   if [ -n "${codex_config_backup:-}" ]; then
     rm -f "$codex_config_backup"
   fi
+}
+
+cleanup_managed_file_temps() {
+  local tmp
+
+  for tmp in "${managed_file_temps[@]:-}"; do
+    [ -n "$tmp" ] && rm -f "$tmp"
+  done
+}
+
+cleanup_install() {
+  cleanup_codex_config_backup
+  cleanup_managed_file_temps
+}
+
+# Install a dotfiles file as a real file (not a symlink) so that local agent
+# runtimes (Orca 等) の書き込みが git 管理下の実体まで届かないようにする。
+#
+# `rm -f dest && install src dest` にはしない: source が無い場合に
+# 「dest を消してから install が失敗 → set -e で abort」となり、
+# 以降の処理が一切走らないまま既存設定だけが失われる。
+# temp へ install してから mv (rename(2)) で差し替えることで
+#   - source 不在なら install が失敗するが dest は無傷
+#   - symlink でも実体でもアトミックに置き換わる
+# を両立する。
+install_managed_file() {
+  local mode="$1" src="$2" dest="$3"
+  local tmp
+
+  tmp="$(mktemp "$dest.tmp.XXXXXX")"
+  managed_file_temps+=("$tmp")
+  install -m "$mode" "$src" "$tmp"
+  mv -f "$tmp" "$dest"
 }
 
 retain_codex_config_backup() {
@@ -27,7 +61,7 @@ retain_codex_config_backup() {
   codex_config_backup_retained="$retained_backup"
 }
 
-trap cleanup_codex_config_backup EXIT
+trap cleanup_install EXIT
 
 echo "==> Linking Neovim config (LazyVim, managed outside Nix)"
 mkdir -p "$HOME/.config"
@@ -55,8 +89,7 @@ if [ -f "$HOME/.codex/config.toml" ]; then
   codex_config_backup="$(mktemp "${TMPDIR:-/tmp}/codex-config.XXXXXX")"
   cp "$HOME/.codex/config.toml" "$codex_config_backup"
 fi
-rm -f "$HOME/.codex/config.toml"
-install -m 600 "$DOTFILES/.codex/config.toml" "$HOME/.codex/config.toml"
+install_managed_file 600 "$DOTFILES/.codex/config.toml" "$HOME/.codex/config.toml"
 if ! CODEX_OTEL_CONFIG_TARGET="$HOME/.codex/config.toml" CODEX_OTEL_PRESERVE_AUTH_FROM="$codex_config_backup" "$DOTFILES/.local/bin/codex-otel" --write-config-only; then
   retain_codex_config_backup
   echo "warning: failed to refresh Codex OTEL config; continuing install.sh" >&2
@@ -66,8 +99,7 @@ if ! CODEX_OTEL_CONFIG_TARGET="$HOME/.codex/config.toml" CODEX_OTEL_PRESERVE_AUT
 fi
 # Replace an old symlink so Orca/agent runtime writes stay in ~/.codex only.
 # Re-running install.sh resets local hook registrations (Orca re-injects on next pane).
-rm -f "$HOME/.codex/hooks.json"
-install -m 644 "$DOTFILES/.codex/hooks.json" "$HOME/.codex/hooks.json"
+install_managed_file 644 "$DOTFILES/.codex/hooks.json" "$HOME/.codex/hooks.json"
 # herdr の Codex 連携スクリプト。hooks.json が $HOME/.codex/ 直下を指しており、
 # かつ .claude/hooks/* は ~/.codex/hooks/ にも配布される (同名だと Claude 版に
 # 上書きされる) ため、hooks/ ではなく .codex/ 直下へ個別に symlink する。
@@ -145,8 +177,7 @@ echo "==> Linking Claude Code user settings"
 mkdir -p "$HOME/.claude"
 # Replace an old symlink so Orca/agent runtime writes stay in ~/.claude only
 # (same rationale as the ~/.codex/hooks.json replacement above).
-rm -f "$HOME/.claude/settings.json"
-install -m 644 "$DOTFILES/.claude/settings.json" "$HOME/.claude/settings.json"
+install_managed_file 644 "$DOTFILES/.claude/settings.json" "$HOME/.claude/settings.json"
 ln -sf "$DOTFILES/.claude/statusline.py" "$HOME/.claude/statusline.py"
 # hooks: symlink each file to both ~/.claude/hooks/ and ~/.codex/hooks/
 # (directory symlink would hide each tool's own hooks; .claude/hooks/ is the

@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   chmodSync,
+  existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -67,18 +69,61 @@ function writeConfig(name: string, content: string): string {
   return path;
 }
 
-function prepareDotfilesFixture(template = 'model = "template"\n'): string {
+// install.sh copies these unconditionally; they must exist in the fixture or install.sh aborts.
+// If install.sh gains more unconditionally-installed files, update this map too.
+const MANAGED_FIXTURE_FILES = {
+  ".codex/config.toml": 'model = "template"\n',
+  ".codex/hooks.json": '{\n  "hooks": {}\n}\n',
+  ".claude/settings.json": '{\n  "hooks": {}\n}\n',
+} as const;
+
+type ManagedFixtureFile = keyof typeof MANAGED_FIXTURE_FILES;
+
+function prepareDotfilesFixture(
+  template = MANAGED_FIXTURE_FILES[".codex/config.toml"],
+  omit: readonly ManagedFixtureFile[] = [],
+): string {
   const fixture = join(root, "dotfiles");
   mkdirSync(join(fixture, ".codex"), { recursive: true });
   mkdirSync(join(fixture, ".claude"), { recursive: true });
   mkdirSync(join(fixture, ".local", "bin"), { recursive: true });
-  writeFileSync(join(fixture, ".codex", "config.toml"), template);
-  // install.sh copies these two unconditionally (`install -m 644`); they must exist in the
-  // fixture or install.sh aborts. If install.sh gains more unconditionally-installed files, update this too.
-  writeFileSync(join(fixture, ".codex", "hooks.json"), '{\n  "hooks": {}\n}\n');
-  writeFileSync(join(fixture, ".claude", "settings.json"), '{\n  "hooks": {}\n}\n');
+  const contents: Record<ManagedFixtureFile, string> = {
+    ...MANAGED_FIXTURE_FILES,
+    ".codex/config.toml": template,
+  };
+  for (const relative of Object.keys(contents) as ManagedFixtureFile[]) {
+    if (omit.includes(relative)) continue;
+    writeFileSync(join(fixture, ...relative.split("/")), contents[relative]);
+  }
   symlinkSync(script, join(fixture, ".local", "bin", "codex-otel"));
   return fixture;
+}
+
+function runInstall(dotfiles: string, home: string, env: Record<string, string> = {}) {
+  return spawnSync("bash", [installScript], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      DOTFILES: dotfiles,
+      HOME: home,
+      OTEL_EXPORTER_TOKEN: "test-token",
+      ...env,
+    },
+  });
+}
+
+function leftoverTempFiles(dir: string, basename: string): string[] {
+  return readdirSync(dir).filter((name) => name.startsWith(`${basename}.tmp`));
+}
+
+// ~/.claude/settings.json と ~/.codex/hooks.json は Orca が pane 起動毎に書き換えるため、
+// symlink で配布すると git 管理下の実体が汚染される。実体コピーであることを固定する。
+function expectInstalledAsRealFile(home: string, dotfiles: string, relative: ManagedFixtureFile) {
+  const parts = relative.split("/");
+  const installed = join(home, ...parts);
+
+  expect(lstatSync(installed).isSymbolicLink()).toBe(false);
+  expect(readFileSync(installed, "utf8")).toBe(readFileSync(join(dotfiles, ...parts), "utf8"));
 }
 
 describe("codex-otel", () => {
@@ -217,6 +262,9 @@ describe("codex-otel", () => {
     expect(generated).toContain('model = "template"');
     expect(generated).not.toContain('model = "old"');
     expect(generated.match(/Authorization = "Bearer existing-token"/g)).toHaveLength(3);
+    expect(lstatSync(join(home, ".codex", "config.toml")).isSymbolicLink()).toBe(false);
+    expectInstalledAsRealFile(home, dotfiles, ".claude/settings.json");
+    expectInstalledAsRealFile(home, dotfiles, ".codex/hooks.json");
   });
 
   test("preserves escaped Authorization from a backup without double escaping", () => {
@@ -283,6 +331,28 @@ describe("codex-otel", () => {
     const backups = readdirSync(join(home, ".codex")).filter((name) => name.startsWith("config.toml.bak."));
     expect(backups).toHaveLength(1);
     expect(readFileSync(join(home, ".codex", backups[0]), "utf8")).toBe(oldConfig);
+    expect(lstatSync(join(home, ".codex", "config.toml")).isSymbolicLink()).toBe(false);
+    expectInstalledAsRealFile(home, dotfiles, ".claude/settings.json");
+    expectInstalledAsRealFile(home, dotfiles, ".codex/hooks.json");
+  });
+
+  test.each([
+    [".claude/settings.json", ".claude", "settings.json"],
+    [".codex/hooks.json", ".codex", "hooks.json"],
+    [".codex/config.toml", ".codex", "config.toml"],
+  ] as const)("install keeps the existing %s when the dotfiles source is missing", (relative, dir, basename) => {
+    const dotfiles = prepareDotfilesFixture(undefined, [relative]);
+    const home = join(root, `home-missing-${basename}`);
+    mkdirSync(join(home, dir), { recursive: true });
+    const existing = `# pre-existing ${relative}\n`;
+    writeFileSync(join(home, dir, basename), existing);
+
+    const result = runInstall(dotfiles, home);
+
+    expect(result.status).not.toBe(0);
+    expect(existsSync(join(home, dir, basename))).toBe(true);
+    expect(readFileSync(join(home, dir, basename), "utf8")).toBe(existing);
+    expect(leftoverTempFiles(join(home, dir), basename)).toHaveLength(0);
   });
 
   test("does not preserve Authorization from an unbalanced managed block", () => {
