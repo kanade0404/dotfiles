@@ -288,8 +288,8 @@ tmux pane と AI agent セッションを紐付けるための herdr 向け Sess
 
 | 対象 | 場所 | integration id / version |
 |------|------|------|
-| Claude Code 用 | `.claude/hooks/herdr-agent-state.sh` | `HERDR_INTEGRATION_ID=claude`, v7 |
-| Codex 用 | `.codex/herdr-agent-state.sh` | `HERDR_INTEGRATION_ID=codex`, v6 |
+| Claude Code 用 | `.claude/hooks/herdr-agent-state.sh` | `HERDR_INTEGRATION_ID=claude`, v10 |
+| Codex 用 | `.codex/herdr-agent-state.sh` | `HERDR_INTEGRATION_ID=codex`, v8 |
 
 - 両者は agent 種別・イベント絞り込み条件・payload が異なる別物。**統合しない**
 - 役割: hook 入力 JSON から `session_id` / `transcript_path` を抜き、herdr の Unix domain
