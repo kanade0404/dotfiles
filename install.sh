@@ -42,9 +42,14 @@ cleanup_install() {
 # 無いので次回実行でも掃除されない)。signal 側は掃除してから明示的に exit する。
 # `cleanup_install` の中身は `rm -f` だけで冪等なので、exit 後の EXIT trap で
 # 二重に走っても問題ない。
+#
+# exit code は慣例どおり 128 + signum にして、通常の install 失敗 (exit 1) と
+# 中断を呼び出し元 (bootstrap.sh 等) から区別できるようにする。
 cleanup_install_and_exit() {
+  local signum="$1"
+
   cleanup_install
-  exit 1
+  exit "$((128 + signum))"
 }
 
 # Install a dotfiles file as a real file (not a symlink) so that local agent
@@ -153,7 +158,9 @@ retain_codex_config_backup() {
 }
 
 trap cleanup_install EXIT
-trap cleanup_install_and_exit HUP INT TERM
+trap 'cleanup_install_and_exit 1' HUP
+trap 'cleanup_install_and_exit 2' INT
+trap 'cleanup_install_and_exit 15' TERM
 
 echo "==> Linking Neovim config (LazyVim, managed outside Nix)"
 mkdir -p "$HOME/.config"

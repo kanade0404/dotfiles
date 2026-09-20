@@ -544,8 +544,9 @@ describe("codex-otel", () => {
   // 退避は best-effort: 失敗しても警告だけで dest の置き換えは続行する。
   // dest を読めなくすると `cp -p` が決定的に失敗するので、この契約を固定できる。
   // (ENOSPC 等「書き込み途中で失敗」の再現は決定的にできないため未カバー。)
-  test("install continues and warns when the backup copy fails", () => {
-    if (process.getuid?.() === 0) return;
+  // root は permission bit を無視するので skip する (silent return にすると
+  // root で走る CI でこの契約が一度も検証されないまま green になる)。
+  test.skipIf(process.getuid?.() === 0)("install continues and warns when the backup copy fails", () => {
     const dotfiles = prepareDotfilesFixture();
     const home = join(root, "home-bak-unreadable");
     mkdirSync(join(home, ".claude"), { recursive: true });
@@ -586,8 +587,9 @@ describe("codex-otel", () => {
   });
 
   // mktemp は dest と同じディレクトリに作るため、親が書き込み不可なら staging 以前に失敗する。
-  test("install_managed_file fails without touching dest when the temp cannot be created", () => {
-    if (process.getuid?.() === 0) return;
+  test.skipIf(process.getuid?.() === 0)(
+    "install_managed_file fails without touching dest when the temp cannot be created",
+    () => {
     const dir = join(root, "readonly-dest-dir");
     mkdirSync(dir, { recursive: true });
     const src = join(root, "readonly-source.json");
@@ -604,10 +606,11 @@ describe("codex-otel", () => {
       chmodSync(dir, 0o755);
     }
 
-    expect(outcome.status).not.toBe(0);
-    expect(readFileSync(dest, "utf8")).toBe(existing);
-    expect(leftoverTempFiles(dir, "settings.json")).toHaveLength(0);
-  });
+      expect(outcome.status).not.toBe(0);
+      expect(readFileSync(dest, "utf8")).toBe(existing);
+      expect(leftoverTempFiles(dir, "settings.json")).toHaveLength(0);
+    },
+  );
 
   // 退避は source の staging に成功した後にだけ行う。source 不在で install が失敗する
   // ケースで既存の `.bak` を潰すと、巻き戻りからの復旧手段そのものが消える。
