@@ -382,6 +382,10 @@ exit code を 128 + signum にしているのは、通常の install 失敗 (exi
 残余リスク: `mktemp` が返ってから配列へ append するまでの極小窓で signal を受けると、
 trap は配列しか見ないのでその temp だけ掃除から漏れる (stray file 1 個)。glob ベースの
 掃除にすれば塞げるが、複雑さに見合わないので受容している。
+なお signal 経路では **codex config のバックアップは消さない**。`~/.codex/config.toml` を
+template で置換してから `codex-otel --write-config-only` が Authorization を書き戻すまでの
+窓で中断すると、そのバックアップが旧 config の唯一のコピーになるため。場所を stderr に
+出したうえで変数を空にし、後続の EXIT trap にも消させない。
 
 ⚠️ **`install` の失敗は必ずその場で `return 1` すること** (`install ... || return 1`)。
 単に行を並べると、errexit が抑止された文脈
@@ -412,18 +416,28 @@ allow/deny が install.sh のたびに巻き戻って同じ承認を繰り返す
 緩和として `install.sh` は上書き前の内容を **1 世代だけ `<dest>.bak` へ退避**する
 (`backup_local_settings`)。`~/.claude/settings.json.bak` / `~/.codex/hooks.json.bak` から
 手で戻せるという意味であって、巻き戻り自体に気付かせる仕組みではない点に注意
-(世代は増やさないので、巻き戻りに気付く前に install.sh を 2 回走らせ、かつ **2 回目までに
-dest が再び変化していた** 場合 — Orca の再注入や `/permissions` の再追加など — 元の内容は
-失われる。2 回目までに dest が変化していなければ下記の `cmp -s` で退避が no-op になり、
-1 回目の退避が残る)。
+世代は増やさないので、**貴重な `.bak` は次の install.sh 実行で上書きされうる**。
+残るかどうかを決めるのは下記の `cmp -s` だが、その比較は
+**「dest が前回から変化したか」ではなく「dest と今回 staging した新しい source が同じか」**
+である点に注意 (実装は `cmp -s "$dest" "$staged"`)。したがって:
+
+- dest がローカルで一切変化していなくても、**dotfiles 側の source が更新されていれば**
+  差分ありとなって退避が走り、`.bak` が「素の前回 dotfiles 内容」で上書きされる。
+  1 回目に取れた貴重な退避 (`permissions.deny` 等) はここで失われる
+- dest も source も変わっていなければ退避は no-op になり、前回の `.bak` が残る
+
+`.bak` に残したい内容があると分かっている場合は、install.sh を再実行する前に自分で
+別の場所へコピーしておくこと。
 退避の細かい規律は 6 つ:
 
 - **退避は source の staging に成功してから**行う (`install_managed_file` の第 4 引数
   `backup` 経由で、`install` 成功後・`mv` の直前に呼ぶ)。呼び出し側で先に退避すると、
   source 不在で install が失敗する経路で dest は無傷なのに `<dest>.bak` だけ潰れ、
   復旧手段そのものが消える
-- **dest が dotfiles と同一内容なら退避しない** (`cmp -s`)。差分ゼロで install.sh を
-  2 回走らせただけで、1 回目の意味ある退避が dotfiles と同一の内容で潰れるのを防ぐ
+- **dest が今回 staging した source と同一内容なら退避しない** (`cmp -s "$dest" "$staged"`)。
+  差分ゼロで install.sh を 2 回走らせただけで、1 回目の意味ある退避が dotfiles と同一の
+  内容で潰れるのを防ぐ。**source が更新されている場合は差分ありになるので退避は走る**
+  (上記の注意を参照)
 - **`<dest>.bak` が regular file でなければ退避せず中止**する。directory だと
   `cp` は「中へコピー」、symlink だとリンク先へ書き込みになり、「`.bak` から手で戻せる」
   契約が黙って破れる (`[ -d "$dest" ]` ガードと同じ趣旨)
