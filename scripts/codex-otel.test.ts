@@ -744,6 +744,19 @@ describe("codex-otel", () => {
     expect(readFileSync(dest, "utf8")).toBe(current);
   });
 
+  // MANAGED_FIXTURE_FILES は install.sh の手動ミラーなので、install.sh 側に 4 つ目の
+  // 無条件 install が増えたら全 runInstall 系テストが fixture 不足で一斉に落ちる。
+  // 同期漏れをここで名指しして落とす。
+  test("MANAGED_FIXTURE_FILES mirrors every unconditional install_managed_file call", () => {
+    const source = readFileSync(installScript, "utf8");
+    const called = [
+      ...source.matchAll(/^install_managed_file \d+ "\$DOTFILES\/([^"]+)"/gm),
+    ].map((match) => match[1]);
+
+    expect(called.length).toBeGreaterThan(0);
+    expect(called.slice().sort()).toEqual(Object.keys(MANAGED_FIXTURE_FILES).slice().sort());
+  });
+
   // ローカル差分が無いのに退避すると、意味のある退避を dotfiles と同一の内容で潰す。
   test("install does not overwrite .bak when dest already matches the dotfiles source", () => {
     const dotfiles = prepareDotfilesFixture();

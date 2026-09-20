@@ -11,11 +11,17 @@ OS="$(uname)"
 codex_config_backup=""
 codex_config_backup_retained=""
 codex_config_backup_done=""
+codex_config_backup_kept=""
 managed_file_temps=()
 
 cleanup_codex_config_backup() {
   if [ -n "${codex_config_backup:-}" ]; then
     rm -f "$codex_config_backup"
+  fi
+  # 「窓が閉じたので消す」と決めたパス。変数クリアと `rm` の間で中断しても
+  # token 入りのコピーが残らないよう、掃除側でも冪等に消す。
+  if [ -n "${codex_config_backup_done:-}" ]; then
+    rm -f "$codex_config_backup_done"
   fi
 }
 
@@ -61,6 +67,9 @@ cleanup_install_and_exit() {
   # クリア前に exit(1) し、EXIT trap がバックアップを消してしまう
   # (exit code も 128+signum でなくなる)。echo 自体にも `|| true` を付ける。
   codex_config_backup=""
+  if [ -n "${codex_config_backup_done:-}" ]; then
+    rm -f "$codex_config_backup_done"
+  fi
   if [ -n "$kept" ]; then
     echo "note: interrupted; previous Codex config backup kept at $kept" >&2 || true
   fi
@@ -170,12 +179,20 @@ backup_local_settings() {
   return 1
 }
 
+# 失敗しても **errexit で abort させない** (`|| return 1` を明示する)。ここは
+# 「codex-otel が失敗した直後 = dest は template 置換済みで Authorization 未復元、
+# `${TMPDIR:-/tmp}` のバックアップが旧 config の唯一のコピー」という瞬間で、abort すると
+# EXIT trap がそのコピーを消してしまう (`backup_local_settings` / signal trap と同じ
+# 「退避が取れないなら唯一のコピーを消さない」規律)。
 retain_codex_config_backup() {
   local retained_backup
 
   [ -n "${codex_config_backup:-}" ] || return 0
-  retained_backup="$(mktemp "$HOME/.codex/config.toml.bak.XXXXXX")"
-  mv "$codex_config_backup" "$retained_backup"
+  retained_backup="$(mktemp "$HOME/.codex/config.toml.bak.XXXXXX")" || return 1
+  if ! mv "$codex_config_backup" "$retained_backup"; then
+    rm -f "$retained_backup"
+    return 1
+  fi
   codex_config_backup=""
   codex_config_backup_retained="$retained_backup"
 }
@@ -218,7 +235,14 @@ if [ -f "$HOME/.codex/config.toml" ]; then
 fi
 install_managed_file 600 "$DOTFILES/.codex/config.toml" "$HOME/.codex/config.toml"
 if ! CODEX_OTEL_CONFIG_TARGET="$HOME/.codex/config.toml" CODEX_OTEL_PRESERVE_AUTH_FROM="$codex_config_backup" "$DOTFILES/.local/bin/codex-otel" --write-config-only; then
-  retain_codex_config_backup
+  if ! retain_codex_config_backup && [ -n "$codex_config_backup" ]; then
+    # 退避先へ移せなかった。唯一のコピーなので EXIT trap にも消させず、場所を知らせる
+    # (クリアを echo より先に置く理由は cleanup_install_and_exit と同じ)。
+    codex_config_backup_kept="$codex_config_backup"
+    codex_config_backup=""
+    echo "warning: failed to move the previous Codex config backup into ~/.codex;" \
+      "keeping it at $codex_config_backup_kept" >&2 || true
+  fi
   echo "warning: failed to refresh Codex OTEL config; continuing install.sh" >&2
   if [ -n "$codex_config_backup_retained" ]; then
     echo "warning: retained previous Codex config backup at $codex_config_backup_retained" >&2

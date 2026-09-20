@@ -393,7 +393,9 @@ template で置換してから `codex-otel --write-config-only` が Authorizatio
 また、この窓は `codex-otel` の呼び出しが終わった時点で閉じるので、**その直後に明示的に
 バックアップを掃除して変数を空にする**。そうしないと、窓の外 (hooks.json / settings.json の
 置換中など) で中断したときに bearer token を平文で含むコピーが `${TMPDIR:-/tmp}` に
-残り続ける。
+残り続ける。`codex-otel` が失敗した場合の `retain_codex_config_backup` も同じ規律で、
+**失敗しても errexit で abort させない** (abort すると EXIT trap が唯一のコピーを消す)。
+移せなかったときは変数を空にしてから場所を警告に出す。
 
 ⚠️ **`install` の失敗は必ずその場で `return 1` すること** (`install ... || return 1`)。
 単に行を並べると、errexit が抑止された文脈
