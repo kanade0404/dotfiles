@@ -49,7 +49,7 @@ rulesync-claude/            # Claude 用 skill の rulesync 隔離パイプラ�
 bootstrap.sh                # 初回セットアップ (Homebrew + nix-darwin bootstrap + install.sh)
 bootstrap-codex-cloud.sh    # Codex Cloud 用の依存関係セットアップ
 bootstrap-worktree.sh       # git worktree を参照元にして適用
-install.sh                  # Nix 管理外ファイルの symlink 作成スクリプト
+install.sh                  # Nix 管理外ファイルの symlink 作成 + 一部ファイルの実体生成スクリプト (`.claude/settings.json` / `.codex/hooks.json` / `.codex/config.toml` の 3 ファイルは symlink ではなく実体生成。詳細は「Orca による hook 自動注入と実体生成方式」節を参照)
 ```
 
 > ⚠️ **`.gitignore` は「このリポジトリ用」ではなく global な ignore**
@@ -326,19 +326,42 @@ git 管理下の実体を直接書き換えてしまっていた**。実際に�
 間に Claude Code がローカルの `model` 設定を書き込むと、Orca の書き戻しでその変更が
 上書きされて消える。
 
-対応として `install.sh` を `.codex/config.toml` と同じパターン (`rm -f` + `install -m 644`)
-に揃え、この 2 ファイルを **symlink 配布から実体生成方式へ移行**した (commit 3366ca2)。
-加えて、両ファイルの template から Orca 用 hook 定義そのものを除去した。理由は Orca hook が
-**ローカル専用**だから: cloud session (claude.ai/code) には Orca が存在しないため、repo 内
-`.claude/settings.json` に残しても毎イベント空振りの存在チェックが走るだけのコストにしか
-ならない (「cloud session は `~/.claude/settings.json` (user settings) を読まない」ので
-そもそも repo 内の設定は cloud に影響しないが、リポジトリ側の記述としても不要な情報になる)。
-Orca hook は pane 起動時に Orca 自身がローカルの実体へ注入するのに任せる。
+対応として `install.sh` を実体生成方式に変更し、この 2 ファイルを
+**symlink 配布から実体生成方式へ移行**した (commit 3366ca2)。加えて、両ファイルの template
+から Orca 用 hook 定義そのものを除去した。理由は Orca hook が **ローカル専用**だから:
+cloud session (claude.ai/code) には Orca が存在しないため、repo 内 `.claude/settings.json`
+に残しても毎イベント空振りの存在チェックが走るだけのコストにしかならない (「cloud session は
+`~/.claude/settings.json` (user settings) を読まない」のでそもそも repo 内の設定は cloud に
+影響しないが、リポジトリ側の記述としても不要な情報になる)。Orca hook は pane 起動時に
+Orca 自身がローカルの実体へ注入するのに任せる。
+
+実体生成の実装は `install.sh` の `install_managed_file` ヘルパー (`install.sh:44` 付近) に
+統一されている: `mktemp "$dest.tmp.XXXXXX"` で衝突しない一時ファイルを作り、
+`install -m <mode>` でそこへ書き込んでから `mv -f` (`rename(2)`) でアトミックに差し替える。
+`rm -f dest && install src dest` にしなかったのは、source (dotfiles 側) が無い時に
+「dest を消してから install が失敗 → `set -e` で abort」となり、以降の処理が走らないまま
+既存設定 (`permissions.deny` の危険 git ガードや PreToolUse hook を含む) だけが無言で
+失われる退行が実際に起きたため (`bcaa366` で修正)。この方式なら source 不在時も install
+自体が失敗するだけで **dest は無傷のまま残る**。`~/.codex/config.toml` も同じヘルパーに
+統一済みで、`.claude/settings.json` / `.codex/hooks.json` / `.codex/config.toml` の 3 ファイル
+とも実装は同一。mode だけ前者 2 つが 644、config.toml が 600 と異なる (config.toml は OTEL
+トークンを平文で含みうるため)。EXIT trap (`cleanup_install`) が生成に使った一時ファイルと
+(config.toml の) バックアップの両方を掃除する。
 
 ⚠️ **install.sh を再実行するとローカルの hook 登録がリセットされる**。Orca hook は次に
-pane を開けば Orca が再注入するため実害は無いが、Claude Code 自身がローカルに書いた設定
-(`/model` で選んだモデル、`/config` でのテーマ変更など) は `install.sh` の `rm -f` +
-`install -m 644` で dotfiles 側の内容に巻き戻り、失われる。
+pane を開けば Orca が再注入するため実害は無いが、Claude Code 自身が `~/.claude/settings.json`
+に書き込んだローカル設定は `install.sh` の `install_managed_file` (上記のアトミック置換) で
+dotfiles 側の内容に巻き戻り、失われる。具体例は `/model` で選んだモデル、そして
+**とりわけ影響が大きいのが `/permissions` で追加した allow/deny**。symlink 配布時代は
+Orca の書き換えが repo 側の実体にそのまま現れて git diff で気付けたが、実体生成方式では
+「ローカルに黙って溜まり、次の install.sh 実行で黙って消える」方向に変わった。UI で承認した
+allow/deny が install.sh のたびに巻き戻って同じ承認を繰り返す、あるいは危険コマンド用に
+足した deny が消えたことに気付かないまま運用する、といった形で表面化しうる。
+(`/config` のテーマ変更は `~/.claude/settings.json` ではなく `~/.claude.json` 側に保存されて
+いることを確認済み (`grep -n theme ~/.claude.json` すると実際に選んだテーマが出るが、
+`~/.claude/settings.json` 側の `theme` キーはこの dotfiles にコミット済みの静的な既定値
+(`"auto"`) のままで一致しない)。`~/.claude.json` は install.sh の対象外なので、テーマ変更はこの巻き戻りの
+対象ではない)
 
 参考: Codex は `CODEX_HOME` と `ORCA_CODEX_HOME` が一致していれば Orca の隔離ホーム
 (`~/Library/Application Support/orca/codex-runtime-home/home`) を使うが、Orca の worktree
