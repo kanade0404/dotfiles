@@ -343,8 +343,9 @@ git 管理下の実体を直接書き換えてしまっていた**。実際に�
 **symlink 配布から実体生成方式へ移行**した (#239)。
 
 加えて、両ファイルの template には **Orca 用 hook 定義を置かない**方針にしている
-(一度 commit したものを PR 内で戻しただけなので、この方針は net diff にも履歴にも
-「除去」としては現れない)。理由は Orca hook が **ローカル専用**だから:
+(一度 commit したものを PR 内で戻しただけなので、この方針は **net diff には「除去」として
+現れない**。ブランチ履歴には除去コミットとして残るので、merge commit で取り込まれた場合は
+master の履歴からも辿れる)。理由は Orca hook が **ローカル専用**だから:
 cloud session (claude.ai/code) には Orca が存在しないため、repo 内 `.claude/settings.json`
 に置いても毎イベント空振りの存在チェックが走るだけのコストにしかならない (cloud session が
 読まないのは `~/.claude/settings.json` (user settings) **だけ**で、**リポジトリ内の
@@ -390,8 +391,11 @@ allow/deny が install.sh のたびに巻き戻って同じ承認を繰り返す
 緩和として `install.sh` は上書き前の内容を **1 世代だけ `<dest>.bak` へ退避**する
 (`backup_local_settings`)。`~/.claude/settings.json.bak` / `~/.codex/hooks.json.bak` から
 手で戻せるという意味であって、巻き戻り自体に気付かせる仕組みではない点に注意
-(世代は増やさないので、巻き戻りに気付く前に install.sh を 2 回走らせると元の内容は失われる)。
-退避の細かい規律は 3 つ:
+(世代は増やさないので、巻き戻りに気付く前に install.sh を 2 回走らせ、かつ **2 回目までに
+dest が再び変化していた** 場合 — Orca の再注入や `/permissions` の再追加など — 元の内容は
+失われる。2 回目までに dest が変化していなければ下記の `cmp -s` で退避が no-op になり、
+1 回目の退避が残る)。
+退避の細かい規律は 4 つ:
 
 - **退避は source の staging に成功してから**行う (`install_managed_file` の第 4 引数
   `backup` 経由で、`install` 成功後・`mv` の直前に呼ぶ)。呼び出し側で先に退避すると、
@@ -402,6 +406,8 @@ allow/deny が install.sh のたびに巻き戻って同じ承認を繰り返す
 - **`<dest>.bak` が regular file でなければ退避をスキップして警告**する。directory だと
   `cp` は「中へコピー」、symlink だとリンク先へ書き込みになり、「`.bak` から手で戻せる」
   契約が黙って破れる (`[ -d "$dest" ]` ガードと同じ趣旨)
+- **第 4 引数が `backup` でも空でもなければ `return 1`**。stringly-typed なフラグなので、
+  typo (`bakcup` 等) が黙って「退避なし」に落ちないよう `case` で明示的に弾く
 
 `~/.codex/config.toml` は対象外: Authorization の引き継ぎを
 `CODEX_OTEL_PRESERVE_AUTH_FROM` で別に持っており、bearer token の平文コピーを
