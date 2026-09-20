@@ -300,10 +300,18 @@ tmux pane と AI agent セッションを紐付けるための herdr 向け Sess
     あれば exit (Cursor 経由の起動を除外)。`hook_event_name` が `SessionStart` 以外
     (空文字含む) なら exit。`transcript_path` は**あれば** `agent_session_path` として
     params に載せる — 必須ではない
+  - ⚠️ `CURSOR_VERSION` は**環境変数**判定なので誤爆しうる。tmux server は最初に起動した
+    クライアントの環境を継承して以後の全 pane に伝播するため、一度でも Cursor の統合
+    ターミナルから tmux server を起動すると、その server 上の**正規の Claude Code
+    セッションでも無言で `exit 0`** になり pane 紐付けが効かなくなる (診断出力は出ない)。
+    紐付かないときはまず `tmux show-environment -g CURSOR_VERSION` / hook プロセスの
+    environ を疑うこと。スクリプトは herdr 管理下なので直接編集はせず、
+    「hook 入力の `cursor_version` のみで判定する」形を upstream へ報告するのが筋
   - **Codex 用 (v8)**: `hook_event_name` が空でなく `SessionStart` 以外なら exit。
     `transcript_path` は **必須ゲート**で、欠落 / 空白のみなら送信せず exit する
-    (ゲートに使うだけで params には載せない)。さらに `CODEX_THREAD_ID` が入力の
-    `session_id` と一致しない場合は subagent とみなして exit
+    (ゲートに使うだけで params には載せない)。さらに `CODEX_THREAD_ID` が
+    **設定されており、かつ**入力の `session_id` と一致しない場合のみ subagent とみなして
+    exit する (**未設定なら通過する** — fresh pane はこちら)
 - ⚠️ Codex の SessionStart 入力に `transcript_path` が**常に**含まれるかは未検証。
   Codex 公式の hook 仕様では nullable なので、含まれないケースがあると Codex 側の
   herdr 連携は**無言で全停止**する (upstream 報告対象。#239 の既知懸念と同根)
@@ -364,7 +372,10 @@ Orca 自身がローカルの実体へ注入するのに任せる。
 統一済みで、`.claude/settings.json` / `.codex/hooks.json` / `.codex/config.toml` の 3 ファイル
 とも実装は同一。mode だけ前者 2 つが 644、config.toml が 600 と異なる (config.toml は OTEL
 トークンを平文で含みうるため)。EXIT trap (`cleanup_install`) が生成に使った一時ファイルと
-(config.toml の) バックアップの両方を掃除する。
+(config.toml の) バックアップの両方を掃除する。EXIT trap は untrapped fatal signal では
+走らないため、`HUP INT TERM` にも `cleanup_install_and_exit` (掃除してから `exit 1`) を
+張っている。張らないと中断時に `settings.json.tmp.XXXXXX` 等が `$HOME` に残り、temp の
+記録はプロセス内の配列にしか無いので**次回実行でも掃除されない**。
 
 ⚠️ **`install` の失敗は必ずその場で `return 1` すること** (`install ... || return 1`)。
 単に行を並べると、errexit が抑止された文脈
