@@ -71,10 +71,12 @@ function writeConfig(name: string, content: string): string {
 
 // install.sh copies these unconditionally; they must exist in the fixture or install.sh aborts.
 // If install.sh gains more unconditionally-installed files, update this map too.
+// 内容はファイルごとに固有にする。同一内容だと `expectInstalledAsRealFile` の内容比較が
+// source/dest の配線取り違え (hooks.json ↔ settings.json) を判別できない。
 const MANAGED_FIXTURE_FILES = {
   ".codex/config.toml": 'model = "template"\n',
-  ".codex/hooks.json": '{\n  "hooks": {}\n}\n',
-  ".claude/settings.json": '{\n  "hooks": {}\n}\n',
+  ".codex/hooks.json": '{\n  "hooks": {},\n  "fixture": "codex-hooks"\n}\n',
+  ".claude/settings.json": '{\n  "hooks": {},\n  "fixture": "claude-settings"\n}\n',
 } as const;
 
 type ManagedFixtureFile = keyof typeof MANAGED_FIXTURE_FILES;
@@ -663,7 +665,44 @@ describe("codex-otel", () => {
     // 消費済み、hooks.json / settings.json の install には未到達) ため、temp 掃除の
     // 回帰検知にはならない。掃除自体は下の harness テストが見る。
     // HUP / INT / QUIT の trap 行は TERM と同形のため個別テストを持たない。
+    // PIPE だけは意味論が同形でない (下のテストで別途カバーする)。
   });
+
+  // PIPE は他の signal と検証すべき意味論が違う: `echo` の write が SIGPIPE を起こす経路
+  // では、「pending の trapped signal が errexit (`echo` の非ゼロ) より先に走るか」という
+  // 処理系依存の順序に 128+13 契約が乗る。`kill -TERM $PPID` 版はこの順序を通らない。
+  // macOS 既定の /bin/bash (3.2) でも成立することを確認済み。
+  test.each(["bash", "/bin/bash"] as const)(
+    "install.sh exits 128+SIGPIPE when stdout goes away (%s)",
+    (shell) => {
+      const dotfiles = prepareDotfilesFixture();
+      const home = join(root, `home-sigpipe-${shell.replace(/\//g, "_")}`);
+      mkdirSync(join(home, ".codex"), { recursive: true });
+
+      const result = spawnSync(
+        shell,
+        ["-c", `"$0" "$1" | head -1; printf 'status=%s\\n' "\${PIPESTATUS[0]}"`, shell, installScript],
+        {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            DOTFILES: dotfiles,
+            HOME: home,
+            TMPDIR: home,
+            CODEX_OTEL_ENVIRONMENT: "",
+            CODEX_OTEL_LOGS_ENDPOINT: "",
+            CODEX_OTEL_METRICS_ENDPOINT: "",
+            CODEX_OTEL_TRACES_ENDPOINT: "",
+            OTEL_EXPORTER_TOKEN: "test-token",
+          },
+        },
+      );
+
+      const reported = /^status=(\d+)$/m.exec(result.stdout ?? "");
+      expect(reported).not.toBeNull();
+      expect(Number(reported![1])).toBe(141);
+    },
+  );
 
   // codex-otel が失敗し、かつ retain 先へ移せなかった場合。バックアップは TMPDIR に
   // 置き去りにしたうえで場所を警告に出す (EXIT trap にも消させない)。
