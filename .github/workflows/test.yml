@@ -8,11 +8,6 @@ on:
 jobs:
   bun-test:
     name: bun test
-    # ⚠️ ubuntu のみ。install.sh のテストには「macOS 既定の /bin/bash (3.2) でも成立する」
-    # ことを前提にしたもの (空配列 × set -u、SIGPIPE trap と errexit の順序など) があるが、
-    # Linux runner では `bash` と `/bin/bash` が同一の 5.x なので **3.2 は継続検証されない**。
-    # 3.2 側の担保はローカル (macOS) 実行のみ。runner 構成を触るときは
-    # macos-latest を足すと継続検証できる。
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
