@@ -51,10 +51,13 @@ install_managed_file() {
   local mode="$1" src="$2" dest="$3"
   local tmp
 
-  tmp="$(mktemp "$dest.tmp.XXXXXX")"
+  tmp="$(mktemp "$dest.tmp.XXXXXX")" || return 1
   managed_file_temps+=("$tmp")
-  install -m "$mode" "$src" "$tmp"
-  mv -f "$tmp" "$dest"
+  # `install; mv` と行を分けない: 呼び出し側の errexit が抑止された文脈
+  # (`f || warn` / `if ! f` / `&&` の右辺) では install の失敗後も次行が走り、
+  # mktemp が作った空ファイルを dest に被せたうえで 0 を返してしまう。
+  # `&&` で連結して、安全性を呼び出し文脈ではなく関数内に閉じる。
+  install -m "$mode" "$src" "$tmp" && mv -f "$tmp" "$dest"
 }
 
 retain_codex_config_backup() {

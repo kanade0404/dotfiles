@@ -79,6 +79,14 @@ const MANAGED_FIXTURE_FILES = {
 
 type ManagedFixtureFile = keyof typeof MANAGED_FIXTURE_FILES;
 
+// install.sh が各ファイルへ与える permission。config.toml は OTEL bearer token を
+// 平文で保持するため 600 でなければならない。
+const MANAGED_FILE_MODES: Record<ManagedFixtureFile, number> = {
+  ".codex/config.toml": 0o600,
+  ".codex/hooks.json": 0o644,
+  ".claude/settings.json": 0o644,
+};
+
 function prepareDotfilesFixture(
   template = MANAGED_FIXTURE_FILES[".codex/config.toml"],
   omit: readonly ManagedFixtureFile[] = [],
@@ -116,14 +124,32 @@ function leftoverTempFiles(dir: string, basename: string): string[] {
   return readdirSync(dir).filter((name) => name.startsWith(`${basename}.tmp`));
 }
 
+// install.sh の関数定義だけを抜き出して単体で実行するためのヘルパー。
+// install.sh は source すると全処理が走ってしまうため、定義を切り出して harness に埋める。
+function extractShellFunction(name: string): string {
+  const lines = readFileSync(installScript, "utf8").split("\n");
+  const start = lines.indexOf(`${name}() {`);
+  if (start === -1) throw new Error(`install.sh: ${name}() not found`);
+  const end = lines.indexOf("}", start);
+  if (end === -1) throw new Error(`install.sh: ${name}() has no closing brace`);
+  return lines.slice(start, end + 1).join("\n");
+}
+
 // ~/.claude/settings.json と ~/.codex/hooks.json は Orca が pane 起動毎に書き換えるため、
 // symlink で配布すると git 管理下の実体が汚染される。実体コピーであることを固定する。
+function expectInstalledMode(home: string, relative: ManagedFixtureFile) {
+  const installed = join(home, ...relative.split("/"));
+
+  expect(statSync(installed).mode & 0o777).toBe(MANAGED_FILE_MODES[relative]);
+}
+
 function expectInstalledAsRealFile(home: string, dotfiles: string, relative: ManagedFixtureFile) {
   const parts = relative.split("/");
   const installed = join(home, ...parts);
 
   expect(lstatSync(installed).isSymbolicLink()).toBe(false);
   expect(readFileSync(installed, "utf8")).toBe(readFileSync(join(dotfiles, ...parts), "utf8"));
+  expectInstalledMode(home, relative);
 }
 
 describe("codex-otel", () => {
@@ -263,6 +289,7 @@ describe("codex-otel", () => {
     expect(generated).not.toContain('model = "old"');
     expect(generated.match(/Authorization = "Bearer existing-token"/g)).toHaveLength(3);
     expect(lstatSync(join(home, ".codex", "config.toml")).isSymbolicLink()).toBe(false);
+    expectInstalledMode(home, ".codex/config.toml");
     expectInstalledAsRealFile(home, dotfiles, ".claude/settings.json");
     expectInstalledAsRealFile(home, dotfiles, ".codex/hooks.json");
   });
@@ -332,8 +359,57 @@ describe("codex-otel", () => {
     expect(backups).toHaveLength(1);
     expect(readFileSync(join(home, ".codex", backups[0]), "utf8")).toBe(oldConfig);
     expect(lstatSync(join(home, ".codex", "config.toml")).isSymbolicLink()).toBe(false);
+    expectInstalledMode(home, ".codex/config.toml");
     expectInstalledAsRealFile(home, dotfiles, ".claude/settings.json");
     expectInstalledAsRealFile(home, dotfiles, ".codex/hooks.json");
+  });
+
+  // 本 PR の移行対象そのもの: 既存マシンの dest は dotfiles repo への symlink になっている。
+  // install.sh 再実行で (a) dest が実体に変わり (b) repo 側の source が書き換わらないこと。
+  // (b) が壊れると Orca の書き込みが git 管理下へ漏れる = 移行の目的が失われる。
+  test.each([
+    [".claude/settings.json", ".claude", "settings.json"],
+    [".codex/hooks.json", ".codex", "hooks.json"],
+  ] as const)("install replaces an existing dotfiles symlink at %s with a real file", (relative, dir, basename) => {
+    const dotfiles = prepareDotfilesFixture();
+    const home = join(root, `home-symlink-${basename}`);
+    mkdirSync(join(home, dir), { recursive: true });
+    const source = join(dotfiles, dir, basename);
+    const sourceBefore = readFileSync(source, "utf8");
+    const dest = join(home, dir, basename);
+    symlinkSync(source, dest);
+
+    const result = runInstall(dotfiles, home);
+
+    expect(result.status).toBe(0);
+    expect(lstatSync(dest).isSymbolicLink()).toBe(false);
+    expect(readFileSync(dest, "utf8")).toBe(sourceBefore);
+    expectInstalledMode(home, relative);
+
+    // dest への書き込みが repo 側へ届かないこと (= symlink が本当に切れていること)。
+    writeFileSync(dest, '{\n  "hooks": {},\n  "localOnly": true\n}\n');
+    expect(readFileSync(source, "utf8")).toBe(sourceBefore);
+  });
+
+  // config.toml は install 直後に codex-otel が bearer token を書き込むため、
+  // symlink が残っていると token が repo の template へ漏れる。
+  test("install replaces an existing dotfiles symlink at .codex/config.toml with a real file", () => {
+    const dotfiles = prepareDotfilesFixture();
+    const home = join(root, "home-symlink-config");
+    mkdirSync(join(home, ".codex"), { recursive: true });
+    const source = join(dotfiles, ".codex", "config.toml");
+    const sourceBefore = readFileSync(source, "utf8");
+    const dest = join(home, ".codex", "config.toml");
+    symlinkSync(source, dest);
+
+    const result = runInstall(dotfiles, home);
+
+    expect(result.status).toBe(0);
+    expect(lstatSync(dest).isSymbolicLink()).toBe(false);
+    expect(readFileSync(dest, "utf8")).toContain("Bearer test-token");
+    expectInstalledMode(home, ".codex/config.toml");
+    expect(readFileSync(source, "utf8")).toBe(sourceBefore);
+    expect(readFileSync(source, "utf8")).not.toContain("test-token");
   });
 
   test.each([
@@ -353,6 +429,42 @@ describe("codex-otel", () => {
     expect(existsSync(join(home, dir, basename))).toBe(true);
     expect(readFileSync(join(home, dir, basename), "utf8")).toBe(existing);
     expect(leftoverTempFiles(join(home, dir), basename)).toHaveLength(0);
+  });
+
+  // install_managed_file の安全性は呼び出し側の ambient errexit に依存してはならない。
+  // `f || warn` / `if ! f` のような errexit 抑止文脈で source 不在のまま呼ばれても、
+  // mktemp の空ファイルを dest に被せて 0 を返すことがあってはならない。
+  test("install_managed_file fails without blanking dest when errexit is suppressed", () => {
+    const dir = join(root, "errexit-suppressed");
+    mkdirSync(dir, { recursive: true });
+    const dest = join(dir, "settings.json");
+    const existing = '{\n  "hooks": {}\n}\n';
+    writeFileSync(dest, existing);
+    const harness = join(root, "errexit-suppressed-harness.sh");
+    writeFileSync(
+      harness,
+      [
+        "set -euo pipefail",
+        extractShellFunction("install_managed_file"),
+        extractShellFunction("cleanup_managed_file_temps"),
+        "managed_file_temps=()",
+        "status=0",
+        'install_managed_file 644 "$1" "$2" || status=$?',
+        'printf "status=%s\\n" "$status"',
+        "cleanup_managed_file_temps",
+        "",
+      ].join("\n"),
+    );
+
+    const result = spawnSync("bash", [harness, join(dir, "missing-source.json"), dest], {
+      encoding: "utf8",
+    });
+
+    const reported = /^status=(\d+)$/m.exec(result.stdout ?? "");
+    expect(reported).not.toBeNull();
+    expect(Number(reported![1])).not.toBe(0);
+    expect(readFileSync(dest, "utf8")).toBe(existing);
+    expect(leftoverTempFiles(dir, "settings.json")).toHaveLength(0);
   });
 
   test("does not preserve Authorization from an unbalanced managed block", () => {
