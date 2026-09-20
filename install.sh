@@ -9,9 +9,9 @@ set -euo pipefail
 DOTFILES="${DOTFILES:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 OS="$(uname)"
 codex_config_backup=""
-codex_config_backup_retained=""
-codex_config_backup_done=""
-codex_config_backup_kept=""
+codex_config_backup_retained_in_codex_home=""
+codex_config_backup_pending_removal=""
+codex_config_backup_kept_in_tmpdir=""
 managed_file_temps=()
 
 cleanup_codex_config_backup() {
@@ -20,8 +20,8 @@ cleanup_codex_config_backup() {
   fi
   # 「窓が閉じたので消す」と決めたパス。変数クリアと `rm` の間で中断しても
   # token 入りのコピーが残らないよう、掃除側でも冪等に消す。
-  if [ -n "${codex_config_backup_done:-}" ]; then
-    rm -f "$codex_config_backup_done"
+  if [ -n "${codex_config_backup_pending_removal:-}" ]; then
+    rm -f "$codex_config_backup_pending_removal"
   fi
 }
 
@@ -67,11 +67,11 @@ cleanup_install_and_exit() {
   # クリア前に exit(1) し、EXIT trap がバックアップを消してしまう
   # (exit code も 128+signum でなくなる)。echo 自体にも `|| true` を付ける。
   codex_config_backup=""
-  if [ -n "${codex_config_backup_done:-}" ]; then
-    rm -f "$codex_config_backup_done"
-    # `_done` への代入とクリアの間で signal を受けると両者が同じパスを指す。
+  if [ -n "${codex_config_backup_pending_removal:-}" ]; then
+    rm -f "$codex_config_backup_pending_removal"
+    # `_pending_removal` への代入とクリアの間で signal を受けると両者が同じパスを指す。
     # いま消したばかりのパスを "kept" として案内しない。
-    if [ "$kept" = "$codex_config_backup_done" ]; then
+    if [ "$kept" = "$codex_config_backup_pending_removal" ]; then
       kept=""
     fi
   fi
@@ -199,7 +199,7 @@ retain_codex_config_backup() {
     return 1
   fi
   codex_config_backup=""
-  codex_config_backup_retained="$retained_backup"
+  codex_config_backup_retained_in_codex_home="$retained_backup"
 }
 
 trap cleanup_install EXIT
@@ -243,14 +243,14 @@ if ! CODEX_OTEL_CONFIG_TARGET="$HOME/.codex/config.toml" CODEX_OTEL_PRESERVE_AUT
   if ! retain_codex_config_backup && [ -n "$codex_config_backup" ]; then
     # 退避先へ移せなかった。唯一のコピーなので EXIT trap にも消させず、場所を知らせる
     # (クリアを echo より先に置く理由は cleanup_install_and_exit と同じ)。
-    codex_config_backup_kept="$codex_config_backup"
+    codex_config_backup_kept_in_tmpdir="$codex_config_backup"
     codex_config_backup=""
     echo "warning: failed to move the previous Codex config backup into ~/.codex;" \
-      "keeping it at $codex_config_backup_kept" >&2 || true
+      "keeping it at $codex_config_backup_kept_in_tmpdir" >&2 || true
   fi
   echo "warning: failed to refresh Codex OTEL config; continuing install.sh" >&2
-  if [ -n "$codex_config_backup_retained" ]; then
-    echo "warning: retained previous Codex config backup at $codex_config_backup_retained" >&2
+  if [ -n "$codex_config_backup_retained_in_codex_home" ]; then
+    echo "warning: retained previous Codex config backup at $codex_config_backup_retained_in_codex_home" >&2
   fi
 fi
 # ここで「backup が旧 config の唯一のコピー」である窓は閉じる (Authorization は
@@ -259,10 +259,10 @@ fi
 # 保持対象からも外す。
 # **先に変数を空にしてから消す**。逆順だと `rm` と変数クリアの間で signal を受けたときに、
 # trap が既に消えたパスを "backup kept at ..." と案内してしまう。
-codex_config_backup_done="$codex_config_backup"
+codex_config_backup_pending_removal="$codex_config_backup"
 codex_config_backup=""
-if [ -n "$codex_config_backup_done" ]; then
-  rm -f "$codex_config_backup_done"
+if [ -n "$codex_config_backup_pending_removal" ]; then
+  rm -f "$codex_config_backup_pending_removal"
 fi
 # Replace an old symlink so Orca/agent runtime writes stay in ~/.codex only.
 # Re-running install.sh resets local hook registrations (Orca re-injects on next pane).
