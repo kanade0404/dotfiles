@@ -384,8 +384,16 @@ trap は配列しか見ないのでその temp だけ掃除から漏れる (stra
 掃除にすれば塞げるが、複雑さに見合わないので受容している。
 なお signal 経路では **codex config のバックアップは消さない**。`~/.codex/config.toml` を
 template で置換してから `codex-otel --write-config-only` が Authorization を書き戻すまでの
-窓で中断すると、そのバックアップが旧 config の唯一のコピーになるため。場所を stderr に
-出したうえで変数を空にし、後続の EXIT trap にも消させない。
+窓で中断すると、そのバックアップが旧 config の唯一のコピーになるため。変数を空にしてから
+場所を stderr に出し、後続の EXIT trap にも消させない。
+⚠️ **クリアを `echo` より先に置くこと**。`set -e` は trap 本体にも効くうえ、SIGHUP は端末
+消失時に届くので `>&2` への write が EIO で失敗しうる。echo を先に書くとその失敗で
+クリア前に `exit 1` し、EXIT trap がバックアップを消してしまう (exit code も
+128 + signum でなくなる)。echo 自体にも `|| true` を付ける。
+また、この窓は `codex-otel` の呼び出しが終わった時点で閉じるので、**その直後に明示的に
+バックアップを掃除して変数を空にする**。そうしないと、窓の外 (hooks.json / settings.json の
+置換中など) で中断したときに bearer token を平文で含むコピーが `${TMPDIR:-/tmp}` に
+残り続ける。
 
 ⚠️ **`install` の失敗は必ずその場で `return 1` すること** (`install ... || return 1`)。
 単に行を並べると、errexit が抑止された文脈
@@ -415,7 +423,7 @@ allow/deny が install.sh のたびに巻き戻って同じ承認を繰り返す
 足した deny が消えたことに気付かないまま運用する、といった形で表面化しうる。
 緩和として `install.sh` は上書き前の内容を **1 世代だけ `<dest>.bak` へ退避**する
 (`backup_local_settings`)。`~/.claude/settings.json.bak` / `~/.codex/hooks.json.bak` から
-手で戻せるという意味であって、巻き戻り自体に気付かせる仕組みではない点に注意
+手で戻せるという意味であって、巻き戻り自体に気付かせる仕組みではない点に注意。
 世代は増やさないので、**貴重な `.bak` は次の install.sh 実行で上書きされうる**。
 残るかどうかを決めるのは下記の `cmp -s` だが、その比較は
 **「dest が前回から変化したか」ではなく「dest と今回 staging した新しい source が同じか」**

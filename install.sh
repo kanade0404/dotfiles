@@ -53,10 +53,15 @@ cleanup_install() {
 # (`.bak` 側の「退避が取れないなら上書きしない」規律と揃える)。
 cleanup_install_and_exit() {
   local signum="$1"
+  local kept="${codex_config_backup:-}"
 
-  if [ -n "${codex_config_backup:-}" ]; then
-    echo "note: interrupted; previous Codex config backup kept at $codex_config_backup" >&2
-    codex_config_backup=""
+  # クリアは **echo より先**。SIGHUP は端末消失時に届くので fd 2 への write が EIO で
+  # 失敗しうる。`set -e` は trap 本体にも効くため、echo を先に置くとその失敗で
+  # クリア前に exit(1) し、EXIT trap がバックアップを消してしまう
+  # (exit code も 128+signum でなくなる)。echo 自体にも `|| true` を付ける。
+  codex_config_backup=""
+  if [ -n "$kept" ]; then
+    echo "note: interrupted; previous Codex config backup kept at $kept" >&2 || true
   fi
   cleanup_managed_file_temps
   exit "$((128 + signum))"
@@ -214,6 +219,12 @@ if ! CODEX_OTEL_CONFIG_TARGET="$HOME/.codex/config.toml" CODEX_OTEL_PRESERVE_AUT
     echo "warning: retained previous Codex config backup at $codex_config_backup_retained" >&2
   fi
 fi
+# ここで「backup が旧 config の唯一のコピー」である窓は閉じる (Authorization は
+# 書き戻し済み、失敗時は retain 済み)。窓の外で中断したときに bearer token を平文で
+# 含むコピーが `${TMPDIR:-/tmp}` へ残らないよう、明示的に掃除して signal trap の
+# 保持対象からも外す。
+cleanup_codex_config_backup
+codex_config_backup=""
 # Replace an old symlink so Orca/agent runtime writes stay in ~/.codex only.
 # Re-running install.sh resets local hook registrations (Orca re-injects on next pane).
 install_managed_file 644 "$DOTFILES/.codex/hooks.json" "$HOME/.codex/hooks.json" backup

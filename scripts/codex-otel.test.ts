@@ -567,22 +567,27 @@ describe("codex-otel", () => {
   });
 
   // 引数の検証は mktemp / install の副作用より前に済ませる。
-  test("install_managed_file rejects an unknown backup flag before creating a temp", () => {
+  // 判別オラクル: dest の親を readonly にして `mktemp` 自体を失敗させる。検証が mktemp
+  // より後ろにあれば mktemp の失敗で先に return し、このメッセージは出ない。
+  // (root は permission bit を無視するので skip。)
+  test.skipIf(process.getuid?.() === 0)("install_managed_file rejects an unknown backup flag before creating a temp", () => {
     const dir = join(root, "unknown-flag-no-temp");
     mkdirSync(dir, { recursive: true });
     const dest = join(dir, "settings.json");
     const existing = '{\n  "local": true\n}\n';
     writeFileSync(dest, existing);
+    const src = join(root, "unknown-flag-source.json");
+    writeFileSync(src, '{\n  "hooks": {}\n}\n');
+    chmodSync(dir, 0o555);
 
-    const { status, stderr } = runInstallManagedFile(
-      "unknown-flag-no-temp-harness",
-      join(dir, "missing-source.json"),
-      dest,
-      "bakcup",
-    );
+    let outcome;
+    try {
+      outcome = runInstallManagedFile("unknown-flag-no-temp-harness", src, dest, "bakcup");
+    } finally {
+      chmodSync(dir, 0o755);
+    }
+    const { status, stderr } = outcome;
 
-    // source が存在しないので、検証が staging より後ろにあると install の失敗で
-    // 先に return し、このメッセージは出ない = 順序の判別オラクルになる。
     expect(status).not.toBe(0);
     expect(stderr).toContain("unknown backup flag");
     expect(readFileSync(dest, "utf8")).toBe(existing);
@@ -677,6 +682,42 @@ describe("codex-otel", () => {
 
     expect(result.status).toBe(143);
     expect(leftoverTempFiles(dir, "settings.json")).toHaveLength(0);
+  });
+
+  // SIGHUP は端末消失時に届くので、trap 内の `echo ... >&2` が EIO で失敗しうる。
+  // `set -e` は trap 本体にも効くため、クリアより先に echo を置くと、その失敗で
+  // exit(1) → EXIT trap が「唯一のコピー」を消す。stderr を閉じて決定的に再現する。
+  test("cleanup_install_and_exit keeps the codex backup even when stderr is closed", () => {
+    const dir = join(root, "signal-hup");
+    mkdirSync(dir, { recursive: true });
+    const backup = join(dir, "codex-config.backup");
+    writeFileSync(backup, "# previous codex config\n");
+    const harness = join(root, "signal-hup-harness.sh");
+    writeFileSync(
+      harness,
+      [
+        "set -euo pipefail",
+        extractShellFunction("cleanup_codex_config_backup"),
+        extractShellFunction("cleanup_managed_file_temps"),
+        extractShellFunction("cleanup_install"),
+        extractShellFunction("cleanup_install_and_exit"),
+        'codex_config_backup="$1"',
+        "managed_file_temps=()",
+        "trap cleanup_install EXIT",
+        "trap 'cleanup_install_and_exit 1' HUP",
+        "kill -s HUP $$",
+        "sleep 5",
+        "",
+      ].join("\n"),
+    );
+
+    // `2>&-` で fd 2 を閉じる (/dev/null では write が成功してしまい再現しない)。
+    const result = spawnSync("bash", ["-c", `bash "$0" "$1" 2>&-`, harness, backup], {
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(129);
+    expect(readFileSync(backup, "utf8")).toBe("# previous codex config\n");
   });
 
   // 退避は source の staging に成功した後にだけ行う。source 不在で install が失敗する
