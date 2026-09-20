@@ -124,6 +124,38 @@ function leftoverTempFiles(dir: string, basename: string): string[] {
   return readdirSync(dir).filter((name) => name.startsWith(`${basename}.tmp`));
 }
 
+// install_managed_file() だけを install.sh から切り出し、errexit を抑止した呼び出し文脈
+// (`f || status=$?`) で単体実行する harness。関数が返した status と dest の状態を
+// 呼び出し側の errexit に頼らず観測できる。
+function runInstallManagedFile(
+  harnessName: string,
+  src: string,
+  dest: string,
+): { status: number; stderr: string } {
+  const harness = join(root, `${harnessName}.sh`);
+  writeFileSync(
+    harness,
+    [
+      "set -euo pipefail",
+      extractShellFunction("install_managed_file"),
+      extractShellFunction("cleanup_managed_file_temps"),
+      "managed_file_temps=()",
+      "status=0",
+      'install_managed_file 644 "$1" "$2" || status=$?',
+      'printf "status=%s\\n" "$status"',
+      "cleanup_managed_file_temps",
+      "",
+    ].join("\n"),
+  );
+
+  const result = spawnSync("bash", [harness, src, dest], { encoding: "utf8" });
+  const reported = /^status=(\d+)$/m.exec(result.stdout ?? "");
+  if (reported === null) {
+    throw new Error(`harness did not report a status. stderr: ${result.stderr ?? ""}`);
+  }
+  return { status: Number(reported[1]), stderr: result.stderr ?? "" };
+}
+
 // install.sh の関数定義だけを抜き出して単体で実行するためのヘルパー。
 // install.sh は source すると全処理が走ってしまうため、定義を切り出して harness に埋める。
 function extractShellFunction(name: string): string {
@@ -428,29 +460,14 @@ describe("codex-otel", () => {
     const dest = join(dir, "settings.json");
     const existing = '{\n  "hooks": {}\n}\n';
     writeFileSync(dest, existing);
-    const harness = join(root, "errexit-suppressed-harness.sh");
-    writeFileSync(
-      harness,
-      [
-        "set -euo pipefail",
-        extractShellFunction("install_managed_file"),
-        extractShellFunction("cleanup_managed_file_temps"),
-        "managed_file_temps=()",
-        "status=0",
-        'install_managed_file 644 "$1" "$2" || status=$?',
-        'printf "status=%s\\n" "$status"',
-        "cleanup_managed_file_temps",
-        "",
-      ].join("\n"),
+
+    const { status } = runInstallManagedFile(
+      "errexit-suppressed-harness",
+      join(dir, "missing-source.json"),
+      dest,
     );
 
-    const result = spawnSync("bash", [harness, join(dir, "missing-source.json"), dest], {
-      encoding: "utf8",
-    });
-
-    const reported = /^status=(\d+)$/m.exec(result.stdout ?? "");
-    expect(reported).not.toBeNull();
-    expect(Number(reported![1])).not.toBe(0);
+    expect(status).not.toBe(0);
     expect(readFileSync(dest, "utf8")).toBe(existing);
     expect(leftoverTempFiles(dir, "settings.json")).toHaveLength(0);
   });
