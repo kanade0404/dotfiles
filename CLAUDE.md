@@ -375,11 +375,13 @@ Orca 自身がローカルの実体へ注入するのに任せる。
 とも実装は同一。mode だけ前者 2 つが 644、config.toml が 600 と異なる (config.toml は OTEL
 トークンを平文で含みうるため)。EXIT trap (`cleanup_install`) が生成に使った一時ファイルと
 (config.toml の) バックアップの両方を掃除する。EXIT trap は untrapped fatal signal では
-走らないため、`HUP` / `INT` / `QUIT` / `TERM` にも `cleanup_install_and_exit` (掃除してから
+走らないため、`HUP` / `INT` / `QUIT` / `PIPE` / `TERM` にも `cleanup_install_and_exit` (掃除してから
 `exit $((128 + signum))`) を張っている。張らないと中断時に `settings.json.tmp.XXXXXX` 等が
 `$HOME` に残り、temp の記録はプロセス内の配列にしか無いので**次回実行でも掃除されない**。
 exit code を 128 + signum にしているのは、通常の install 失敗 (exit 1) と中断を
-呼び出し元 (`bootstrap.sh` 等) から区別できるようにするため。
+呼び出し元 (`bootstrap.sh` 等) から区別できるようにするため。`PIPE` を入れているのは、
+install.sh が全域で `==> ...` を stdout へ出すので `bash install.sh | head` のように
+読み手が先に死んだ pipe では write が SIGPIPE を配送するため。
 受容している残余リスクは 3 つ:
 
 - `mktemp` が返ってから配列へ append するまでの極小窓で signal を受けると、trap は配列

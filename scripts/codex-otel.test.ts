@@ -686,6 +686,9 @@ describe("codex-otel", () => {
       chmodSync(join(home, ".codex"), 0o755);
     }
 
+    // stub が `~/.codex` を読み取り専用にするので、警告のあと hooks.json 用の mktemp も
+    // 同じ理由で失敗して abort する。この失敗の伝播も含めて固定する。
+    expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("failed to refresh Codex OTEL config");
     const kept = /keeping it at (\S+)/.exec(result.stderr ?? "");
     expect(kept).not.toBeNull();
@@ -829,8 +832,10 @@ describe("codex-otel", () => {
 
   // 比較は「dest が前回から変化したか」ではなく `cmp -s "$dest" "$staged"` なので、
   // dest がローカルで無変化でも **source が更新されていれば**退避が走り、貴重な `.bak` が
-  // 「素の前回 dotfiles 内容」で潰れる。CLAUDE.md が明記している 1 世代退避の限界で、
-  // 「dest vs 前回 .bak」や mtime 比較へ退行したら落ちる。
+  // 「素の前回 dotfiles 内容」で潰れる。CLAUDE.md が明記している 1 世代退避の限界。
+  // このテストは「現挙動の記述」であって望ましい仕様の主張ではない: 比較基準を
+  // 「dest vs 前回 `.bak`」等に変えれば貴重な退避を守れる可能性があり、その場合は
+  // ここを**意図的に書き換える**こと (黙って挙動だけ変わらないための固定)。
   test("install overwrites .bak when the dotfiles source changed even if dest is unchanged", () => {
     const dotfiles = prepareDotfilesFixture();
     const home = join(root, "home-bak-source-changed");

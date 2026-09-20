@@ -215,6 +215,11 @@ trap cleanup_install EXIT
 trap 'cleanup_install_and_exit 1' HUP
 trap 'cleanup_install_and_exit 2' INT
 trap 'cleanup_install_and_exit 3' QUIT
+# SIGPIPE も同じ網に入れる。install.sh は全域で `echo "==> ..."` を stdout へ出すため、
+# `bash install.sh | head` のように読み手が先に死んだ pipe では write が SIGPIPE を
+# 配送する。untrapped だと EXIT trap ごと死に、staging temp に加えて token 入りの
+# `${TMPDIR:-/tmp}` バックアップが通知なしで残る。
+trap 'cleanup_install_and_exit 13' PIPE
 trap 'cleanup_install_and_exit 15' TERM
 
 echo "==> Linking Neovim config (LazyVim, managed outside Nix)"
