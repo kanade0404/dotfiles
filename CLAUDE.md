@@ -327,7 +327,7 @@ git 管理下の実体を直接書き換えてしまっていた**。実際に�
 上書きされて消える。
 
 対応として `install.sh` を実体生成方式に変更し、この 2 ファイルを
-**symlink 配布から実体生成方式へ移行**した (commit 3366ca2)。加えて、両ファイルの template
+**symlink 配布から実体生成方式へ移行**した (#239)。加えて、両ファイルの template
 から Orca 用 hook 定義そのものを除去した。理由は Orca hook が **ローカル専用**だから:
 cloud session (claude.ai/code) には Orca が存在しないため、repo 内 `.claude/settings.json`
 に残しても毎イベント空振りの存在チェックが走るだけのコストにしかならない (「cloud session は
@@ -341,7 +341,7 @@ Orca 自身がローカルの実体へ注入するのに任せる。
 `rm -f dest && install src dest` にしなかったのは、source (dotfiles 側) が無い時に
 「dest を消してから install が失敗 → `set -e` で abort」となり、以降の処理が走らないまま
 既存設定 (`permissions.deny` の危険 git ガードや PreToolUse hook を含む) だけが無言で
-失われる退行が実際に起きたため (`bcaa366` で修正)。この方式なら source 不在時も install
+失われる退行が実際に起きたため (#239 で修正)。この方式なら source 不在時も install
 自体が失敗するだけで **dest は無傷のまま残る**。`~/.codex/config.toml` も同じヘルパーに
 統一済みで、`.claude/settings.json` / `.codex/hooks.json` / `.codex/config.toml` の 3 ファイル
 とも実装は同一。mode だけ前者 2 つが 644、config.toml が 600 と異なる (config.toml は OTEL
@@ -355,6 +355,10 @@ Orca 自身がローカルの実体へ注入するのに任せる。
 (`codex-otel --write-config-only` の呼び出し) を持っているため、将来それに倣った瞬間に
 `~/.claude/settings.json` が警告すら出ずに空になる。安全性を呼び出し側の ambient errexit に
 委ねず関数内に閉じること。`mktemp` 側も `|| return 1` を明示する。
+
+同じ理由で **dest が directory の場合は関数の冒頭で弾く** (`[ -d "$dest" ]` → `return 1`)。
+`mv -f tmp dest` は dest が directory (または directory への symlink) だと置き換えではなく
+「tmp を dest の中へ移動」になって 0 を返すため、置き換わっていないのに成功する経路が残る。
 
 ⚠️ **install.sh を再実行するとローカルの hook 登録がリセットされる**。Orca hook は次に
 pane を開けば Orca が再注入するため実害は無いが、Claude Code 自身が `~/.claude/settings.json`
