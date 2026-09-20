@@ -630,11 +630,20 @@ describe("codex-otel", () => {
     chmodSync(stub, 0o755);
     const home = join(root, "home-signal-install");
     mkdirSync(join(home, ".codex"), { recursive: true });
+    // 中断の瞬間、config.toml は template で置換済みで Authorization はまだ書き戻されて
+    // いない。この窓では backup が旧 config の唯一のコピーになるので、消してはいけない。
+    writeFileSync(join(home, ".codex", "config.toml"), "# previous codex config\n");
 
     const result = runInstall(dotfiles, home);
 
     expect(result.status).toBe(143);
-    expect(leftoverTempFiles(join(home, ".codex"), "config.toml")).toHaveLength(0);
+    const kept = /backup kept at (\S+)/.exec(result.stderr ?? "");
+    expect(kept).not.toBeNull();
+    expect(readFileSync(kept![1], "utf8")).toBe("# previous codex config\n");
+    // 注: この時点で「生きている temp」は存在しない (config.toml の temp は直前の mv で
+    // 消費済み、hooks.json / settings.json の install には未到達) ため、temp 掃除の
+    // 回帰検知にはならない。掃除自体は下の harness テストが見る。
+    // HUP / INT / QUIT の trap 行は TERM と同形のため個別テストを持たない。
   });
 
   // 上のテストが通す経路と違い、こちらは cleanup 関数群そのものの振る舞いを見る

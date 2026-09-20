@@ -37,7 +37,7 @@ cleanup_install() {
   cleanup_managed_file_temps
 }
 
-# EXIT trap は untrapped fatal signal (SIGHUP/SIGTERM/SIGINT) では走らないため、
+# EXIT trap は untrapped fatal signal (SIGHUP/SIGINT/SIGQUIT/SIGTERM) では走らないため、
 # 中断すると `settings.json.tmp.XXXXXX` 等が `$HOME` に残る (配列はプロセス内にしか
 # 無いので次回実行でも掃除されない)。signal 側は掃除してから明示的に exit する。
 # `cleanup_install` の中身は `rm -f` だけで冪等なので、exit 後の EXIT trap で
@@ -45,10 +45,20 @@ cleanup_install() {
 #
 # exit code は慣例どおり 128 + signum にして、通常の install 失敗 (exit 1) と
 # 中断を呼び出し元 (bootstrap.sh 等) から区別できるようにする。
+#
+# ただし codex config のバックアップは **消さない**。`~/.codex/config.toml` を template で
+# 置換してから `codex-otel --write-config-only` が Authorization を書き戻すまでの窓で
+# 中断すると、このバックアップが旧 config の唯一のコピーになる。場所を知らせたうえで
+# 変数を空にし、後続の EXIT trap (`cleanup_codex_config_backup`) にも消させない
+# (`.bak` 側の「退避が取れないなら上書きしない」規律と揃える)。
 cleanup_install_and_exit() {
   local signum="$1"
 
-  cleanup_install
+  if [ -n "${codex_config_backup:-}" ]; then
+    echo "note: interrupted; previous Codex config backup kept at $codex_config_backup" >&2
+    codex_config_backup=""
+  fi
+  cleanup_managed_file_temps
   exit "$((128 + signum))"
 }
 
