@@ -335,7 +335,7 @@ cloud session (claude.ai/code) には Orca が存在しないため、repo 内 `
 影響しないが、リポジトリ側の記述としても不要な情報になる)。Orca hook は pane 起動時に
 Orca 自身がローカルの実体へ注入するのに任せる。
 
-実体生成の実装は `install.sh` の `install_managed_file` ヘルパー (`install.sh:44` 付近) に
+実体生成の実装は `install.sh` の `install_managed_file` ヘルパーに
 統一されている: `mktemp "$dest.tmp.XXXXXX"` で衝突しない一時ファイルを作り、
 `install -m <mode>` でそこへ書き込んでから `mv -f` (`rename(2)`) でアトミックに差し替える。
 `rm -f dest && install src dest` にしなかったのは、source (dotfiles 側) が無い時に
@@ -347,6 +347,14 @@ Orca 自身がローカルの実体へ注入するのに任せる。
 とも実装は同一。mode だけ前者 2 つが 644、config.toml が 600 と異なる (config.toml は OTEL
 トークンを平文で含みうるため)。EXIT trap (`cleanup_install`) が生成に使った一時ファイルと
 (config.toml の) バックアップの両方を掃除する。
+
+⚠️ **`install ... && mv ...` の `&&` は必須**。2 行に分けると、errexit が抑止された文脈
+(`install_managed_file ... || warn` / `if ! install_managed_file ...` / `&&` の右辺) で
+呼ばれたときに install の失敗後も `mv` が走り、**mktemp が作った空ファイルで dest を潰した
+うえで関数が 0 を返す**。install.sh は既に「失敗しても警告だけで続行」パターン
+(`codex-otel --write-config-only` の呼び出し) を持っているため、将来それに倣った瞬間に
+`~/.claude/settings.json` が警告すら出ずに空になる。安全性を呼び出し側の ambient errexit に
+委ねず関数内に閉じること。`mktemp` 側も `|| return 1` を明示する。
 
 ⚠️ **install.sh を再実行するとローカルの hook 登録がリセットされる**。Orca hook は次に
 pane を開けば Orca が再注入するため実害は無いが、Claude Code 自身が `~/.claude/settings.json`
