@@ -257,9 +257,11 @@ if ! CODEX_OTEL_CONFIG_TARGET="$HOME/.codex/config.toml" CODEX_OTEL_PRESERVE_AUT
     echo "warning: failed to move the previous Codex config backup into ~/.codex;" \
       "keeping it at $codex_config_backup_kept_in_tmpdir" >&2 || true
   fi
-  echo "warning: failed to refresh Codex OTEL config; continuing install.sh" >&2
+  # 「警告を出して続行する」経路なので、stderr が閉じている / EIO の状況で echo が
+  # 非ゼロを返しても `set -e` で止めない (cleanup 系の `|| true` と同じ規律)。
+  echo "warning: failed to refresh Codex OTEL config; continuing install.sh" >&2 || true
   if [ -n "$codex_config_backup_retained_in_codex_home" ]; then
-    echo "warning: retained previous Codex config backup at $codex_config_backup_retained_in_codex_home" >&2
+    echo "warning: retained previous Codex config backup at $codex_config_backup_retained_in_codex_home" >&2 || true
   fi
 fi
 # ここで「backup が旧 config の唯一のコピー」である窓は閉じる (Authorization は
