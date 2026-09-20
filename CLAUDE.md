@@ -346,9 +346,10 @@ git 管理下の実体を直接書き換えてしまっていた**。実際に�
 (一度 commit したものを PR 内で戻しただけなので、この方針は net diff にも履歴にも
 「除去」としては現れない)。理由は Orca hook が **ローカル専用**だから:
 cloud session (claude.ai/code) には Orca が存在しないため、repo 内 `.claude/settings.json`
-に置いても毎イベント空振りの存在チェックが走るだけのコストにしかならない (「cloud session は
-`~/.claude/settings.json` (user settings) を読まない」のでそもそも repo 内の設定は cloud に
-影響しないが、リポジトリ側の記述としても不要な情報になる)。Orca hook は pane 起動時に
+に置いても毎イベント空振りの存在チェックが走るだけのコストにしかならない (cloud session が
+読まないのは `~/.claude/settings.json` (user settings) **だけ**で、**リポジトリ内の
+`.claude/settings.json` は cloud でも読まれる**。だからこそ repo 側に Orca hook を置くと
+cloud でも空振りの存在チェックが走ってしまう)。Orca hook は pane 起動時に
 Orca 自身がローカルの実体へ注入するのに任せる。
 
 実体生成の実装は `install.sh` の `install_managed_file` ヘルパーに
@@ -364,7 +365,8 @@ Orca 自身がローカルの実体へ注入するのに任せる。
 トークンを平文で含みうるため)。EXIT trap (`cleanup_install`) が生成に使った一時ファイルと
 (config.toml の) バックアップの両方を掃除する。
 
-⚠️ **`install ... && mv ...` の `&&` は必須**。2 行に分けると、errexit が抑止された文脈
+⚠️ **`install` の失敗は必ずその場で `return 1` すること** (`install ... || return 1`)。
+単に行を並べると、errexit が抑止された文脈
 (`install_managed_file ... || warn` / `if ! install_managed_file ...` / `&&` の右辺) で
 呼ばれたときに install の失敗後も `mv` が走り、**mktemp が作った空ファイルで dest を潰した
 うえで関数が 0 を返す**。install.sh は既に「失敗しても警告だけで続行」パターン
@@ -389,11 +391,24 @@ allow/deny が install.sh のたびに巻き戻って同じ承認を繰り返す
 (`backup_local_settings`)。`~/.claude/settings.json.bak` / `~/.codex/hooks.json.bak` から
 手で戻せるという意味であって、巻き戻り自体に気付かせる仕組みではない点に注意
 (世代は増やさないので、巻き戻りに気付く前に install.sh を 2 回走らせると元の内容は失われる)。
+退避の細かい規律は 3 つ:
+
+- **退避は source の staging に成功してから**行う (`install_managed_file` の第 4 引数
+  `backup` 経由で、`install` 成功後・`mv` の直前に呼ぶ)。呼び出し側で先に退避すると、
+  source 不在で install が失敗する経路で dest は無傷なのに `<dest>.bak` だけ潰れ、
+  復旧手段そのものが消える
+- **dest が dotfiles と同一内容なら退避しない** (`cmp -s`)。差分ゼロで install.sh を
+  2 回走らせただけで、1 回目の意味ある退避が dotfiles と同一の内容で潰れるのを防ぐ
+- **`<dest>.bak` が regular file でなければ退避をスキップして警告**する。directory だと
+  `cp` は「中へコピー」、symlink だとリンク先へ書き込みになり、「`.bak` から手で戻せる」
+  契約が黙って破れる (`[ -d "$dest" ]` ガードと同じ趣旨)
+
 `~/.codex/config.toml` は対象外: Authorization の引き継ぎを
 `CODEX_OTEL_PRESERVE_AUTH_FROM` で別に持っており、bearer token の平文コピーを
-`$HOME` に増やさないため。なお「差分があれば警告する」(`cmp -s`) 方式は採っていない —
-Orca が pane 起動のたびに hook を注入する以上 dest は**ほぼ常に** dotfiles 側と異なり、
-毎回出る警告は読まれなくなるため。
+`$HOME` に増やさないため。なお「差分があれば**警告する**」(`cmp -s` の警告用途) は
+採っていない — Orca が pane 起動のたびに hook を注入する以上 dest は**ほぼ常に**
+dotfiles 側と異なり、毎回出る警告は読まれなくなるため (同じ `cmp -s` でも、上記の
+「同一なら退避をスキップ」は no-op 化であって警告を増やさないので採用している)。
 (`/config` のテーマ変更は `~/.claude/settings.json` ではなく `~/.claude.json` 側に保存されて
 いることを確認済み (`grep -n theme ~/.claude.json` すると実際に選んだテーマが出るが、
 `~/.claude/settings.json` 側の `theme` キーはこの dotfiles にコミット済みの静的な既定値
