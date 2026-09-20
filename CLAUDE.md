@@ -374,11 +374,14 @@ Orca 自身がローカルの実体へ注入するのに任せる。
 とも実装は同一。mode だけ前者 2 つが 644、config.toml が 600 と異なる (config.toml は OTEL
 トークンを平文で含みうるため)。EXIT trap (`cleanup_install`) が生成に使った一時ファイルと
 (config.toml の) バックアップの両方を掃除する。EXIT trap は untrapped fatal signal では
-走らないため、`HUP INT TERM` にも `cleanup_install_and_exit` (掃除してから
+走らないため、`HUP` / `INT` / `QUIT` / `TERM` にも `cleanup_install_and_exit` (掃除してから
 `exit $((128 + signum))`) を張っている。張らないと中断時に `settings.json.tmp.XXXXXX` 等が
 `$HOME` に残り、temp の記録はプロセス内の配列にしか無いので**次回実行でも掃除されない**。
 exit code を 128 + signum にしているのは、通常の install 失敗 (exit 1) と中断を
 呼び出し元 (`bootstrap.sh` 等) から区別できるようにするため。
+残余リスク: `mktemp` が返ってから配列へ append するまでの極小窓で signal を受けると、
+trap は配列しか見ないのでその temp だけ掃除から漏れる (stray file 1 個)。glob ベースの
+掃除にすれば塞げるが、複雑さに見合わないので受容している。
 
 ⚠️ **`install` の失敗は必ずその場で `return 1` すること** (`install ... || return 1`)。
 単に行を並べると、errexit が抑止された文脈
@@ -413,7 +416,7 @@ allow/deny が install.sh のたびに巻き戻って同じ承認を繰り返す
 dest が再び変化していた** 場合 — Orca の再注入や `/permissions` の再追加など — 元の内容は
 失われる。2 回目までに dest が変化していなければ下記の `cmp -s` で退避が no-op になり、
 1 回目の退避が残る)。
-退避の細かい規律は 5 つ:
+退避の細かい規律は 6 つ:
 
 - **退避は source の staging に成功してから**行う (`install_managed_file` の第 4 引数
   `backup` 経由で、`install` 成功後・`mv` の直前に呼ぶ)。呼び出し側で先に退避すると、
@@ -421,9 +424,14 @@ dest が再び変化していた** 場合 — Orca の再注入や `/permissions
   復旧手段そのものが消える
 - **dest が dotfiles と同一内容なら退避しない** (`cmp -s`)。差分ゼロで install.sh を
   2 回走らせただけで、1 回目の意味ある退避が dotfiles と同一の内容で潰れるのを防ぐ
-- **`<dest>.bak` が regular file でなければ退避をスキップして警告**する。directory だと
+- **`<dest>.bak` が regular file でなければ退避せず中止**する。directory だと
   `cp` は「中へコピー」、symlink だとリンク先へ書き込みになり、「`.bak` から手で戻せる」
   契約が黙って破れる (`[ -d "$dest" ]` ガードと同じ趣旨)
+- **退避に失敗したら `return 1` で置き換えを中止**する (best-effort 続行にしない)。
+  退避の存在理由は「巻き戻りからの復旧」なので、それが取れない状態で dest を上書きすると
+  **保険が最も必要な瞬間に限って**ローカル設定の唯一のコピーが不可逆に失われる。
+  中止時点で dest は無傷なので、原因 (ENOSPC / permission / 壊れた `.bak`) を直して
+  再実行すればよい。source 不在時に `return 1` する経路と同じ扱い
 - **退避も temp + `mv` で差し替える**。`cp` は出力先を `O_TRUNC` で開くので、既存の
   `.bak` へ直接書くと書き込み開始時点で旧内容が失われ、途中で失敗 (ENOSPC 等) すると
   唯一の復旧コピーが壊れた断片に化けたまま dest も巻き戻ってしまう

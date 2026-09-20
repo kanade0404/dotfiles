@@ -91,6 +91,9 @@ install_managed_file() {
     return 1
   fi
 
+  # 残余リスク: `mktemp` が返ってから次行の配列 append までの極小窓で signal を受けると、
+  # trap は配列しか見ないのでこの temp だけ掃除から漏れる (stray file 1 個)。
+  # glob ベースの掃除にすれば塞げるが、複雑さに見合わないので受容する。
   tmp="$(mktemp "$dest.tmp.XXXXXX")" || return 1
   managed_file_temps+=("$tmp")
   # install の失敗は **必ず** この場で `return 1` すること。`install` と `mv` を単に
@@ -99,7 +102,7 @@ install_managed_file() {
   # 被せたうえで 0 を返してしまう。安全性を呼び出し文脈ではなく関数内に閉じる。
   install -m "$mode" "$src" "$tmp" || return 1
   if [ "$backup" = "backup" ]; then
-    backup_local_settings "$dest" "$tmp"
+    backup_local_settings "$dest" "$tmp" || return 1
   fi
   mv -f "$tmp" "$dest"
 }
@@ -112,7 +115,11 @@ install_managed_file() {
 # `CODEX_OTEL_PRESERVE_AUTH_FROM` で別途持っており、bearer token の平文コピーを
 # `$HOME` に増やしたくないため。
 #
-# 退避は best-effort。失敗しても install 本体は止めない (警告のみ)。
+# 退避に失敗したら **非ゼロを返して置き換えを中止する**。退避の存在理由は
+# 「巻き戻りからの復旧」なので、それが取れない状態で dest を上書きすると、
+# 保険が最も必要な瞬間に限ってローカル設定の唯一のコピーが不可逆に失われる。
+# 中止時点で dest は無傷なので、原因を直して再実行すればよい
+# (source 不在時に `return 1` する経路と同じ扱い)。
 # 第 2 引数は staging 済みの新しい内容 (install_managed_file の temp)。
 backup_local_settings() {
   local dest="$1" staged="$2"
@@ -128,23 +135,23 @@ backup_local_settings() {
   # 「`<dest>.bak` から手で戻せる」契約が黙って破れる (`install_managed_file` の
   # `[ -d "$dest" ]` ガードと同じ趣旨)。
   if [ -L "$dest.bak" ] || { [ -e "$dest.bak" ] && [ ! -f "$dest.bak" ]; }; then
-    echo "warning: $dest.bak is not a regular file; skipping backup of $dest" >&2
-    return 0
+    echo "error: $dest.bak is not a regular file; refusing to overwrite $dest without a backup" >&2
+    return 1
   fi
   # `cp` は出力先を O_TRUNC で開くため、既存の `.bak` へ直接書くと書き込み開始時点で
   # 旧内容が失われる。途中で失敗 (ENOSPC 等) すると唯一の復旧コピーが壊れた断片に化け、
   # そのまま `mv -f` で dest も巻き戻って復旧手段が消える。dest 側と同じ規律で
   # temp へ取ってから rename(2) で差し替える。
   bak_tmp="$(mktemp "$dest.bak.tmp.XXXXXX")" || {
-    echo "warning: failed to back up $dest" >&2
-    return 0
+    echo "error: failed to back up $dest; refusing to overwrite it" >&2
+    return 1
   }
   managed_file_temps+=("$bak_tmp")
   if cp -p "$dest" "$bak_tmp" && mv -f "$bak_tmp" "$dest.bak"; then
     return 0
   fi
-  echo "warning: failed to back up $dest" >&2
-  return 0
+  echo "error: failed to back up $dest; refusing to overwrite it" >&2
+  return 1
 }
 
 retain_codex_config_backup() {
@@ -160,6 +167,7 @@ retain_codex_config_backup() {
 trap cleanup_install EXIT
 trap 'cleanup_install_and_exit 1' HUP
 trap 'cleanup_install_and_exit 2' INT
+trap 'cleanup_install_and_exit 3' QUIT
 trap 'cleanup_install_and_exit 15' TERM
 
 echo "==> Linking Neovim config (LazyVim, managed outside Nix)"
