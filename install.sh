@@ -37,6 +37,16 @@ cleanup_install() {
   cleanup_managed_file_temps
 }
 
+# EXIT trap は untrapped fatal signal (SIGHUP/SIGTERM/SIGINT) では走らないため、
+# 中断すると `settings.json.tmp.XXXXXX` 等が `$HOME` に残る (配列はプロセス内にしか
+# 無いので次回実行でも掃除されない)。signal 側は掃除してから明示的に exit する。
+# `cleanup_install` の中身は `rm -f` だけで冪等なので、exit 後の EXIT trap で
+# 二重に走っても問題ない。
+cleanup_install_and_exit() {
+  cleanup_install
+  exit 1
+}
+
 # Install a dotfiles file as a real file (not a symlink) so that local agent
 # runtimes (Orca 等) の書き込みが git 管理下の実体まで届かないようにする。
 #
@@ -143,6 +153,7 @@ retain_codex_config_backup() {
 }
 
 trap cleanup_install EXIT
+trap cleanup_install_and_exit HUP INT TERM
 
 echo "==> Linking Neovim config (LazyVim, managed outside Nix)"
 mkdir -p "$HOME/.config"

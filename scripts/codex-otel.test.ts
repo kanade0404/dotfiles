@@ -541,6 +541,27 @@ describe("codex-otel", () => {
     expect(leftoverTempFiles(join(home, ".claude"), "settings.json.bak")).toHaveLength(0);
   });
 
+  // 退避は best-effort: 失敗しても警告だけで dest の置き換えは続行する。
+  // dest を読めなくすると `cp -p` が決定的に失敗するので、この契約を固定できる。
+  // (ENOSPC 等「書き込み途中で失敗」の再現は決定的にできないため未カバー。)
+  test("install continues and warns when the backup copy fails", () => {
+    if (process.getuid?.() === 0) return;
+    const dotfiles = prepareDotfilesFixture();
+    const home = join(root, "home-bak-unreadable");
+    mkdirSync(join(home, ".claude"), { recursive: true });
+    const dest = join(home, ".claude", "settings.json");
+    writeFileSync(dest, '{\n  "local": true\n}\n');
+    chmodSync(dest, 0o000);
+
+    const result = runInstall(dotfiles, home);
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain("failed to back up");
+    expect(existsSync(`${dest}.bak`)).toBe(false);
+    expect(leftoverTempFiles(join(home, ".claude"), "settings.json.bak")).toHaveLength(0);
+    expectInstalledAsRealFile(home, dotfiles, ".claude/settings.json");
+  });
+
   // 引数の検証は mktemp / install の副作用より前に済ませる。
   test("install_managed_file rejects an unknown backup flag before creating a temp", () => {
     const dir = join(root, "unknown-flag-no-temp");
