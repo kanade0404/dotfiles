@@ -114,6 +114,12 @@ function runInstall(dotfiles: string, home: string, env: Record<string, string> 
       ...process.env,
       DOTFILES: dotfiles,
       HOME: home,
+      // runCodexOtel と同様、開発マシンが export している CODEX_OTEL_* で
+      // 生成内容が変わらないよう中和する。
+      CODEX_OTEL_ENVIRONMENT: "",
+      CODEX_OTEL_LOGS_ENDPOINT: "",
+      CODEX_OTEL_METRICS_ENDPOINT: "",
+      CODEX_OTEL_TRACES_ENDPOINT: "",
       OTEL_EXPORTER_TOKEN: "test-token",
       ...env,
     },
@@ -138,6 +144,7 @@ function runInstallManagedFile(
     [
       "set -euo pipefail",
       extractShellFunction("install_managed_file"),
+      extractShellFunction("backup_local_settings"),
       extractShellFunction("cleanup_managed_file_temps"),
       "managed_file_temps=()",
       "status=0",
@@ -158,9 +165,14 @@ function runInstallManagedFile(
 
 // install.sh の関数定義だけを抜き出して単体で実行するためのヘルパー。
 // install.sh は source すると全処理が走ってしまうため、定義を切り出して harness に埋める。
+// 起点は `lines.indexOf("<name>() {")` = **行全体の完全一致**なので、`# <name>() {` の
+// ようなコメント行や字下げされた行は拾わない (正規表現 `^<name>\(\) \{$` と同義)。
 // 閉じ括弧の判定は「行全体が }」のヒューリスティックなので、本体に column-0 の }
 // (入れ子関数や heredoc 等) が入ると途中で切れる。切れた断片が偶然 parse できると
 // 「別物をテストしたまま pass」するため、抽出結果が関数定義として成立するか検証する。
+// 残余リスク: install.sh が heredoc の中に同一の定義行を持つ、かつ途中切断しても
+// 構文的に整合する、という両方が同時に成立する場合。install.sh に heredoc は無く、
+// 対象関数も 1 つずつしか定義されていないため受容する。
 function extractShellFunction(name: string, source = readFileSync(installScript, "utf8")): string {
   const lines = source.split("\n");
   const start = lines.indexOf(`${name}() {`);
@@ -503,6 +515,61 @@ describe("codex-otel", () => {
     expect(readFileSync(dest, "utf8")).toBe(readFileSync(join(dotfiles, ...relative.split("/")), "utf8"));
   });
 
+  // 退避は source の staging に成功した後にだけ行う。source 不在で install が失敗する
+  // ケースで既存の `.bak` を潰すと、巻き戻りからの復旧手段そのものが消える。
+  test("install keeps an existing .bak when the dotfiles source is missing", () => {
+    const dotfiles = prepareDotfilesFixture(undefined, [".claude/settings.json"]);
+    const home = join(root, "home-bak-preserved");
+    mkdirSync(join(home, ".claude"), { recursive: true });
+    const dest = join(home, ".claude", "settings.json");
+    const recovery = '{\n  "permissions": {\n    "deny": ["Bash(rm -rf /)"]\n  }\n}\n';
+    const current = '{\n  "hooks": {}\n}\n';
+    writeFileSync(`${dest}.bak`, recovery);
+    writeFileSync(dest, current);
+
+    const result = runInstall(dotfiles, home);
+
+    expect(result.status).not.toBe(0);
+    expect(readFileSync(`${dest}.bak`, "utf8")).toBe(recovery);
+    expect(readFileSync(dest, "utf8")).toBe(current);
+  });
+
+  // ローカル差分が無いのに退避すると、意味のある退避を dotfiles と同一の内容で潰す。
+  test("install does not overwrite .bak when dest already matches the dotfiles source", () => {
+    const dotfiles = prepareDotfilesFixture();
+    const home = join(root, "home-bak-nodiff");
+    mkdirSync(join(home, ".claude"), { recursive: true });
+    const dest = join(home, ".claude", "settings.json");
+    const local = '{\n  "permissions": {\n    "deny": ["Bash(rm -rf /)"]\n  }\n}\n';
+    writeFileSync(dest, local);
+
+    expect(runInstall(dotfiles, home).status).toBe(0);
+    expect(readFileSync(`${dest}.bak`, "utf8")).toBe(local);
+
+    // 2 回目は dest が dotfiles と同一なので退避をスキップし、1 回目の退避を残す。
+    expect(runInstall(dotfiles, home).status).toBe(0);
+    expect(readFileSync(`${dest}.bak`, "utf8")).toBe(local);
+  });
+
+  // `.bak` が directory / symlink だと `cp -p` は「中へコピー」「リンク先へ書き込み」に
+  // なり、「<dest>.bak から手で戻せる」という契約が黙って破れる。
+  test("install skips the backup when .bak is not a regular file", () => {
+    const dotfiles = prepareDotfilesFixture();
+    const home = join(root, "home-bak-directory");
+    mkdirSync(join(home, ".claude"), { recursive: true });
+    const dest = join(home, ".claude", "settings.json");
+    writeFileSync(dest, '{\n  "local": true\n}\n');
+    mkdirSync(`${dest}.bak`);
+
+    const result = runInstall(dotfiles, home);
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain("skipping backup");
+    expect(statSync(`${dest}.bak`).isDirectory()).toBe(true);
+    expect(readdirSync(`${dest}.bak`)).toHaveLength(0);
+    expectInstalledAsRealFile(home, dotfiles, ".claude/settings.json");
+  });
+
   // config.toml は bearer token を平文で持つため、退避コピーを増やさない。
   test("install does not copy .codex/config.toml to a .bak slot", () => {
     const dotfiles = prepareDotfilesFixture();
@@ -518,21 +585,32 @@ describe("codex-otel", () => {
 
   // dest が directory だと `mv -f tmp dest` は「置き換え」ではなく「dest の中へ移動」に
   // なって 0 を返す。置き換わっていないのに成功する経路を関数内で塞ぐ。
-  test("install_managed_file refuses a directory dest instead of succeeding silently", () => {
-    const dir = join(root, "directory-dest");
+  // ガードが `[ -d ]` (symlink を辿る) であることに依存しているので、実 directory と
+  // directory への symlink の両方を固定する。
+  test.each(["directory", "symlink-to-directory"] as const)(
+    "install_managed_file refuses a %s dest instead of succeeding silently",
+    (kind) => {
+    const dir = join(root, `directory-dest-${kind}`);
     mkdirSync(dir, { recursive: true });
     const src = join(dir, "source.json");
     writeFileSync(src, '{\n  "hooks": {}\n}\n');
     const dest = join(dir, "settings.json");
-    mkdirSync(dest);
+    if (kind === "directory") {
+      mkdirSync(dest);
+    } else {
+      const real = join(dir, "real-directory");
+      mkdirSync(real);
+      symlinkSync(real, dest);
+    }
 
-    const { status } = runInstallManagedFile("directory-dest-harness", src, dest);
+    const { status } = runInstallManagedFile(`directory-dest-harness-${kind}`, src, dest);
 
     expect(status).not.toBe(0);
     expect(statSync(dest).isDirectory()).toBe(true);
     expect(readdirSync(dest)).toHaveLength(0);
     expect(leftoverTempFiles(dir, "settings.json")).toHaveLength(0);
-  });
+    },
+  );
 
   // extractShellFunction は「行全体が }」を閉じ括弧とみなすヒューリスティックなので、
   // 対象関数の本体に column-0 の } が入ると途中で切れる。切れた断片が偶然 parse できると

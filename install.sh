@@ -47,8 +47,13 @@ cleanup_install() {
 #   - source 不在なら install が失敗するが dest は無傷
 #   - symlink でも実体でもアトミックに置き換わる
 # を両立する。
+#
+# 第 4 引数に `backup` を渡すと、置き換え直前の dest を `backup_local_settings` で
+# 1 世代だけ退避する。退避を**呼び出し側ではなく関数内**でやるのは順序のため:
+# source の staging (`install`) に失敗する経路で先に退避してしまうと、dest は無傷でも
+# 既存の `<dest>.bak` (= 巻き戻りからの復旧手段) を潰してしまう。
 install_managed_file() {
-  local mode="$1" src="$2" dest="$3"
+  local mode="$1" src="$2" dest="$3" backup="${4:-}"
   local tmp
 
   # dest が directory (または directory への symlink) だと `mv -f` は置き換えではなく
@@ -61,11 +66,15 @@ install_managed_file() {
 
   tmp="$(mktemp "$dest.tmp.XXXXXX")" || return 1
   managed_file_temps+=("$tmp")
-  # `install; mv` と行を分けない: 呼び出し側の errexit が抑止された文脈
-  # (`f || warn` / `if ! f` / `&&` の右辺) では install の失敗後も次行が走り、
-  # mktemp が作った空ファイルを dest に被せたうえで 0 を返してしまう。
-  # `&&` で連結して、安全性を呼び出し文脈ではなく関数内に閉じる。
-  install -m "$mode" "$src" "$tmp" && mv -f "$tmp" "$dest"
+  # install の失敗は **必ず** この場で `return 1` すること。`install` と `mv` を単に
+  # 行で並べると、呼び出し側の errexit が抑止された文脈 (`f || warn` / `if ! f` /
+  # `&&` の右辺) では install の失敗後も次行が走り、mktemp が作った空ファイルを dest に
+  # 被せたうえで 0 を返してしまう。安全性を呼び出し文脈ではなく関数内に閉じる。
+  install -m "$mode" "$src" "$tmp" || return 1
+  if [ "$backup" = "backup" ]; then
+    backup_local_settings "$dest" "$tmp"
+  fi
+  mv -f "$tmp" "$dest"
 }
 
 # install.sh の再実行は dest を dotfiles の内容へ巻き戻すため、ローカルに溜まった設定
@@ -77,10 +86,23 @@ install_managed_file() {
 # `$HOME` に増やしたくないため。
 #
 # 退避は best-effort。失敗しても install 本体は止めない (警告のみ)。
+# 第 2 引数は staging 済みの新しい内容 (install_managed_file の temp)。
 backup_local_settings() {
-  local dest="$1"
+  local dest="$1" staged="$2"
 
   [ -f "$dest" ] || return 0
+  # ローカル差分が無いなら退避しても情報が増えず、以前の意味ある退避を
+  # dotfiles と同一の内容で潰すだけなので何もしない。
+  if cmp -s "$dest" "$staged"; then
+    return 0
+  fi
+  # `.bak` が directory だと `cp` は「中へコピー」、symlink だとリンク先へ書き込みになり、
+  # 「`<dest>.bak` から手で戻せる」契約が黙って破れる (`install_managed_file` の
+  # `[ -d "$dest" ]` ガードと同じ趣旨)。
+  if [ -L "$dest.bak" ] || { [ -e "$dest.bak" ] && [ ! -f "$dest.bak" ]; }; then
+    echo "warning: $dest.bak is not a regular file; skipping backup of $dest" >&2
+    return 0
+  fi
   cp -p "$dest" "$dest.bak" || echo "warning: failed to back up $dest" >&2
   return 0
 }
@@ -133,8 +155,7 @@ if ! CODEX_OTEL_CONFIG_TARGET="$HOME/.codex/config.toml" CODEX_OTEL_PRESERVE_AUT
 fi
 # Replace an old symlink so Orca/agent runtime writes stay in ~/.codex only.
 # Re-running install.sh resets local hook registrations (Orca re-injects on next pane).
-backup_local_settings "$HOME/.codex/hooks.json"
-install_managed_file 644 "$DOTFILES/.codex/hooks.json" "$HOME/.codex/hooks.json"
+install_managed_file 644 "$DOTFILES/.codex/hooks.json" "$HOME/.codex/hooks.json" backup
 # herdr の Codex 連携スクリプト。hooks.json が $HOME/.codex/ 直下を指しており、
 # かつ .claude/hooks/* は ~/.codex/hooks/ にも配布される (同名だと Claude 版に
 # 上書きされる) ため、hooks/ ではなく .codex/ 直下へ個別に symlink する。
@@ -212,8 +233,7 @@ echo "==> Installing Claude Code user settings"
 mkdir -p "$HOME/.claude"
 # Replace an old symlink so Orca/agent runtime writes stay in ~/.claude only
 # (same rationale as the ~/.codex/hooks.json replacement above).
-backup_local_settings "$HOME/.claude/settings.json"
-install_managed_file 644 "$DOTFILES/.claude/settings.json" "$HOME/.claude/settings.json"
+install_managed_file 644 "$DOTFILES/.claude/settings.json" "$HOME/.claude/settings.json" backup
 ln -sf "$DOTFILES/.claude/statusline.py" "$HOME/.claude/statusline.py"
 # hooks: symlink each file to both ~/.claude/hooks/ and ~/.codex/hooks/
 # (directory symlink would hide each tool's own hooks; .claude/hooks/ is the
