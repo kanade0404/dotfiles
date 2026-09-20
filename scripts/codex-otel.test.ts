@@ -272,15 +272,9 @@ describe("codex-otel", () => {
       'model = "old"\n# BEGIN CODEX OTEL MANAGED\n[otel]\nenvironment = "dev"\n\n[otel.exporter."otlp-http".headers]\nAuthorization = "Bearer existing-token"\n\n[otel.metrics_exporter."otlp-http".headers]\nAuthorization = "Bearer existing-token"\n\n[otel.trace_exporter."otlp-http".headers]\nAuthorization = "Bearer existing-token"\n# END CODEX OTEL MANAGED\n',
     );
 
-    const result = spawnSync("bash", [installScript], {
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        DOTFILES: dotfiles,
-        HOME: home,
-        OTEL_EXPORTER_TOKEN: "",
-        PATH: pathWithMissingSecurity(),
-      },
+    const result = runInstall(dotfiles, home, {
+      OTEL_EXPORTER_TOKEN: "",
+      PATH: pathWithMissingSecurity(),
     });
 
     expect(result.status).toBe(0);
@@ -340,15 +334,9 @@ describe("codex-otel", () => {
       'model = "old"\n# BEGIN CODEX OTEL MANAGED\n[otel.exporter."otlp-http".headers]\nAuthorization = "Bearer existing-token"\n';
     writeFileSync(join(home, ".codex", "config.toml"), oldConfig);
 
-    const result = spawnSync("bash", [installScript], {
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        DOTFILES: dotfiles,
-        HOME: home,
-        OTEL_EXPORTER_TOKEN: "",
-        PATH: pathWithMissingSecurity(),
-      },
+    const result = runInstall(dotfiles, home, {
+      OTEL_EXPORTER_TOKEN: "",
+      PATH: pathWithMissingSecurity(),
     });
 
     expect(result.status).toBe(0);
