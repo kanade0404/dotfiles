@@ -68,6 +68,23 @@ install_managed_file() {
   install -m "$mode" "$src" "$tmp" && mv -f "$tmp" "$dest"
 }
 
+# install.sh の再実行は dest を dotfiles の内容へ巻き戻すため、ローカルに溜まった設定
+# (`/permissions` で追加した allow/deny、`/model` の選択など) が失われる。取り戻せるよう
+# 直前の内容を 1 世代だけ `<dest>.bak` に退避する。世代を増やさないので溜まらない。
+#
+# `.codex/config.toml` は対象外: Authorization の引き継ぎを
+# `CODEX_OTEL_PRESERVE_AUTH_FROM` で別途持っており、bearer token の平文コピーを
+# `$HOME` に増やしたくないため。
+#
+# 退避は best-effort。失敗しても install 本体は止めない (警告のみ)。
+backup_local_settings() {
+  local dest="$1"
+
+  [ -f "$dest" ] || return 0
+  cp -p "$dest" "$dest.bak" || echo "warning: failed to back up $dest" >&2
+  return 0
+}
+
 retain_codex_config_backup() {
   local retained_backup
 
@@ -116,6 +133,7 @@ if ! CODEX_OTEL_CONFIG_TARGET="$HOME/.codex/config.toml" CODEX_OTEL_PRESERVE_AUT
 fi
 # Replace an old symlink so Orca/agent runtime writes stay in ~/.codex only.
 # Re-running install.sh resets local hook registrations (Orca re-injects on next pane).
+backup_local_settings "$HOME/.codex/hooks.json"
 install_managed_file 644 "$DOTFILES/.codex/hooks.json" "$HOME/.codex/hooks.json"
 # herdr の Codex 連携スクリプト。hooks.json が $HOME/.codex/ 直下を指しており、
 # かつ .claude/hooks/* は ~/.codex/hooks/ にも配布される (同名だと Claude 版に
@@ -194,6 +212,7 @@ echo "==> Installing Claude Code user settings"
 mkdir -p "$HOME/.claude"
 # Replace an old symlink so Orca/agent runtime writes stay in ~/.claude only
 # (same rationale as the ~/.codex/hooks.json replacement above).
+backup_local_settings "$HOME/.claude/settings.json"
 install_managed_file 644 "$DOTFILES/.claude/settings.json" "$HOME/.claude/settings.json"
 ln -sf "$DOTFILES/.claude/statusline.py" "$HOME/.claude/statusline.py"
 # hooks: symlink each file to both ~/.claude/hooks/ and ~/.codex/hooks/

@@ -483,6 +483,39 @@ describe("codex-otel", () => {
     expect(leftoverTempFiles(dir, "settings.json")).toHaveLength(0);
   });
 
+  // install.sh 再実行は dest を dotfiles の内容へ巻き戻すため、ローカルに溜まった設定
+  // (`/permissions` で追加した deny 等) が失われる。取り戻せるよう 1 世代だけ退避する。
+  test.each([
+    [".claude/settings.json", ".claude", "settings.json"],
+    [".codex/hooks.json", ".codex", "hooks.json"],
+  ] as const)("install backs up the previous %s before overwriting it", (relative, dir, basename) => {
+    const dotfiles = prepareDotfilesFixture();
+    const home = join(root, `home-backup-${basename}`);
+    mkdirSync(join(home, dir), { recursive: true });
+    const dest = join(home, dir, basename);
+    const local = '{\n  "permissions": {\n    "deny": ["Bash(rm -rf /)"]\n  }\n}\n';
+    writeFileSync(dest, local);
+
+    const result = runInstall(dotfiles, home);
+
+    expect(result.status).toBe(0);
+    expect(readFileSync(`${dest}.bak`, "utf8")).toBe(local);
+    expect(readFileSync(dest, "utf8")).toBe(readFileSync(join(dotfiles, ...relative.split("/")), "utf8"));
+  });
+
+  // config.toml は bearer token を平文で持つため、退避コピーを増やさない。
+  test("install does not copy .codex/config.toml to a .bak slot", () => {
+    const dotfiles = prepareDotfilesFixture();
+    const home = join(root, "home-backup-config");
+    mkdirSync(join(home, ".codex"), { recursive: true });
+    writeFileSync(join(home, ".codex", "config.toml"), 'model = "local"\n');
+
+    const result = runInstall(dotfiles, home);
+
+    expect(result.status).toBe(0);
+    expect(existsSync(join(home, ".codex", "config.toml.bak"))).toBe(false);
+  });
+
   // dest が directory だと `mv -f tmp dest` は「置き換え」ではなく「dest の中へ移動」に
   // なって 0 を返す。置き換わっていないのに成功する経路を関数内で塞ぐ。
   test("install_managed_file refuses a directory dest instead of succeeding silently", () => {
