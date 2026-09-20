@@ -55,6 +55,12 @@ cleanup_install() {
 #
 # exit code は慣例どおり 128 + signum にして、通常の install 失敗 (exit 1) と
 # 中断を呼び出し元 (bootstrap.sh 等) から区別できるようにする。
+# `trap - INT; kill -s INT $$` で再送する (re-raise) 形は**意図的に採らない**。
+# 親が `WIFSIGNALED` で判定する場合に差は出るが、install.sh は対話シェルから直接、
+# あるいは `bash bootstrap.sh` 経由で呼ばれる前提で、どちらも `$?` の 128+signum を見る。
+# 一方 re-raise にすると子プロセスとして起動したテストからは「signal 死」にしか見えず
+# (`spawnSync` の status が null になる)、trap が登録されているかを直接観測できなくなる。
+# 観測可能性を優先して通常 exit のままにしている。
 #
 # ただし codex config のバックアップは **消さない**。`~/.codex/config.toml` を template で
 # 置換してから `codex-otel --write-config-only` が Authorization を書き戻すまでの窓で

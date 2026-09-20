@@ -308,6 +308,7 @@ tmux pane と AI agent セッションを紐付けるための herdr 向け Sess
     紐付かないときはまず `tmux show-environment -g CURSOR_VERSION` / hook プロセスの
     environ を疑うこと。スクリプトは herdr 管理下なので直接編集はせず、
     「hook 入力の `cursor_version` のみで判定する」形を upstream へ報告するのが筋
+    (追跡は #242。**未報告**の状態で、報告したら issue 側を更新すること)
   - **Codex 用 (v8)**: `hook_event_name` が空でなく `SessionStart` 以外なら exit。
     `transcript_path` は **必須ゲート**で、欠落 / 空白のみなら送信せず exit する
     (ゲートに使うだけで params には載せない)。さらに `CODEX_THREAD_ID` が
@@ -315,7 +316,7 @@ tmux pane と AI agent セッションを紐付けるための herdr 向け Sess
     exit する (**未設定なら通過する** — fresh pane はこちら)
 - ⚠️ Codex の SessionStart 入力に `transcript_path` が**常に**含まれるかは未検証。
   Codex 公式の hook 仕様では nullable なので、含まれないケースがあると Codex 側の
-  herdr 連携は**無言で全停止**する (upstream 報告対象。#239 の既知懸念と同根)
+  herdr 連携は**無言で全停止**する (追跡は #242。**未報告**。#239 の既知懸念と同根)
 - 配布: `.claude/hooks/*` は install.sh のワイルドカードで `~/.claude/hooks/` と
   `~/.codex/hooks/` の両方へ symlink。`.codex/herdr-agent-state.sh` は個別の `ln -sf` 行で
   `~/.codex/herdr-agent-state.sh` へ配布
