@@ -671,7 +671,9 @@ describe("codex-otel", () => {
   // PIPE は他の signal と検証すべき意味論が違う: `echo` の write が SIGPIPE を起こす経路
   // では、「pending の trapped signal が errexit (`echo` の非ゼロ) より先に走るか」という
   // 処理系依存の順序に 128+13 契約が乗る。`kill -TERM $PPID` 版はこの順序を通らない。
-  // macOS 既定の /bin/bash (3.2) でも成立することを確認済み。
+  // macOS では `bash` (Homebrew の 5.x) と `/bin/bash` (3.2) が別物なのでこの 2 つを回すが、
+  // **Linux CI では同一バイナリで実質重複**になる。つまり bash 3.2 での成立は CI では
+  // 継続検証されず、ローカル (macOS) 実行時にのみ担保される。
   test.each(["bash", "/bin/bash"] as const)(
     "install.sh exits 128+SIGPIPE when stdout goes away (%s)",
     (shell) => {
@@ -757,6 +759,31 @@ describe("codex-otel", () => {
     // 1 回目の「意味ある退避」を潰していないことまで見る (個数だけでは検出できない)。
     expect(readFileSync(join(home, ".codex", retained[0]), "utf8")).toBe(
       "# previous codex config\n",
+    );
+  });
+
+  // 上のテストは `cmp -s` の早期 return で剪定ループに到達しないので、ループ本体は
+  // こちらで通す: 現行 config を template と別内容にし、古い世代を置いてから 1 回失敗させる。
+  test("install prunes older retained codex config backups", () => {
+    const dotfiles = prepareDotfilesFixture();
+    const stub = join(dotfiles, ".local", "bin", "codex-otel");
+    rmSync(stub, { force: true });
+    writeFileSync(stub, "#!/usr/bin/env sh\nexit 1\n");
+    chmodSync(stub, 0o755);
+    const home = join(root, "home-retain-prune-loop");
+    mkdirSync(join(home, ".codex"), { recursive: true });
+    writeFileSync(join(home, ".codex", "config.toml"), "# current codex config\n");
+    writeFileSync(join(home, ".codex", "config.toml.bak.stale"), "# stale backup\n");
+
+    expect(runInstall(dotfiles, home, { TMPDIR: home }).status).toBe(0);
+
+    const retained = readdirSync(join(home, ".codex")).filter((name) =>
+      name.startsWith("config.toml.bak."),
+    );
+    expect(retained).toHaveLength(1);
+    expect(retained[0]).not.toBe("config.toml.bak.stale");
+    expect(readFileSync(join(home, ".codex", retained[0]), "utf8")).toBe(
+      "# current codex config\n",
     );
   });
 
@@ -885,6 +912,10 @@ describe("codex-otel", () => {
   // MANAGED_FIXTURE_FILES は install.sh の手動ミラーなので、install.sh 側に 4 つ目の
   // 無条件 install が増えたら全 runInstall 系テストが fixture 不足で一斉に落ちる。
   // 同期漏れをここで名指しして落とす。
+  // 検出できるのは **行頭・リテラル数値 mode・`"$DOTFILES/...` 直書き** の呼び出しだけ。
+  // `if` ブロック内 (インデント付き) や変数 mode で無条件 install が増えると silent miss に
+  // なる。現行 3 呼び出しはすべて column-0 なのでこの形式を維持すること
+  // (`toBeGreaterThan(0)` は「書式変更で一切マッチしない」vacuous pass だけは防ぐ)。
   test("MANAGED_FIXTURE_FILES mirrors every unconditional install_managed_file call", () => {
     const source = readFileSync(installScript, "utf8");
     const called = [
