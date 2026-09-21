@@ -464,5 +464,5 @@
       "command": "docker"
     }
   },
-  "model": "claude-fable-5[1m]"
+  "model": "claude-fable-5-1[1m]"
 }

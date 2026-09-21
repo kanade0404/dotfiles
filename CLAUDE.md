@@ -35,10 +35,11 @@ nix/
 
 .config/nvim/               # Neovim (LazyVim) — install.sh でsymlink
 .config/ghostty/config      # Ghostty — install.sh でsymlink
-.claude/settings.json       # Claude Code user設定 — install.sh でsymlink
+.claude/settings.json       # Claude Code user設定 — install.sh で実体生成 (`~/.claude/settings.json` へ install -m 644。symlinkではない。詳細は「Orca による hook 自動注入と実体生成方式」節)
 .claude/hooks/              # Claude Code hooks — install.sh でsymlink
 .claude/commands/           # Claude Code commands — install.sh でsymlink
 .claude/skills/             # Claude Code skills — rulesync で生成 (rulesync-claude/, kanade0404/skills を ref 固定取得。現在の tag は rulesync-claude/rulesync.jsonc の ref を参照)。project 単位のため install.sh でのグローバル symlink はしない
+.codex/hooks.json           # Codex hooks — install.sh で実体生成 (`~/.codex/hooks.json` へ install -m 644。symlinkではない。詳細は「Orca による hook 自動注入と実体生成方式」節)
 .codex/herdr-agent-state.sh # herdr hook (Codex用) — install.sh で個別に ~/.codex/herdr-agent-state.sh へsymlink。詳細は「herdr hook スクリプト」節
 rulesync-claude/            # Claude 用 skill の rulesync 隔離パイプライン (config + lock)
 .agents/skills/             # Codex 用 skills — rulesync で生成 (rulesync.jsonc) + install.sh でsymlink
@@ -48,7 +49,7 @@ rulesync-claude/            # Claude 用 skill の rulesync 隔離パイプラ�
 bootstrap.sh                # 初回セットアップ (Homebrew + nix-darwin bootstrap + install.sh)
 bootstrap-codex-cloud.sh    # Codex Cloud 用の依存関係セットアップ
 bootstrap-worktree.sh       # git worktree を参照元にして適用
-install.sh                  # Nix 管理外ファイルの symlink 作成スクリプト
+install.sh                  # Nix 管理外ファイルの symlink 作成 + 一部ファイルの実体生成スクリプト (`.claude/settings.json` / `.codex/hooks.json` / `.codex/config.toml` の 3 ファイルは symlink ではなく実体生成。詳細は「Orca による hook 自動注入と実体生成方式」節を参照)
 ```
 
 > ⚠️ **`.gitignore` は「このリポジトリ用」ではなく global な ignore**
@@ -69,7 +70,7 @@ install.sh                  # Nix 管理外ファイルの symlink 作成スク�
 | Neovimプラグイン/設定 | `.config/nvim/lua/` | `install.sh` + nvim再起動 |
 | Ghostty設定 | `.config/ghostty/config` | `install.sh` + Ghostty再起動 |
 | ヘルパースクリプト追加 | `.local/bin/` に作成 + `install.sh` にsymlink追加 | `install.sh` |
-| Claude Code設定/hooks/commands | `.claude/` 配下を編集 | `install.sh` |
+| Claude Code設定/hooks/commands | `.claude/` 配下を編集 | `install.sh` (`.claude/settings.json` は symlink ではなく実体生成。「Orca による hook 自動注入と実体生成方式」節を参照) |
 | Claude Code skill 追加 (自作) | [kanade0404/skills](https://github.com/kanade0404/skills) に `skills/<name>/SKILL.md` を追加 → push だけでは取得されない。kanade0404/skills は `ref` でタグ固定 (`rulesync-claude/rulesync.jsonc` の skills 配列は列挙不要) | 新 tag をリリース後、`rulesync.jsonc` / `rulesync-claude/rulesync.jsonc` の `ref` を更新 → `bun run rulesync:skills:claude:update` + `bun run rulesync:skills:update` + `install.sh` (両ファイルとも同じ source を参照するため、ref 更新時は両パイプラインの再解決が必要) |
 | Claude/Codex skill の更新取込 | (kanade0404/skills の新 tag リリース後) `ref` を更新して再解決 | `bun run rulesync:skills:claude:update` / `rulesync:skills:update` |
 | Codex 用 skill のソース変更 | kanade0404/skills は `ref` でタグ固定 (push だけでは取得されない)。tag 更新が必要 | `rulesync.jsonc` / `rulesync-claude/rulesync.jsonc` **両方**の `ref` を更新 → `bun run rulesync:skills:update` + `bun run rulesync:skills:claude:update` + `install.sh` (両ファイルは同じ source を参照するため ref 更新は常に両パイプライン同時。`.agents/skills` はグローバル symlink のため反映に必須) |
@@ -287,12 +288,35 @@ tmux pane と AI agent セッションを紐付けるための herdr 向け Sess
 
 | 対象 | 場所 | integration id / version |
 |------|------|------|
-| Claude Code 用 | `.claude/hooks/herdr-agent-state.sh` | `HERDR_INTEGRATION_ID=claude`, v7 |
-| Codex 用 | `.codex/herdr-agent-state.sh` | `HERDR_INTEGRATION_ID=codex`, v6 |
+| Claude Code 用 | `.claude/hooks/herdr-agent-state.sh` | `HERDR_INTEGRATION_ID=claude`, v10 |
+| Codex 用 | `.codex/herdr-agent-state.sh` | `HERDR_INTEGRATION_ID=codex`, v8 |
 
 - 両者は agent 種別・イベント絞り込み条件・payload が異なる別物。**統合しない**
-- 役割: hook 入力 JSON から `session_id` / `transcript_path` を抜き、herdr の Unix domain
-  socket へ `pane.report_agent_session` JSON-RPC を送信する (herdr バイナリ自体は呼ばない)
+- 役割: hook 入力 JSON から `session_id` を抜き、herdr の Unix domain socket へ
+  `pane.report_agent_session` JSON-RPC を送信する (herdr バイナリ自体は呼ばない)。
+  `session_id` が文字列として取れなければ何も送らない
+- python 側のガードは v10 / v8 で異なる。シェル側 4 段ガードの後に以下が走る:
+  - **Claude 用 (v10)**: 環境変数 `CURSOR_VERSION` か hook 入力の `cursor_version` が
+    あれば exit (Cursor 経由の起動を除外)。`hook_event_name` が `SessionStart` 以外
+    (空文字含む) なら exit。hook 入力に `agent_id` があれば subagent とみなして exit
+    (v8 の `CODEX_THREAD_ID` 判定に相当する段)。`transcript_path` は**あれば**
+    `agent_session_path` として params に載せる — 必須ではない
+  - ⚠️ `CURSOR_VERSION` は**環境変数**判定なので誤爆しうる。tmux server は最初に起動した
+    クライアントの環境を継承して以後の全 pane に伝播するため、一度でも Cursor の統合
+    ターミナルから tmux server を起動すると、その server 上の**正規の Claude Code
+    セッションでも無言で `exit 0`** になり pane 紐付けが効かなくなる (診断出力は出ない)。
+    紐付かないときはまず `tmux show-environment -g CURSOR_VERSION` / hook プロセスの
+    environ を疑うこと。スクリプトは herdr 管理下なので直接編集はせず、
+    「hook 入力の `cursor_version` のみで判定する」形を upstream へ報告するのが筋
+    (追跡は #242。報告状況は issue 側を見ること)
+  - **Codex 用 (v8)**: `hook_event_name` が空でなく `SessionStart` 以外なら exit。
+    `transcript_path` は **必須ゲート**で、欠落 / 空白のみなら送信せず exit する
+    (ゲートに使うだけで params には載せない)。さらに `CODEX_THREAD_ID` が
+    **設定されており、かつ**入力の `session_id` と一致しない場合のみ subagent とみなして
+    exit する (**未設定なら通過する** — fresh pane はこちら)
+- ⚠️ Codex の SessionStart 入力に `transcript_path` が**常に**含まれるかは未検証。
+  Codex 公式の hook 仕様では nullable なので、含まれないケースがあると Codex 側の
+  herdr 連携は**無言で全停止**する (追跡は #242。#239 の既知懸念と同根)
 - 配布: `.claude/hooks/*` は install.sh のワイルドカードで `~/.claude/hooks/` と
   `~/.codex/hooks/` の両方へ symlink。`.codex/herdr-agent-state.sh` は個別の `ln -sf` 行で
   `~/.codex/herdr-agent-state.sh` へ配布
@@ -304,6 +328,192 @@ tmux pane と AI agent セッションを紐付けるための herdr 向け Sess
   が dotfiles への symlink になるため、**herdr を再インストール/更新すると symlink 越しに
   dotfiles リポジトリ内の実体が書き換わり git diff として現れる** (追跡できるのは利点だが、
   意図しない差分に見えうるので注意)
+
+## Orca による hook 自動注入と実体生成方式
+
+**Orca** (`/Applications/Orca.app`、bundle id `com.stablyai.orca`) は tmux pane と AI agent
+セッションを紐付けるローカル専用ツール。herdr と役割は近いが別の仕組みで、Orca は
+**新しい pane / PTY を開くたびに** `~/.claude/settings.json` (13 イベント分) と
+`~/.codex/hooks.json` (8 イベント分) へ自分の hook を注入する。ファイル監視による
+自動修復ではなく、あくまで pane 起動のタイミングでのみ書き込む。
+
+以前はこの 2 ファイルを dotfiles への symlink で配布していたため、**Orca の注入が
+git 管理下の実体を直接書き換えてしまっていた**。実際に以下が発生していた:
+
+- `$HOME` へ正規化されているべきパスが `/Users/kanade0404/...` のようなハードコードへ
+  巻き戻る
+- `.claude/settings.json` から `model` キーが脱落する
+
+⚠️ `model` 脱落は Orca が意図的に削除したものではなく、**ロック無しの read-modify-write
+によるレース**が原因。Orca が「全文読み込み → hooks だけ差し替え → 全文書き戻し」する窓の
+間に Claude Code がローカルの `model` 設定を書き込むと、Orca の書き戻しでその変更が
+上書きされて消える。
+
+対応として `install.sh` を実体生成方式に変更し、この 2 ファイルを
+**symlink 配布から実体生成方式へ移行**した (#239)。
+
+加えて、両ファイルの template には **Orca 用 hook 定義を置かない**方針にしている
+(一度 commit したものを PR 内で戻しただけなので、この方針は **net diff には「除去」として
+現れない**。ブランチ履歴には除去コミットとして残るので、merge commit で取り込まれた場合は
+master の履歴からも辿れる)。理由は Orca hook が **ローカル専用**だから:
+cloud session (claude.ai/code) には Orca が存在しないため、repo 内 `.claude/settings.json`
+に置いても毎イベント空振りの存在チェックが走るだけのコストにしかならない (cloud session が
+読まないのは `~/.claude/settings.json` (user settings) **だけ**で、**リポジトリ内の
+`.claude/settings.json` は cloud でも読まれる**。だからこそ repo 側に Orca hook を置くと
+cloud でも空振りの存在チェックが走ってしまう)。Orca hook は pane 起動時に
+Orca 自身がローカルの実体へ注入するのに任せる。
+
+実体生成の実装は `install.sh` の `install_managed_file` ヘルパーに
+統一されている: `mktemp "$dest.tmp.XXXXXX"` で衝突しない一時ファイルを作り、
+`install -m <mode>` でそこへ書き込んでから `mv -f` (`rename(2)`) でアトミックに差し替える。
+`rm -f dest && install src dest` にしなかったのは、source (dotfiles 側) が無い時に
+「dest を消してから install が失敗 → `set -e` で abort」となり、以降の処理が走らないまま
+既存設定 (`permissions.deny` の危険 git ガードや PreToolUse hook を含む) だけが無言で
+失われる退行が実際に起きたため (#239 で修正)。この方式なら source 不在時も install
+自体が失敗するだけで **dest は無傷のまま残る**。`~/.codex/config.toml` も同じヘルパーに
+統一済みで、`.claude/settings.json` / `.codex/hooks.json` / `.codex/config.toml` の 3 ファイル
+とも実装は同一。mode だけ前者 2 つが 644、config.toml が 600 と異なる (config.toml は OTEL
+トークンを平文で含みうるため)。EXIT trap (`cleanup_install`) が生成に使った一時ファイルと
+(config.toml の) バックアップの両方を掃除する。EXIT trap は untrapped fatal signal では
+走らないため、`HUP` / `INT` / `QUIT` / `PIPE` / `TERM` にも `cleanup_install_and_exit` (掃除してから
+`exit $((128 + signum))`) を張っている。張らないと中断時に `settings.json.tmp.XXXXXX` 等が
+`$HOME` に残り、temp の記録はプロセス内の配列にしか無いので**次回実行でも掃除されない**。
+exit code を 128 + signum にしているのは、通常の install 失敗 (exit 1) と中断を
+呼び出し元 (`bootstrap.sh` 等) から区別できるようにするため。`PIPE` を入れているのは、
+install.sh が全域で `==> ...` を stdout へ出すので `bash install.sh | head` のように
+読み手が先に死んだ pipe では write が SIGPIPE を配送するため。
+受容している残余リスクは 3 つ:
+
+- `mktemp` が返ってから配列へ append するまでの極小窓で signal を受けると、trap は配列
+  しか見ないのでその temp だけ掃除から漏れる (stray file 1 個)。glob ベースの掃除に
+  すれば塞げるが、複雑さに見合わない
+- `codex-otel` の成功直後から下記の変数クリアまでの窓で中断すると、Authorization は
+  書き戻し済みなのに trap が token 入りの TMPDIR コピーを "backup kept at ..." として
+  保持する (mode 600 + stderr 通知ありなので受容)
+- **signal trap は foreground の子プロセス実行中には走らない** (bash は子の待機中に
+  受けた signal の trap を子の終了後に実行する)。untrapped だった頃より中断の応答性は
+  下がっており、`codex-otel` が hang すると trap も `exit` も走らない。現状の子は
+  いずれも短命なので問題にならないが、**長命な子を挟む変更をするときは要注意**
+なお signal 経路では **codex config のバックアップは消さない**。`~/.codex/config.toml` を
+template で置換してから `codex-otel --write-config-only` が Authorization を書き戻すまでの
+窓で中断すると、そのバックアップが旧 config の唯一のコピーになるため。変数を空にしてから
+場所を stderr に出し、後続の EXIT trap にも消させない。
+⚠️ **クリアを `echo` より先に置くこと**。`set -e` は trap 本体にも効くうえ、SIGHUP は端末
+消失時に届くので `>&2` への write が EIO で失敗しうる。echo を先に書くとその失敗で
+クリア前に `exit 1` し、EXIT trap がバックアップを消してしまう (exit code も
+128 + signum でなくなる)。echo 自体にも `|| true` を付ける。
+また、この窓は `codex-otel` の呼び出しが終わった時点で閉じるので、**その直後に明示的に
+バックアップを掃除して変数を空にする**。そうしないと、窓の外 (hooks.json / settings.json の
+置換中など) で中断したときに bearer token を平文で含むコピーが `${TMPDIR:-/tmp}` に
+残り続ける。`codex-otel` が失敗した場合の `retain_codex_config_backup` も同じ規律で、
+**失敗しても errexit で abort させない** (abort すると EXIT trap が唯一のコピーを消す)。
+移せなかったときは変数を空にしてから場所を警告に出す。
+
+⚠️ **`install` の失敗は必ずその場で `return 1` すること** (`install ... || return 1`)。
+単に行を並べると、errexit が抑止された文脈
+(`install_managed_file ... || warn` / `if ! install_managed_file ...` / `&&` の右辺) で
+呼ばれたときに install の失敗後も `mv` が走り、**mktemp が作った空ファイルで dest を潰した
+うえで関数が 0 を返す**。install.sh は既に「失敗しても警告だけで続行」パターン
+(`codex-otel --write-config-only` の呼び出し) を持っているため、将来それに倣った瞬間に
+`~/.claude/settings.json` が警告すら出ずに空になる。安全性を呼び出し側の ambient errexit に
+委ねず関数内に閉じること。`mktemp` 側も `|| return 1` を明示する。
+
+同じ理由で **dest が directory の場合は関数の冒頭で弾く** (`[ -d "$dest" ]` → `return 1`)。
+`mv -f tmp dest` は dest が directory (または directory への symlink) だと置き換えではなく
+「tmp を dest の中へ移動」になって 0 を返すため、置き換わっていないのに成功する経路が残る。
+⚠️ このガード (と `.bak` の種別ガード) が保証するのは **呼び出し時点の状態だけ**で、
+lock は取っていないため `mv` 実行時点は保証しない。判定と `mv` の間に dest が directory 化
+されれば同じ経路が成立する (`~/.codex/config.toml` の read-modify-write が last-writer-wins
+なのと同クラスの残余リスクとして受容している)。
+
+⚠️ **install.sh を再実行するとローカルの hook 登録がリセットされる**。Orca hook は次に
+pane を開けば Orca が再注入するため実害は無いが、Claude Code 自身が `~/.claude/settings.json`
+に書き込んだローカル設定は `install.sh` の `install_managed_file` (上記のアトミック置換) で
+dotfiles 側の内容に巻き戻り、失われる。具体例は `/model` で選んだモデル、そして
+**とりわけ影響が大きいのが `/permissions` で追加した allow/deny**。symlink 配布時代は
+Orca の書き換えが repo 側の実体にそのまま現れて git diff で気付けたが、実体生成方式では
+「ローカルに黙って溜まり、次の install.sh 実行で黙って消える」方向に変わった。UI で承認した
+allow/deny が install.sh のたびに巻き戻って同じ承認を繰り返す、あるいは危険コマンド用に
+足した deny が消えたことに気付かないまま運用する、といった形で表面化しうる。
+緩和として `install.sh` は上書き前の内容を **1 世代だけ `<dest>.bak` へ退避**する
+(`backup_local_settings`)。`~/.claude/settings.json.bak` / `~/.codex/hooks.json.bak` から
+手で戻せるという意味であって、巻き戻り自体に気付かせる仕組みではない点に注意。
+世代は増やさないので、**貴重な `.bak` は次の install.sh 実行で上書きされうる**。
+残るかどうかを決めるのは下記の `cmp -s` だが、その比較は
+**「dest が前回から変化したか」ではなく「dest と今回 staging した新しい source が同じか」**
+である点に注意 (実装は `cmp -s "$dest" "$staged"`)。したがって:
+
+- dest がローカルで一切変化していなくても、**dotfiles 側の source が更新されていれば**
+  差分ありとなって退避が走り、`.bak` が「素の前回 dotfiles 内容」で上書きされる。
+  1 回目に取れた貴重な退避 (`permissions.deny` 等) はここで失われる
+- dest も source も変わっていなければ退避は no-op になり、前回の `.bak` が残る
+
+`.bak` に残したい内容があると分かっている場合は、install.sh を再実行する前に自分で
+別の場所へコピーしておくこと。
+退避の細かい規律は 6 つ:
+
+- **退避は source の staging に成功してから**行う (`install_managed_file` の第 4 引数
+  `backup` 経由で、`install` 成功後・`mv` の直前に呼ぶ)。呼び出し側で先に退避すると、
+  source 不在で install が失敗する経路で dest は無傷なのに `<dest>.bak` だけ潰れ、
+  復旧手段そのものが消える
+- **dest が今回 staging した source と同一内容なら退避しない** (`cmp -s "$dest" "$staged"`)。
+  差分ゼロで install.sh を 2 回走らせただけで、1 回目の意味ある退避が dotfiles と同一の
+  内容で潰れるのを防ぐ。**source が更新されている場合は差分ありになるので退避は走る**
+  (上記の注意を参照)
+- **`<dest>.bak` が regular file でなければ退避せず中止**する。directory だと
+  `cp` は「中へコピー」、symlink だとリンク先へ書き込みになり、「`.bak` から手で戻せる」
+  契約が黙って破れる (`[ -d "$dest" ]` ガードと同じ趣旨)
+- **退避に失敗したら `return 1` で置き換えを中止**する (best-effort 続行にしない)。
+  退避の存在理由は「巻き戻りからの復旧」なので、それが取れない状態で dest を上書きすると
+  **保険が最も必要な瞬間に限って**ローカル設定の唯一のコピーが不可逆に失われる。
+  中止時点で dest は無傷なので、原因 (ENOSPC / permission / 壊れた `.bak`) を直して
+  再実行すればよい。source 不在時に `return 1` する経路と同じ扱い
+- **退避も temp + `mv` で差し替える**。`cp` は出力先を `O_TRUNC` で開くので、既存の
+  `.bak` へ直接書くと書き込み開始時点で旧内容が失われ、途中で失敗 (ENOSPC 等) すると
+  唯一の復旧コピーが壊れた断片に化けたまま dest も巻き戻ってしまう
+- **第 4 引数が `backup` でも空でもなければ `return 1`**。stringly-typed なフラグなので、
+  typo (`bakcup` 等) が黙って「退避なし」に落ちないよう `case` で明示的に弾く。
+  検証は `mktemp` / `install` の副作用より**前**に置き、失敗パスを「何もしていない
+  状態からの `return 1`」に保つ
+
+`codex-otel` の書き戻しが失敗した場合だけは、`~/.codex/config.toml.bak.XXXXXX` として
+旧 config が退避される (`retain_codex_config_backup`)。これも **1 世代だけ**で、退避のたびに
+古い `config.toml.bak.*` は剪定される (bearer token を平文で含む mode 600 のコピーが
+無期限に溜まらないようにするため)。ただし `.bak` 側と同じく **退避対象が dotfiles の
+template と同一内容なら退避も剪定もしない** — codex-otel が永続的に失敗する状況では、
+2 回目以降の退避対象が「1 回目が書いた素の template」になるため、剪定すると 1 回目に
+取れた意味ある退避を情報ゼロのコピーで潰してしまう。
+
+`~/.codex/config.toml` は `<dest>.bak` の対象外: Authorization の引き継ぎを
+`CODEX_OTEL_PRESERVE_AUTH_FROM` で別に持っており、bearer token の平文コピーを
+`$HOME` に増やさないため。なお「差分があれば**警告する**」(`cmp -s` の警告用途) は
+採っていない — Orca が pane 起動のたびに hook を注入する以上 dest は**ほぼ常に**
+dotfiles 側と異なり、毎回出る警告は読まれなくなるため (同じ `cmp -s` でも、上記の
+「同一なら退避をスキップ」は no-op 化であって警告を増やさないので採用している)。
+(`/config` のテーマ変更は `~/.claude/settings.json` ではなく `~/.claude.json` 側に保存されて
+いることを確認済み (`grep -n theme ~/.claude.json` すると実際に選んだテーマが出るが、
+`~/.claude/settings.json` 側の `theme` キーはこの dotfiles にコミット済みの静的な既定値
+(`"auto"`) のままで一致しない)。`~/.claude.json` は install.sh の対象外なので、テーマ変更はこの巻き戻りの
+対象ではない)
+
+参考: Codex は `CODEX_HOME` と `ORCA_CODEX_HOME` が一致していれば Orca の隔離ホーム
+(`~/Library/Application Support/orca/codex-runtime-home/home`) を使うが、Orca の worktree
+管理下でない実フォルダを pane で開くと隔離が効かず実ホームに直接書く。**Claude Code 側には
+この隔離ホーム機構自体が存在しない**。
+
+Orca 側で注入自体を止める手段もある (未検証・参考情報として記載):
+
+| 範囲 | 方法 | 備考 |
+|------|------|------|
+| エージェント単位 | `~/Library/Application Support/orca/profiles/local-default/orca-data.json` の `state.settings.disabledTuiAgents` に `"claude"` / `"codex"` を追加 | Orca の Settings UI 経由と推測。CLI セッターは未発見 |
+| 全体一括 | `orca agent hooks off` / `on` / `status` | 未公開 CLI サブコマンド (`--help` に出ない) |
+
+ただしどちらの方法も Orca の pane 紐付け機能自体を失う。
+
+⚠️ **このリポジトリは PUBLIC**。実体生成方式に変えても `.claude/settings.json` /
+`.codex/hooks.json` の内容自体は引き続きコミット済みで誰でも読める。今回変えたのは
+「ローカルの実体が Orca に書き換えられて git diff に紛れ込む」問題への対処であって、
+機密情報の扱いは変わらない (トークンは従来通り Keychain / helper 経由で別管理)。
 
 ## Nix-specific Notes
 
@@ -321,7 +531,7 @@ tmux pane と AI agent セッションを紐付けるための herdr 向け Sess
 | Shell/Git/tmux設定 | `home.nix` (home-manager) | 宣言的管理 + 自動symlink |
 | Neovim設定 | dotfiles直接管理 + install.sh | LazyVim (lazy.nvim) との競合回避 |
 | Ghostty設定 | dotfiles直接管理 + install.sh | home-manager module未対応 |
-| Claude Code設定 | dotfiles直接管理 + install.sh | プロジェクト横断で統一 |
+| Claude Code設定 | dotfiles直接管理 + install.sh (`.claude/settings.json` は実体生成) | プロジェクト横断で統一 + Orca 等ローカルツールによる書き換えから git 管理下の実体を守る |
 | Node.js | mise (nixpkgs 管理) | プロジェクト毎のバージョン管理。将来的に Nix devShell へ移行検討 |
 
 ## 開発ワークフロー

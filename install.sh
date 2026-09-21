@@ -9,25 +9,238 @@ set -euo pipefail
 DOTFILES="${DOTFILES:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 OS="$(uname)"
 codex_config_backup=""
-codex_config_backup_retained=""
+codex_config_backup_retained_in_codex_home=""
+codex_config_backup_pending_removal=""
+codex_config_backup_kept_in_tmpdir=""
+managed_file_temps=()
 
+# cleanup 系の `rm -f` には一律 `|| true` を付ける。`set -e` は trap 本体にも効くため、
+# 親ディレクトリの EACCES 等で `rm -f` が非ゼロを返すとそこで trap が abort し、
+# 後続の掃除や `exit $((128 + signum))` に到達しなくなる (`echo ... || true` と同じ規律)。
 cleanup_codex_config_backup() {
   if [ -n "${codex_config_backup:-}" ]; then
-    rm -f "$codex_config_backup"
+    rm -f "$codex_config_backup" || true
+  fi
+  # 「窓が閉じたので消す」と決めたパス。変数クリアと `rm` の間で中断しても
+  # token 入りのコピーが残らないよう、掃除側でも冪等に消す。
+  if [ -n "${codex_config_backup_pending_removal:-}" ]; then
+    rm -f "$codex_config_backup_pending_removal" || true
   fi
 }
 
-retain_codex_config_backup() {
-  local retained_backup
+cleanup_managed_file_temps() {
+  local tmp
 
-  [ -n "${codex_config_backup:-}" ] || return 0
-  retained_backup="$(mktemp "$HOME/.codex/config.toml.bak.XXXXXX")"
-  mv "$codex_config_backup" "$retained_backup"
-  codex_config_backup=""
-  codex_config_backup_retained="$retained_backup"
+  # macOS 既定の /bin/bash (3.2) は空配列の "${a[@]}" を set -u で unbound 扱いに
+  # するため、要素数で先に抜ける。`[ ... ] && rm` 形式にすると最終評価が 1 になり
+  # trap が非ゼロで返りうるので、素直に if/for で書く。
+  if [ "${#managed_file_temps[@]}" -gt 0 ]; then
+    for tmp in "${managed_file_temps[@]}"; do
+      rm -f "$tmp" || true
+    done
+  fi
+  return 0
 }
 
-trap cleanup_codex_config_backup EXIT
+cleanup_install() {
+  cleanup_codex_config_backup
+  cleanup_managed_file_temps
+}
+
+# EXIT trap は untrapped fatal signal (SIGHUP/SIGINT/SIGQUIT/SIGTERM) では走らないため、
+# 中断すると `settings.json.tmp.XXXXXX` 等が `$HOME` に残る (配列はプロセス内にしか
+# 無いので次回実行でも掃除されない)。signal 側は掃除してから明示的に exit する。
+# `cleanup_install` の中身は `rm -f` だけで冪等なので、exit 後の EXIT trap で
+# 二重に走っても問題ない。
+#
+# exit code は慣例どおり 128 + signum にして、通常の install 失敗 (exit 1) と
+# 中断を呼び出し元 (bootstrap.sh 等) から区別できるようにする。
+# `trap - INT; kill -s INT $$` で再送する (re-raise) 形は**意図的に採らない**。
+# 親が `WIFSIGNALED` で判定する場合に差は出るが、install.sh は対話シェルから直接、
+# あるいは `bash bootstrap.sh` 経由で呼ばれる前提で、どちらも `$?` の 128+signum を見る。
+# 一方 re-raise にすると子プロセスとして起動したテストからは「signal 死」にしか見えず
+# (`spawnSync` の status が null になる)、trap が登録されているかを直接観測できなくなる。
+# 観測可能性を優先して通常 exit のままにしている。
+#
+# ただし codex config のバックアップは **消さない**。`~/.codex/config.toml` を template で
+# 置換してから `codex-otel --write-config-only` が Authorization を書き戻すまでの窓で
+# 中断すると、このバックアップが旧 config の唯一のコピーになる。場所を知らせたうえで
+# 変数を空にし、後続の EXIT trap (`cleanup_codex_config_backup`) にも消させない
+# (`.bak` 側の「退避が取れないなら上書きしない」規律と揃える)。
+cleanup_install_and_exit() {
+  local signum="$1"
+  local kept="${codex_config_backup:-}"
+
+  # クリアは **echo より先**。SIGHUP は端末消失時に届くので fd 2 への write が EIO で
+  # 失敗しうる。`set -e` は trap 本体にも効くため、echo を先に置くとその失敗で
+  # クリア前に exit(1) し、EXIT trap がバックアップを消してしまう
+  # (exit code も 128+signum でなくなる)。echo 自体にも `|| true` を付ける。
+  codex_config_backup=""
+  if [ -n "${codex_config_backup_pending_removal:-}" ]; then
+    rm -f "$codex_config_backup_pending_removal" || true
+    # `_pending_removal` への代入とクリアの間で signal を受けると両者が同じパスを指す。
+    # いま消したばかりのパスを "kept" として案内しない。
+    if [ "$kept" = "$codex_config_backup_pending_removal" ]; then
+      kept=""
+    fi
+  fi
+  if [ -n "$kept" ]; then
+    echo "note: interrupted; previous Codex config backup kept at $kept" >&2 || true
+  fi
+  cleanup_managed_file_temps
+  exit "$((128 + signum))"
+}
+
+# Install a dotfiles file as a real file (not a symlink) so that local agent
+# runtimes (Orca 等) の書き込みが git 管理下の実体まで届かないようにする。
+#
+# `rm -f dest && install src dest` にはしない: source が無い場合に
+# 「dest を消してから install が失敗 → set -e で abort」となり、
+# 以降の処理が一切走らないまま既存設定だけが失われる。
+# temp へ install してから mv (rename(2)) で差し替えることで
+#   - source 不在なら install が失敗するが dest は無傷
+#   - symlink でも実体でもアトミックに置き換わる
+# を両立する。
+#
+# 第 4 引数に `backup` を渡すと、置き換え直前の dest を `backup_local_settings` で
+# 1 世代だけ退避する。退避を**呼び出し側ではなく関数内**でやるのは順序のため:
+# source の staging (`install`) に失敗する経路で先に退避してしまうと、dest は無傷でも
+# 既存の `<dest>.bak` (= 巻き戻りからの復旧手段) を潰してしまう。
+install_managed_file() {
+  local mode="$1" src="$2" dest="$3" backup="${4:-}"
+  local tmp
+
+  # 第 4 引数は stringly-typed なので、typo が黙って「退避なし」に落ちないよう
+  # 未知の値は失敗させる (安全性を呼び出し文脈に委ねない方針の一環)。
+  # 引数の検証は mktemp / install の副作用より**前**に済ませ、失敗パスを
+  # 「何もしていない状態からの return 1」に保つ。
+  case "$backup" in
+    backup | "") ;;
+    *)
+      echo "error: unknown backup flag '$backup' for $dest" >&2
+      return 1
+      ;;
+  esac
+
+  # dest が directory (または directory への symlink) だと `mv -f` は置き換えではなく
+  # 「tmp を dest の中へ移動」になり 0 を返す = 置き換わっていないのに成功してしまう。
+  # 安全性を呼び出し文脈に委ねない方針に揃えて、関数側で先に弾く。
+  if [ -d "$dest" ]; then
+    echo "error: $dest is a directory; refusing to install" >&2
+    return 1
+  fi
+
+  # 残余リスク: `mktemp` が返ってから次行の配列 append までの極小窓で signal を受けると、
+  # trap は配列しか見ないのでこの temp だけ掃除から漏れる (stray file 1 個)。
+  # glob ベースの掃除にすれば塞げるが、複雑さに見合わないので受容する。
+  tmp="$(mktemp "$dest.tmp.XXXXXX")" || return 1
+  managed_file_temps+=("$tmp")
+  # install の失敗は **必ず** この場で `return 1` すること。`install` と `mv` を単に
+  # 行で並べると、呼び出し側の errexit が抑止された文脈 (`f || warn` / `if ! f` /
+  # `&&` の右辺) では install の失敗後も次行が走り、mktemp が作った空ファイルを dest に
+  # 被せたうえで 0 を返してしまう。安全性を呼び出し文脈ではなく関数内に閉じる。
+  install -m "$mode" "$src" "$tmp" || return 1
+  if [ "$backup" = "backup" ]; then
+    backup_local_settings "$dest" "$tmp" || return 1
+  fi
+  mv -f "$tmp" "$dest" || return 1
+}
+
+# install.sh の再実行は dest を dotfiles の内容へ巻き戻すため、ローカルに溜まった設定
+# (`/permissions` で追加した allow/deny、`/model` の選択など) が失われる。取り戻せるよう
+# 直前の内容を 1 世代だけ `<dest>.bak` に退避する。世代を増やさないので溜まらない。
+#
+# `.codex/config.toml` は対象外: Authorization の引き継ぎを
+# `CODEX_OTEL_PRESERVE_AUTH_FROM` で別途持っており、bearer token の平文コピーを
+# `$HOME` に増やしたくないため。
+#
+# 退避に失敗したら **非ゼロを返して置き換えを中止する**。退避の存在理由は
+# 「巻き戻りからの復旧」なので、それが取れない状態で dest を上書きすると、
+# 保険が最も必要な瞬間に限ってローカル設定の唯一のコピーが不可逆に失われる。
+# 中止時点で dest は無傷なので、原因を直して再実行すればよい
+# (source 不在時に `return 1` する経路と同じ扱い)。
+# 第 2 引数は staging 済みの新しい内容 (install_managed_file の temp)。
+backup_local_settings() {
+  local dest="$1" staged="$2"
+  local bak_tmp
+
+  [ -f "$dest" ] || return 0
+  # ローカル差分が無いなら退避しても情報が増えず、以前の意味ある退避を
+  # dotfiles と同一の内容で潰すだけなので何もしない。
+  if cmp -s "$dest" "$staged"; then
+    return 0
+  fi
+  # `.bak` が directory だと `cp` は「中へコピー」、symlink だとリンク先へ書き込みになり、
+  # 「`<dest>.bak` から手で戻せる」契約が黙って破れる (`install_managed_file` の
+  # `[ -d "$dest" ]` ガードと同じ趣旨)。
+  if [ -L "$dest.bak" ] || { [ -e "$dest.bak" ] && [ ! -f "$dest.bak" ]; }; then
+    echo "error: $dest.bak is not a regular file; refusing to overwrite $dest without a backup" >&2
+    return 1
+  fi
+  # `cp` は出力先を O_TRUNC で開くため、既存の `.bak` へ直接書くと書き込み開始時点で
+  # 旧内容が失われる。途中で失敗 (ENOSPC 等) すると唯一の復旧コピーが壊れた断片に化け、
+  # そのまま `mv -f` で dest も巻き戻って復旧手段が消える。dest 側と同じ規律で
+  # temp へ取ってから rename(2) で差し替える。
+  bak_tmp="$(mktemp "$dest.bak.tmp.XXXXXX")" || {
+    echo "error: failed to back up $dest; refusing to overwrite it" >&2
+    return 1
+  }
+  managed_file_temps+=("$bak_tmp")
+  if cp -p "$dest" "$bak_tmp" && mv -f "$bak_tmp" "$dest.bak"; then
+    return 0
+  fi
+  echo "error: failed to back up $dest; refusing to overwrite it" >&2
+  return 1
+}
+
+# 失敗しても **errexit で abort させない** (`|| return 1` を明示する)。ここは
+# 「codex-otel が失敗した直後 = dest は template 置換済みで Authorization 未復元、
+# `${TMPDIR:-/tmp}` のバックアップが旧 config の唯一のコピー」という瞬間で、abort すると
+# EXIT trap がそのコピーを消してしまう (`backup_local_settings` / signal trap と同じ
+# 「退避が取れないなら唯一のコピーを消さない」規律)。
+# 第 1 引数は dotfiles 側の template。
+retain_codex_config_backup() {
+  local template="$1"
+  local retained_backup old_backup
+
+  [ -n "${codex_config_backup:-}" ] || return 0
+  # 退避しようとしている内容が template と同じなら情報が増えない。ここで退避すると
+  # 下の剪定が「前回の失敗で取れた意味ある退避」を template コピーで潰してしまう
+  # (codex-otel が永続的に失敗する状況で決定的に踏む)。`.bak` 側の `cmp -s` no-op と同じ。
+  if cmp -s "$codex_config_backup" "$template"; then
+    rm -f "$codex_config_backup" || true
+    codex_config_backup=""
+    return 0
+  fi
+  retained_backup="$(mktemp "$HOME/.codex/config.toml.bak.XXXXXX")" || return 1
+  if ! mv "$codex_config_backup" "$retained_backup"; then
+    # 空の退避先を残さない。cleanup 系と同じく失敗許容 (ここで errexit に落ちると、
+    # この関数が守ろうとしている「唯一のコピー」を EXIT trap が消してしまう)。
+    rm -f "$retained_backup" || true
+    return 1
+  fi
+  codex_config_backup=""
+  codex_config_backup_retained_in_codex_home="$retained_backup"
+  # 剪定しないと codex-otel が失敗するたびに bearer token 平文入りのコピー (mode 600) が
+  # 無期限に溜まる。`backup_local_settings` の「1 世代だけ」と同じ規律に揃え、最新以外を消す。
+  for old_backup in "$HOME/.codex/config.toml.bak."*; do
+    if [ -f "$old_backup" ] && [ "$old_backup" != "$retained_backup" ]; then
+      rm -f "$old_backup" || true
+    fi
+  done
+  return 0
+}
+
+trap cleanup_install EXIT
+trap 'cleanup_install_and_exit 1' HUP
+trap 'cleanup_install_and_exit 2' INT
+trap 'cleanup_install_and_exit 3' QUIT
+# SIGPIPE も同じ網に入れる。install.sh は全域で `echo "==> ..."` を stdout へ出すため、
+# `bash install.sh | head` のように読み手が先に死んだ pipe では write が SIGPIPE を
+# 配送する。untrapped だと EXIT trap ごと死に、staging temp に加えて token 入りの
+# `${TMPDIR:-/tmp}` バックアップが通知なしで残る。
+trap 'cleanup_install_and_exit 13' PIPE
+trap 'cleanup_install_and_exit 15' TERM
 
 echo "==> Linking Neovim config (LazyVim, managed outside Nix)"
 mkdir -p "$HOME/.config"
@@ -52,19 +265,46 @@ mkdir -p "$HOME/.codex"
 # Replace an old symlink so Codex runtime writes stay in ~/.codex only.
 # Re-running install.sh resets local Codex state such as project trust prompts.
 if [ -f "$HOME/.codex/config.toml" ]; then
+  # 残余リスク: 変数が非空になってから `cp` が終わるまでの窓で signal を受けると、
+  # trap は空 (または部分) コピーを "backup kept at ..." として案内する。この窓では
+  # dest 自体が無傷なのでデータは失われないが、案内されたパスの中身が旧 config とは
+  # 限らない。install_managed_file の mktemp→staging 窓と同クラスとして受容する。
   codex_config_backup="$(mktemp "${TMPDIR:-/tmp}/codex-config.XXXXXX")"
   cp "$HOME/.codex/config.toml" "$codex_config_backup"
 fi
-rm -f "$HOME/.codex/config.toml"
-install -m 600 "$DOTFILES/.codex/config.toml" "$HOME/.codex/config.toml"
+install_managed_file 600 "$DOTFILES/.codex/config.toml" "$HOME/.codex/config.toml"
 if ! CODEX_OTEL_CONFIG_TARGET="$HOME/.codex/config.toml" CODEX_OTEL_PRESERVE_AUTH_FROM="$codex_config_backup" "$DOTFILES/.local/bin/codex-otel" --write-config-only; then
-  retain_codex_config_backup
-  echo "warning: failed to refresh Codex OTEL config; continuing install.sh" >&2
-  if [ -n "$codex_config_backup_retained" ]; then
-    echo "warning: retained previous Codex config backup at $codex_config_backup_retained" >&2
+  if ! retain_codex_config_backup "$DOTFILES/.codex/config.toml" && [ -n "$codex_config_backup" ]; then
+    # 退避先へ移せなかった。唯一のコピーなので EXIT trap にも消させず、場所を知らせる
+    # (クリアを echo より先に置く理由は cleanup_install_and_exit と同じ)。
+    codex_config_backup_kept_in_tmpdir="$codex_config_backup"
+    codex_config_backup=""
+    echo "warning: failed to move the previous Codex config backup into ~/.codex;" \
+      "keeping it at $codex_config_backup_kept_in_tmpdir" >&2 || true
+  fi
+  # 「警告を出して続行する」経路なので、stderr が閉じている / EIO の状況で echo が
+  # 非ゼロを返しても `set -e` で止めない (cleanup 系の `|| true` と同じ規律)。
+  echo "warning: failed to refresh Codex OTEL config; continuing install.sh" >&2 || true
+  if [ -n "$codex_config_backup_retained_in_codex_home" ]; then
+    echo "warning: retained previous Codex config backup at $codex_config_backup_retained_in_codex_home" >&2 || true
   fi
 fi
-ln -sf "$DOTFILES/.codex/hooks.json" "$HOME/.codex/hooks.json"
+# ここで「backup が旧 config の唯一のコピー」である窓は閉じる (Authorization は
+# 書き戻し済み、失敗時は retain 済み)。窓の外で中断したときに bearer token を平文で
+# 含むコピーが `${TMPDIR:-/tmp}` へ残らないよう、明示的に掃除して signal trap の
+# 保持対象からも外す。
+# **先に変数を空にしてから消す**。逆順だと `rm` と変数クリアの間で signal を受けたときに、
+# trap が既に消えたパスを "backup kept at ..." と案内してしまう。
+codex_config_backup_pending_removal="$codex_config_backup"
+codex_config_backup=""
+if [ -n "$codex_config_backup_pending_removal" ]; then
+  # cleanup 系と同じく失敗許容。ここで abort すると以降の hooks.json /
+  # settings.json の install に到達しない (掃除は EXIT trap 側が冪等に担保する)。
+  rm -f "$codex_config_backup_pending_removal" || true
+fi
+# Replace an old symlink so Orca/agent runtime writes stay in ~/.codex only.
+# Re-running install.sh resets local hook registrations (Orca re-injects on next pane).
+install_managed_file 644 "$DOTFILES/.codex/hooks.json" "$HOME/.codex/hooks.json" backup
 # herdr の Codex 連携スクリプト。hooks.json が $HOME/.codex/ 直下を指しており、
 # かつ .claude/hooks/* は ~/.codex/hooks/ にも配布される (同名だと Claude 版に
 # 上書きされる) ため、hooks/ ではなく .codex/ 直下へ個別に symlink する。
@@ -138,9 +378,11 @@ if [ -d "$DOTFILES/.agents/skills" ] && [ "$(ls -A "$DOTFILES/.agents/skills" 2>
   done
 fi
 
-echo "==> Linking Claude Code user settings"
+echo "==> Installing Claude Code user settings"
 mkdir -p "$HOME/.claude"
-ln -sf "$DOTFILES/.claude/settings.json" "$HOME/.claude/settings.json"
+# Replace an old symlink so Orca/agent runtime writes stay in ~/.claude only
+# (same rationale as the ~/.codex/hooks.json replacement above).
+install_managed_file 644 "$DOTFILES/.claude/settings.json" "$HOME/.claude/settings.json" backup
 ln -sf "$DOTFILES/.claude/statusline.py" "$HOME/.claude/statusline.py"
 # hooks: symlink each file to both ~/.claude/hooks/ and ~/.codex/hooks/
 # (directory symlink would hide each tool's own hooks; .claude/hooks/ is the
