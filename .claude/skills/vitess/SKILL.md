@@ -4,6 +4,12 @@ description: >-
   Vitess best practices, query optimization, and connection troubleshooting for
   PlanetScale Vitess databases. Load when working with Vitess databases,
   sharding, VSchema configuration, keyspace management, or MySQL scaling issues.
+license: MIT
+metadata:
+  author: planetscale
+  version: 1.0.0
+  organization: PlanetScale
+  date: February 2026
 ---
 # Vitess
 

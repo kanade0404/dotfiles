@@ -74,3 +74,4 @@ WHERE data->>'$.status' COLLATE utf8mb4_0900_as_cs = 'Active'
 - **Large documents hurt**: JSON stored inline in the row. Documents >8 KB spill to overflow pages, hurting read performance.
 - **Type mismatches**: `JSON_EXTRACT` returns a JSON type. Comparing with `= 'foo'` may not match — use `->>` or `JSON_UNQUOTE`.
 - **VIRTUAL vs STORED generated columns**: VIRTUAL columns compute on read (less storage, more CPU). STORED columns materialize on write (more storage, faster reads if selected often). Both can be indexed; for indexed paths, the index stores the computed value either way.
+

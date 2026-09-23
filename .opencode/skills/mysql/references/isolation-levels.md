@@ -46,3 +46,4 @@ Dirty reads with no valid production use case.
 | General OLTP / check-then-insert / reports | **REPEATABLE READ** (default) |
 | Bulk import or gap-lock deadlocks | **READ COMMITTED** (per-session), benchmark first |
 | Need serializability | Explicit `FOR UPDATE` at REPEATABLE READ; SERIALIZABLE only as last resort |
+
