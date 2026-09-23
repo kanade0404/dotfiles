@@ -10,12 +10,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # kanade0404/skills の自作 code-review skill で 1 ジョブにレビューを統合。
-  # （ローカルでは rulesync で .claude/skills/ へ同期している skill。
-  #  CI ではソースリポジトリを SHA 固定で checkout して同じ skill を再現する）
-  #
-  # built-in /review は run 成功でもレビューを出さず空振りすることがあったため、
-  # findings を Critical / Important / Minor で安定して出す自作 skill を採用する。
+  # 1 ジョブで PR をレビューする。skill や slash command には依存せず、
+  # findings の分類 (Critical / Important / Minor) と出力方法は下の prompt で直接指示する。
   claude-review:
     name: Claude Code Review
     # 異常終了 (exit 1) の根本対策:
@@ -52,41 +48,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Checkout custom skill source (kanade0404/skills)
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: kanade0404/skills
-          # 再現性のため commit SHA で固定。更新時は
-          #   gh api repos/kanade0404/skills/commits/master --jq .sha
-          # の結果に差し替える。
-          # ※ dd4d49e の SKILL.md は frontmatter が本文と同一行に潰れており
-          #   Claude Code が skill として読み込めず /code-review が空振りしていた。
-          #   frontmatter が正常な master 最新 SHA に更新済み。
-          ref: 363138744442c5f1f2b65a2414a4d8ba7e0ac264
-          path: .tmp-skills-src
-          fetch-depth: 1
-          # 後続の git 操作は無く files を copy するだけなので資格情報を残さない
-          persist-credentials: false
-
-      - name: Stage custom code-review skill into .claude/skills
-        run: |
-          set -euo pipefail
-          src=.tmp-skills-src/skills/code-review
-          # ピン留め先に skill が無ければ即失敗させる (壊れた/移動した SHA を早期検知)。
-          if [[ ! -f "${src}/SKILL.md" ]]; then
-            echo "::error::${src}/SKILL.md が見つかりません。kanade0404/skills のピン留め SHA を確認してください。"
-            exit 1
-          fi
-          mkdir -p .claude/skills
-          # 先に新しい skill をコピーしてから旧ディレクトリと差し替える
-          # (cp 失敗時に既存 skill を消してしまわない順序)。
-          rm -rf .claude/skills/code-review.new
-          cp -R "${src}" .claude/skills/code-review.new
-          rm -rf .claude/skills/code-review
-          mv .claude/skills/code-review.new .claude/skills/code-review
-          rm -rf .tmp-skills-src
-
-      - name: Run custom code-review skill
+      - name: Run Claude code review
         id: claude-review
         # レビューは助言。根本対策 (github_token 明示) で異常終了は解消済みだが、
         # 万一 action 側の一時障害等で落ちても PR の CI を失敗扱いにしない保険。
@@ -109,12 +71,10 @@ jobs:
           # スクリプトへ切り出して安定化・最小権限化する。
           # github.repository / PR 番号のみ補間（slug と整数で injection 安全）。
           prompt: |
-            /code-review
-
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ github.event.pull_request.number }}
 
-            上記 PR を自作 code-review skill でレビューしてください。
+            上記 PR をコードレビューしてください。
             PR の base ブランチとの差分を対象に Critical / Important / Minor の
             三分類で findings をまとめてください。
 
@@ -143,7 +103,7 @@ jobs:
       # Claude の最終メッセージ (= サマリ) を action の実行ログから抽出する。
       # execution_file は {"type":"result","subtype":"success","result":"..."} を
       # 含む JSON。その .result を取り出してサマリ本文ファイルにする。
-      # Write を skill に許可せずにサマリを得るための決定的ステップ。
+      # Write を Claude に許可せずにサマリを得るための決定的ステップ。
       - name: Extract review summary from execution log
         id: extract-summary
         if: always()
