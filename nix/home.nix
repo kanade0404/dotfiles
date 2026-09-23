@@ -31,6 +31,10 @@
         };
         core = {
           editor = "nvim";
+          # `~/.gitignore` は install.sh が dotfiles の `.gitignore` へ貼る symlink。
+          # ここで core.excludesFile に指定することで、その内容が**このマシンの
+          # 全リポジトリ**に効く global ignore になる。パターンを足す前に
+          # `.gitignore` 冒頭のコメントを読むこと。
           excludesfile = "~/.gitignore";
           autocrlf = "input";
         };

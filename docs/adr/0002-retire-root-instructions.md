@@ -8,12 +8,12 @@ Accepted
 
 ## Context
 
-- このリポジトリには `CLAUDE.md` (596 行) と `AGENTS.md` (117 行) が併存していた。`AGENTS.md` は `CLAUDE.md` から機械的にコピーされて drift した subset で、冒頭が `guidance to Codex (Codex.ai/code)` という存在しない URL になっており、`##` 見出し単位で **6 節が丸ごと欠落**していた (Claude Code テレメトリ / 危険 git コマンドのガード (rule-matcher) / Codex テレメトリ / herdr hook スクリプト / Orca による hook 自動注入と実体生成方式 / Linear → Claude Code 自走パイプライン)。
-- drift は双方向で、`AGENTS.md` にしか無い記述も **少なくとも 6 点**あった (`diff <(git show HEAD:CLAUDE.md) <(git show HEAD:AGENTS.md)` で実測)。`install.sh` のブロック単位で列挙すると:
-  - `.codex/rules/` — Codex execpolicy rules。`install.sh` の `# rules: Codex execpolicy command permissions` ブロックの唯一の文書化。`CLAUDE.md` に 0 件。
+- このリポジトリには `CLAUDE.md` (596 行) と `AGENTS.md` (117 行) が併存していた。`AGENTS.md` は `CLAUDE.md` から機械的にコピーされて drift した派生コピーで、冒頭が `guidance to Codex (Codex.ai/code)` という存在しない URL になっており、`##` 見出し単位で **6 節が丸ごと欠落**していた (Claude Code テレメトリ / 危険 git コマンドのガード (rule-matcher) / Codex テレメトリ / herdr hook スクリプト / Orca による hook 自動注入と実体生成方式 / Linear → Claude Code 自走パイプライン)。
+- drift は双方向で、`AGENTS.md` にしか無い記述も **少なくとも 6 点**あった (`diff <(git show 5eae1a2:CLAUDE.md) <(git show 5eae1a2:AGENTS.md)` で実測。`5eae1a2` は両ファイルが揃っていた削除直前のコミットで、本 ADR の実測値はすべてこの時点のもの)。`install.sh` のブロック単位で列挙すると:
+  - `.codex/rules/` — Codex execpolicy rules。`install.sh` の `# rules: Codex execpolicy command permissions` ブロックに対応する記述が `CLAUDE.md` に 0 件。ただし repo 全体では未文書化ではない — `README.md` に `.codex/` の一行説明 (`Codex user settings, rules, hooks, commands`)、管理方針表の `Codex settings/rules/hooks/commands` 行、`.codex/rules/default.rules` の `prefix_rule()` の説明がある。
   - `.codex/hooks/` — `CLAUDE.md` には配布**先**の `~/.codex/hooks/` しか出てこない。リポジトリ側の `.codex/hooks/` (と `.codex/hooks/lib/`) および対応する symlink ブロックは `AGENTS.md` だけが持っていた。
-  - `.codex/commands/` — `install.sh` の `$DOTFILES/.codex/commands` symlink ブロックの唯一の文書化。`CLAUDE.md` に 0 件。
-  - `.opencode/skills/` — OpenCode 対応全体 (`install.sh` の `~/.config/opencode/skills` への symlink ブロック)。`CLAUDE.md` に 0 件。
+  - `.codex/commands/` — `install.sh` の `$DOTFILES/.codex/commands` symlink ブロックに対応する記述が `CLAUDE.md` に 0 件。これも `README.md` の上記 2 箇所で被覆されている。
+  - `.opencode/skills/` — OpenCode 対応全体 (`install.sh` の `~/.config/opencode/skills` への symlink ブロック)。`CLAUDE.md` に 0 件で、かつ `README.md` にも記載が無い (`git grep -i opencode` で確認) — 本 PR 後に repo 内で未文書化になるのはこの 1 件。
   - 管理方針表の Codex 行 3 つ — `Codex設定` (rationale: 「Codex のローカル状態書き戻しを repo に入れない」)、`Codex skills`、`OpenCode skills`。`CLAUDE.md` の管理方針表には Codex 行自体が無い。
   - Where to Edit 表の `Codex設定/rules/hooks/commands` 行と `OpenCode skills` 行。
 - `.codex/environments/environment.toml` は実在して git 管理下にあるが、`CLAUDE.md` / `AGENTS.md` の**どちらにも記載が無かった**。どちらを残しても文書化されない対象だったので、本 ADR の得失には影響しない。
@@ -25,7 +25,7 @@ Accepted
 ## Decision
 
 - `CLAUDE.md` を削除する。
-- `AGENTS.md` は**指示を持たない追跡ファイルとして残す**。project instructions を意図的に持たないことの意思表示であり、`/config` の "Project instructions" 編集時のアンカーにもなる (ただし下記 Consequences のとおり Bedrock / Vertex / Foundry では `/config` のアンカーにはならない)。内容は本 ADR を指す HTML コメント 1 行のみとし、エージェントへの指示は一切書かない。
+- `AGENTS.md` は**指示を持たない追跡ファイルとして残す**。project instructions を意図的に持たないことの意思表示であり、それ以上の機能的役割は主張しない。内容は本 ADR を指す HTML コメント 1 行のみとし、エージェントへの指示は一切書かない。
 - 596 行の内容は `README.md` や `docs/` へ移さず**破棄する**。git 履歴が唯一の記録となる。
 
 ## Consequences
@@ -35,22 +35,22 @@ Accepted
 - 毎セッションの context 消費が消える。
 - 双方向 drift していた二重管理が構造的に消える。
 - 配布元の ADR 0018 の方針と整合する。
+- ADR 0018 の「指示と rationale はコード近傍へ」は、主要部分について**既に達成済み**であることが本 ADR の作成時に確認できた。`install_managed_file` / `backup_local_settings` / `retain_codex_config_backup` / signal trap の規律は `install.sh` のインラインコメントに、`rule-matcher` の `alwaysDangerous` と `dangerousWhenRedirected` の区別・`commit` を意図的に対象外にした理由・denylist が網羅でない旨は `.claude/hooks/lib/rule-matcher.ts` のコメントに、herdr の版数別ゲート条件表 (Claude v10 / Codex v8) は本 PR 自身が `scripts/codex-otel.test.ts` の pin 直上コメントに、それぞれ存在する。つまり削除される 596 行のうち、これらは重複であって喪失ではない。
 - Claude Code のバージョン依存 (v2.1.277 未満で無言に読まれない問題) と Bedrock / Vertex / Foundry 非対応の制約が moot になる — 読むべき内容が無いため。
 
 ### Negative
 
-- **設計記録が失われる。** 以下は `git show <commit>:CLAUDE.md` でのみ参照可能になるものの**代表例であり、網羅ではない**:
-  - OTEL helper (`otelHeadersHelper`) の trust boundary 議論 — origin URL 照合が能動的な攻撃者を止めないという残余リスクの説明
-  - rule-matcher の設計意図 — `alwaysDangerous` / `dangerousWhenRedirected` の区別、`commit` を意図的に対象外にした理由、`sh -c` 経由ではガードが効かない既知の穴 (#177)、対象リポジトリ側 repo-local config が静的解析の射程外である旨
-  - `install_managed_file` の規律 — `rm -f && install` ではなく `mktemp` + `mv` を選んだ理由 (#239 で実際に起きた退行)、signal trap の受容リスク 3 件、`.bak` 退避の 6 つの規律
-  - herdr hook の版数別ゲート条件表 (Claude v10 / Codex v8) — `CURSOR_VERSION` 誤爆 (#242)、`transcript_path` の必須性が両者で異なる点を含む
-  - `.gitignore` が global な `core.excludesFile` であるという運用禁則 — 「dotfiles 固有のファイルを ignore する目的でここにパターンを足さない」
+- **設計記録が失われる。** 以下は `git show 5eae1a2:CLAUDE.md` でのみ参照可能になるものの**代表例であり、網羅ではない**。上記 Positive のとおりコード近傍に複製が存在するものは意図的に除いてあり、ここに挙げるのは**コード側に対応するコメントが無いことを確認したもの**に限る:
+  - OTEL helper (`otelHeadersHelper`) の trust boundary 議論 — origin URL 照合が能動的な攻撃者を止めないという残余リスクの説明。`.claude/settings.json` は JSON なのでコメントを置けず、コード近傍への移設経路が無い
+  - rule-matcher の既知の穴 — `sh -c` / `zsh -c` ラッパー経由ではガードが一切効かない点 (#177) と、対象リポジトリ側の repo-local config (`core.pager` / `core.fsmonitor` / `core.hooksPath`) が静的解析の射程外である点。どちらも `rule-matcher.ts` のコメントには無い (同ファイルにある他の設計意図とは対照的)
   - Codex OTEL の token rotation 手順 (`--write-config-only` の再実行、Keychain service 名の解決順)
   - Linear → Claude Code 自走パイプラインの運用手順 (routine secrets、ラベル状態遷移、ループ上限)
-  - Architecture / Where to Edit の地図、Nix-specific Notes、Orca の hook 注入とレース条件の説明
-  - 上記の `AGENTS.md` 固有 6 点 (`.codex/rules/` / `.codex/hooks/` / `.codex/commands/` / `.opencode/skills/` / 管理方針表の Codex 行 / Where to Edit 表の Codex 行)
+  - Architecture / Where to Edit の地図、Nix-specific Notes、Orca の hook 注入とレース条件 (`model` 脱落) の説明
+  - herdr の `CURSOR_VERSION` 誤爆 (#242) と Codex 側 `transcript_path` の常在性が未検証である旨 — ゲート条件表そのものはテストへ移設済みだが、この 2 つの未解決の懸念は移設先に書いていない
+  - 上記の `AGENTS.md` 固有 6 点のうち `.opencode/skills/` (`README.md` にも記載が無い唯一のもの)。`.codex/rules/` / `.codex/hooks/` / `.codex/commands/` / 管理方針表の Codex 行 / Where to Edit 表の Codex 行は `README.md` に相当する記述があるため、喪失には数えない
 - **観測可能な挙動変化が 1 つある**: 旧 `CLAUDE.md:5` / 旧 `AGENTS.md:5` の「日本語で必ず応答してください。」が repo から消え、既定の応答言語がモデル任せになる (repo 内に代替は無いことを `git grep` で確認済み)。受容する。必要なら user-level (`~/.claude/CLAUDE.md` 等、repo 外) で供給する。
-- 実務上のリスクは「**理由を知らない将来の読み手に冗長と見えて削られやすいコード**」が残ること。`install_managed_file` 内の `install ... || return 1` や dest=directory ガード、`retain_codex_config_backup` の errexit 抑止は、いずれも理由を知らなければ不要に見える。
+- 実務上のリスクは「**理由を知らない将来の読み手に冗長と見えて削られやすいコード**」が残ること。ただし `install_managed_file` 内の `install ... || return 1`・dest=directory ガード・`retain_codex_config_backup` の errexit 抑止のように、理由を知らなければ不要に見える代表例は `install.sh` のインラインコメントで理由が保持されているため、このリスクは本 ADR では**残余リスクに留まる**。実際に危険なのは、上記 Negative のとおりコード近傍に説明が無い箇所 (rule-matcher の既知の穴、`.claude/settings.json` の `otelHeadersHelper` ラッパー式) の方である。
+- `.gitignore` が global な `core.excludesFile` であるという運用禁則 (「dotfiles 固有のファイルを ignore する目的でここにパターンを足さない」) は、本 ADR と同時に **`.gitignore` 冒頭のコメントと `nix/home.nix` の相互参照コメントへ移設した**ため喪失しない。`install.sh` が `~/.gitignore` へ symlink し `home.nix` が `core.excludesFile` に設定する以上、この禁則はコード近傍に置くべきもの (ADR 0018 の趣旨) だったため、破棄ではなく移設を選んだ。
 - 人間向けの入口ドキュメントが `README.md` のみになる (内容の十分性は未検証)。
 
 ## Alternatives Considered (rejected)

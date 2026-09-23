@@ -1,3 +1,11 @@
+# ⚠️ これは「このリポジトリ用の .gitignore」ではなく **global な ignore** である。
+# install.sh が `~/.gitignore` へ symlink し、nix/home.nix が
+# `core.excludesFile = "~/.gitignore"` に設定するため、ここに書いたパターンは
+# **このマシンの全リポジトリに適用される** (`/env.json` のようにルートを
+# アンカーしたパターンでも「全リポジトリのルートの env.json」を無視する)。
+# dotfiles 固有のファイルを ignore したいだけなら `.git/info/exclude` を使い、
+# ここには足さないこと。
+# 背景: docs/adr/0002-retire-root-instructions.md
 *.DS_Store
 *.LSOverride
 Thumbs.db
