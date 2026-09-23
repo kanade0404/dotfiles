@@ -894,20 +894,39 @@ describe("codex-otel", () => {
   });
 
   // herdr の hook script は herdr 管理下の生成物で、再インストール/更新のたびに
-  // symlink 越しに dotfiles 内の実体が書き換わる。CLAUDE.md の版数表は第三者の更新で
-  // 黙って陳腐化する構造なので、script 側の版数と一致していることを CI で見る。
-  test.each([
-    [".claude/hooks/herdr-agent-state.sh", "claude"],
-    [".codex/herdr-agent-state.sh", "codex"],
-  ] as const)("CLAUDE.md records the herdr integration version of %s", (relative, id) => {
-    const script = readFileSync(resolve(relative), "utf8");
-    const version = /^# HERDR_INTEGRATION_VERSION=(\d+)$/m.exec(script);
+  // symlink 越しに dotfiles 内の実体が黙って書き換わる。版数が上がると
+  // integration の挙動 (イベント絞り込み条件・`transcript_path` の必須性・
+  // subagent 判定) も変わりうるので、期待値をここに pin して drift を検出する。
+  // ⚠️ このテストが落ちたら「期待値を上げて通す」のではなく、まず
+  // `git diff` で script の変化を読み、挙動が変わっていないかを確認すること。
+  // 比較用の baseline (pin 時点のゲート条件) を以下に残す:
+  // - claude v10: 環境変数 `CURSOR_VERSION` か入力の `cursor_version` があれば exit /
+  //   `hook_event_name` が `SessionStart` 以外 (空文字含む) なら exit /
+  //   入力に `agent_id` があれば subagent とみなし exit。`transcript_path` は任意
+  //   (あれば `agent_session_path` として params に載せるだけ)。
+  // - codex v8: `hook_event_name` が空でなく `SessionStart` 以外なら exit /
+  //   `transcript_path` は必須ゲートで欠落・空白のみなら exit (params には載せない) /
+  //   `CODEX_THREAD_ID` が設定済みかつ `session_id` と不一致のときだけ exit (未設定なら通過)。
+  // 3 項組 (script path, integration id, integration version) の pin。version だけの
+  // 一覧ではないので `*_PINS`。正規表現の捕獲は文字列なので、数値で持って
+  // `String()` で戻す往復をせず最初から文字列で pin する。
+  const HERDR_INTEGRATION_PINS = [
+    [".claude/hooks/herdr-agent-state.sh", "claude", "10"],
+    [".codex/herdr-agent-state.sh", "codex", "8"],
+  ] as const;
 
-    expect(version).not.toBeNull();
-    expect(readFileSync(resolve("CLAUDE.md"), "utf8")).toContain(
-      `\`HERDR_INTEGRATION_ID=${id}\`, v${version![1]}`,
-    );
-  });
+  test.each(HERDR_INTEGRATION_PINS)(
+    "%s stays at the pinned herdr integration version",
+    (relative, id, expected) => {
+      const script = readFileSync(resolve(relative), "utf8");
+
+      // 捕獲を `[^\r\n]+` と明示しているのは、CRLF 改行でも `\r` を拾わないことを
+      // 文字クラス側で保証するため (JS の `.` は line terminator を除外するので
+      // 現状の挙動は `.+` と同じ。将来 `s` flag を足しても壊れないようにする意図)。
+      expect(/^# HERDR_INTEGRATION_ID=([^\r\n]+)$/m.exec(script)?.[1]).toBe(id);
+      expect(/^# HERDR_INTEGRATION_VERSION=(\d+)$/m.exec(script)?.[1]).toBe(expected);
+    },
+  );
 
   // MANAGED_FIXTURE_FILES は install.sh の手動ミラーなので、install.sh 側に 4 つ目の
   // 無条件 install が増えたら全 runInstall 系テストが fixture 不足で一斉に落ちる。
@@ -945,7 +964,8 @@ describe("codex-otel", () => {
 
   // 比較は「dest が前回から変化したか」ではなく `cmp -s "$dest" "$staged"` なので、
   // dest がローカルで無変化でも **source が更新されていれば**退避が走り、貴重な `.bak` が
-  // 「素の前回 dotfiles 内容」で潰れる。CLAUDE.md が明記している 1 世代退避の限界。
+  // 「素の前回 dotfiles 内容」で潰れる。`install.sh` の `backup_local_settings` は
+  // 世代を 1 つしか持たないため、これは仕様上の限界であって取りこぼしではない。
   // このテストは「現挙動の記述」であって望ましい仕様の主張ではない: 比較基準を
   // 「dest vs 前回 `.bak`」等に変えれば貴重な退避を守れる可能性があり、その場合は
   // ここを**意図的に書き換える**こと (黙って挙動だけ変わらないための固定)。

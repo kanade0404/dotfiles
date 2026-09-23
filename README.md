@@ -93,11 +93,17 @@ nix/
 .claude/                 # Claude Code (settings, hooks, commands, skills)
 .github/workflows/       # PR conflict 自動解決 workflows
 .local/bin/              # ヘルパースクリプト (tmux-project, gw, codex-otel)
+docs/adr/                # Architecture Decision Records (adr-tools, Nygard 形式)
+.adr-dir                 # adr-tools の ADR 置き場指定 (docs/adr)
 bootstrap.sh             # 初回セットアップ (Homebrew インストール + nix-darwin bootstrap + install.sh)
 bootstrap-codex-cloud.sh # Codex Cloud 用の依存関係セットアップ
 bootstrap-worktree.sh    # git worktree を参照元にして適用
 install.sh               # Nix 管理外ファイルの symlink 作成
 ```
+
+project instructions (`CLAUDE.md` / `AGENTS.md`) は意図的に持たない (`AGENTS.md` は
+意思表示のための、指示を持たない追跡ファイル)。理由は
+[ADR 0002](docs/adr/0002-retire-root-instructions.md) を参照。
 
 ## 管理方針
 
