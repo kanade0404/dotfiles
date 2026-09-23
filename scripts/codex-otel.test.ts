@@ -907,12 +907,15 @@ describe("codex-otel", () => {
   // - codex v8: `hook_event_name` が空でなく `SessionStart` 以外なら exit /
   //   `transcript_path` は必須ゲートで欠落・空白のみなら exit (params には載せない) /
   //   `CODEX_THREAD_ID` が設定済みかつ `session_id` と不一致のときだけ exit (未設定なら通過)。
-  const HERDR_INTEGRATION_VERSIONS = [
-    [".claude/hooks/herdr-agent-state.sh", "claude", 10],
-    [".codex/herdr-agent-state.sh", "codex", 8],
+  // 3 項組 (script path, integration id, integration version) の pin。version だけの
+  // 一覧ではないので `*_PINS`。正規表現の捕獲は文字列なので、数値で持って
+  // `String()` で戻す往復をせず最初から文字列で pin する。
+  const HERDR_INTEGRATION_PINS = [
+    [".claude/hooks/herdr-agent-state.sh", "claude", "10"],
+    [".codex/herdr-agent-state.sh", "codex", "8"],
   ] as const;
 
-  test.each(HERDR_INTEGRATION_VERSIONS)(
+  test.each(HERDR_INTEGRATION_PINS)(
     "%s stays at the pinned herdr integration version",
     (relative, id, expected) => {
       const script = readFileSync(resolve(relative), "utf8");
@@ -921,7 +924,7 @@ describe("codex-otel", () => {
       // 文字クラス側で保証するため (JS の `.` は line terminator を除外するので
       // 現状の挙動は `.+` と同じ。将来 `s` flag を足しても壊れないようにする意図)。
       expect(/^# HERDR_INTEGRATION_ID=([^\r\n]+)$/m.exec(script)?.[1]).toBe(id);
-      expect(/^# HERDR_INTEGRATION_VERSION=(\d+)$/m.exec(script)?.[1]).toBe(String(expected));
+      expect(/^# HERDR_INTEGRATION_VERSION=(\d+)$/m.exec(script)?.[1]).toBe(expected);
     },
   );
 
