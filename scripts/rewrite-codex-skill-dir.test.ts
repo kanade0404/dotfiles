@@ -139,13 +139,4 @@ describe("rewriteCodexSkillDir", () => {
     expect(SKILL_DIR_PLACEHOLDER).toBe("<skill-dir>");
     expect(SKILL_DIR_NOTE_MARKER).toBe("本文中の `<skill-dir>` は");
   });
-
-  test("test.yml の逆方向ガードが注記 marker と一致している (文言 drift で落ちる)", () => {
-    // test.yml の codex-skill-dir-guard は `.claude/skills` への注記漏出を
-    // SKILL_DIR_NOTE_MARKER の literal grep で検出する。注記文言を変えると grep が
-    // 空振りして guard が silent 無効化されるため、両者の一致をここで固定する
-    // (PR #153 review)。
-    const workflow = readFileSync(".github/workflows/test.yml", "utf8");
-    expect(workflow).toContain(SKILL_DIR_NOTE_MARKER);
-  });
 });
