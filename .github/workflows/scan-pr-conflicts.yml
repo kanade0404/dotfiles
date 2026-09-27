@@ -200,22 +200,35 @@ jobs:
             --allowedTools "Bash(git:*),Bash(gh:*),Bash(npm:*),Bash(pnpm:*),Bash(yarn:*),Bash(bun:*),Bash(node:*),Bash(npx:*),Bash(make:*),Edit,Read,Write,Glob,Grep"
           prompt: |
             このリポジトリの PR #${{ matrix.pr.number }} で `${{ matrix.pr.base }}` ブランチとの
-            merge conflict が発生しています。リポジトリの `.claude/skills/pr-conflict-resolver`
-            skill の手順に厳密に従って conflict を解決してください。
+            merge conflict が発生しています。以下の手順で conflict を解決してください。
 
             前提:
             - 既に PR head ブランチ `${{ matrix.pr.head }}` を checkout 済みです。
             - base ブランチは `${{ matrix.pr.base }}` です。
 
-            要件:
-            1. `origin/${{ matrix.pr.base }}` を merge し conflict を解決する
-               (両側の意図を尊重し機能を欠落させない / lock ファイルは再生成する)
-            2. 既存のテスト・Lint・型チェックが通ることを可能な範囲で確認する
-            3. 解決後の commit を `${{ matrix.pr.head }}` に push する
-            4. このPRに「conflict 解決完了 / 残課題」を要約コメントで報告する
+            手順:
+            1. `git fetch origin ${{ matrix.pr.base }}` してから
+               `git merge origin/${{ matrix.pr.base }}` を実行する
+               (rebase ではなく merge。既に push 済みの head を書き換えない)
+            2. `git diff --name-only --diff-filter=U` で conflict したファイルを列挙し、
+               1 ファイルずつ解決する。**両側の意図を尊重し、どちらかの機能を
+               黙って捨てない**。どちらを採るか判断できない箇所は残して撤退する
+            3. lock ファイル (`bun.lockb` 等) は手で conflict marker を消さず、
+               base 側を採用してからパッケージマネージャで再生成する
+               (このリポジトリなら `bun install`)
+            4. conflict marker (`<<<<<<<` / `=======` / `>>>>>>>`) が残っていないことを
+               `git grep -n -E '^(<{7}|={7}|>{7})'` で確認する
+            5. 既存のテスト・Lint・型チェックが通ることを可能な範囲で確認する
+               (このリポジトリなら `bun install && bun run test`、
+               `bunx tsc --noEmit`、`bun run lint:md`)
+            6. `git commit` で merge を確定し、`${{ matrix.pr.head }}` に push する
+            7. このPRに「conflict 解決完了 / 残課題」を要約コメントで報告する
 
-            解決が困難な場合は無理に merge せず、skill の「無理しない撤退判断」に従い
-            conflict 箇所の概要と推奨方針を PR にコメントして終了してください。
+            撤退判断: 上記 2 で両側の意図を確信を持って両立できない場合、あるいは
+            5 のローカル検証が赤のまま原因を特定できない場合は、**無理に merge を
+            確定せず** `git merge --abort` して、conflict 箇所の概要と推奨方針を
+            PR にコメントして終了してください。半端な解決を push するより、
+            人間に引き継ぐ方が安全です。
 
   summary:
     name: Summary

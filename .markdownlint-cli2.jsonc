@@ -18,9 +18,6 @@
     // ネストした node_modules (bun/npm が任意の階層に生成しうる) も除外。
     // 素の "node_modules" はトップレベルしか一致しないため glob で全階層を対象にする。
     "**/node_modules/**",
-    ".agents/skills/**",
-    ".opencode/skills/**",
-    ".claude/skills/**",
     ".claude/plans/**",
     ".claude/plugins/**",
     ".claude-plugin/**",
