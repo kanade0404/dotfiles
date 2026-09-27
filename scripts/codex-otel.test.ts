@@ -204,6 +204,104 @@ function expectInstalledMode(home: string, relative: ManagedFixtureFile) {
   expect(statSync(installed).mode & 0o777).toBe(MANAGED_FILE_MODES[relative]);
 }
 
+// prune_dotfiles_symlinks() だけを install.sh から切り出して単体実行する harness。
+// この関数は install.sh 本体では引数 3 つ + グローバル `$DOTFILES` を読むため、
+// harness 側で DOTFILES を明示的に注入する。errexit を抑止した呼び出し文脈
+// (`f || status=$?`) にしてあるので、`return 1` を呼び出し側の errexit に
+// 潰されずに観測できる。mode は空文字も渡せるよう常に 4 引数で起動する。
+function runPruneDotfilesSymlinks(
+  dotfiles: string,
+  homeDir: string,
+  subdir: string,
+  mode: string,
+  source?: string,
+): { status: number; stderr: string } {
+  const harness = join(root, "prune-harness.sh");
+  writeFileSync(
+    harness,
+    [
+      "set -euo pipefail",
+      'DOTFILES="$1"',
+      extractShellFunction("prune_dotfiles_symlinks", source),
+      "status=0",
+      'prune_dotfiles_symlinks "$2" "$3" "$4" || status=$?',
+      'printf "status=%s\\n" "$status"',
+      "",
+    ].join("\n"),
+  );
+
+  const result = spawnSync("bash", [harness, dotfiles, homeDir, subdir, mode], {
+    encoding: "utf8",
+  });
+  const reported = /^status=(\d+)$/m.exec(result.stdout ?? "");
+  if (reported === null) {
+    throw new Error(`harness did not report a status. stderr: ${result.stderr ?? ""}`);
+  }
+  return { status: Number(reported[1]), stderr: result.stderr ?? "" };
+}
+
+// 上の harness は `f || status=$?` で呼ぶため、bash の仕様上 **関数本体の全体で
+// errexit が抑止される**。install.sh 本体 (installer:435-445) は同じ関数を
+// ambient errexit 下で **裸で** 呼ぶので、「内部のコマンドが失敗したときに
+// install.sh ごと abort しないか」はこの harness では観測できない
+// (`rmdir` から `|| true` を外す変異が生き残ることで確認済み)。
+// そのケース専用に、裸呼び出し + 後続コマンド到達で観測する harness を分けて持つ。
+function runPruneUnderAmbientErrexit(
+  dotfiles: string,
+  homeDir: string,
+  subdir: string,
+  mode: string,
+): { status: number; continued: boolean; stderr: string } {
+  const harness = join(root, "prune-errexit-harness.sh");
+  writeFileSync(
+    harness,
+    [
+      "set -euo pipefail",
+      'DOTFILES="$1"',
+      extractShellFunction("prune_dotfiles_symlinks"),
+      // install.sh と同じ裸呼び出し。abort すれば後続の printf に到達しない。
+      'prune_dotfiles_symlinks "$2" "$3" "$4"',
+      'printf "continued=yes\\n"',
+      "",
+    ].join("\n"),
+  );
+
+  const result = spawnSync("bash", [harness, dotfiles, homeDir, subdir, mode], {
+    encoding: "utf8",
+  });
+  return {
+    status: result.status ?? -1,
+    continued: /^continued=yes$/m.test(result.stdout ?? ""),
+    stderr: result.stderr ?? "",
+  };
+}
+
+// prune_dotfiles_symlinks の fixture。`$DOTFILES/<subdir>/` 側に実体を作り、
+// `$HOME/<homeRel>/` 側へ install.sh と同じ形の絶対パス symlink を貼る。
+const PRUNE_SUBDIR = ".agents/skills";
+
+function preparePruneFixture(homeRel = ".agents/skills") {
+  const dotfiles = join(root, "dotfiles-prune");
+  const home = join(root, "home-prune");
+  const source = join(dotfiles, ...PRUNE_SUBDIR.split("/"));
+  const homeDir = join(home, ...homeRel.split("/"));
+  mkdirSync(source, { recursive: true });
+  mkdirSync(homeDir, { recursive: true });
+  return { dotfiles, home, source, homeDir };
+}
+
+// install.sh が貼るのと同じ「$DOTFILES 配下を指す絶対パス symlink」。
+// `live` が false なら実体を作らないので dangling symlink になる。
+function linkFromDotfiles(source: string, homeDir: string, name: string, live: boolean) {
+  const target = join(source, name);
+  if (live) mkdirSync(target, { recursive: true });
+  symlinkSync(target, join(homeDir, name));
+}
+
+function entries(dir: string): string[] {
+  return readdirSync(dir).sort();
+}
+
 function expectInstalledAsRealFile(home: string, dotfiles: string, relative: ManagedFixtureFile) {
   const parts = relative.split("/");
   const installed = join(home, ...parts);
@@ -1244,5 +1342,196 @@ describe("codex-otel", () => {
     expect(result.stderr).toContain("failed to refresh OTEL config; launching codex without refreshing telemetry");
     expect(result.stdout).toContain("stub codex: debug prompt-input hello");
     expect(readFileSync(target, "utf8")).toBe(before);
+  });
+});
+
+// ADR 0003 で skill の symlink 生成をやめ、install.sh には剪定だけが残った。
+// 剪定は `$HOME` 配下を無条件に消す危険な操作なので、安全不変条件
+// (削除対象は `$DOTFILES/<subdir>/` を接頭辞とする絶対パス symlink だけ) を
+// テストで固定する。ここが壊れると他ツールの成果物を消す実害が出る。
+describe("prune_dotfiles_symlinks", () => {
+  test("retired removes dotfiles symlinks regardless of target existence and rmdirs the emptied dir", () => {
+    const { dotfiles, source, homeDir } = preparePruneFixture();
+    linkFromDotfiles(source, homeDir, "live-skill", true);
+    linkFromDotfiles(source, homeDir, "dead-skill", false);
+
+    const result = runPruneDotfilesSymlinks(dotfiles, homeDir, PRUNE_SUBDIR, "retired");
+
+    expect(result.status).toBe(0);
+    // retired は「リンク先の存在を問わず削除」。live 側も消えていなければならない。
+    expect(existsSync(homeDir)).toBe(false);
+  });
+
+  test("retired tolerates rmdir failure when a foreign real entry co-resides", () => {
+    const { dotfiles, source, homeDir } = preparePruneFixture();
+    linkFromDotfiles(source, homeDir, "dotfiles-skill", true);
+    // 他ツール (plugin marketplace 等) が置いた実ディレクトリ。実機の
+    // ~/.agents/skills は symlink 37 / 実ディレクトリ 17 でこの状態にある。
+    mkdirSync(join(homeDir, "foreign-skill", "nested"), { recursive: true });
+
+    const result = runPruneDotfilesSymlinks(dotfiles, homeDir, PRUNE_SUBDIR, "retired");
+
+    // rmdir は失敗するが `|| true` で吸収され、errexit を踏まず 0 を返す。
+    expect(result.status).toBe(0);
+    expect(entries(homeDir)).toEqual(["foreign-skill"]);
+  });
+
+  test("retired does not abort install.sh when rmdir fails under ambient errexit", () => {
+    // 実機の 4 ディレクトリすべてで `rmdir` は失敗する (他ツールの実体が同居)。
+    // install.sh は裸で呼ぶので、`|| true` が外れると install.sh 全体が
+    // そこで停止し、後続の managed file 生成が丸ごと走らなくなる。
+    const { dotfiles, source, homeDir } = preparePruneFixture();
+    linkFromDotfiles(source, homeDir, "dotfiles-skill", true);
+    mkdirSync(join(homeDir, "foreign-skill"), { recursive: true });
+
+    const result = runPruneUnderAmbientErrexit(dotfiles, homeDir, PRUNE_SUBDIR, "retired");
+
+    expect(result.status).toBe(0);
+    expect(result.continued).toBe(true);
+    expect(entries(homeDir)).toEqual(["foreign-skill"]);
+  });
+
+  test("dangling removes only broken dotfiles symlinks and never rmdirs", () => {
+    const { dotfiles, source, homeDir } = preparePruneFixture(".claude/commands");
+    linkFromDotfiles(source, homeDir, "live-command", true);
+    linkFromDotfiles(source, homeDir, "dead-command", false);
+
+    const result = runPruneDotfilesSymlinks(dotfiles, homeDir, PRUNE_SUBDIR, "dangling");
+
+    expect(result.status).toBe(0);
+    // 配布を続けるディレクトリなので生きたリンクは残り、ディレクトリも残る。
+    expect(entries(homeDir)).toEqual(["live-command"]);
+    expect(lstatSync(join(homeDir, "live-command")).isSymbolicLink()).toBe(true);
+  });
+
+  test("dangling leaves an empty dir in place instead of rmdir-ing it", () => {
+    const { dotfiles, source, homeDir } = preparePruneFixture(".claude/commands");
+    linkFromDotfiles(source, homeDir, "dead-command", false);
+
+    const result = runPruneDotfilesSymlinks(dotfiles, homeDir, PRUNE_SUBDIR, "dangling");
+
+    expect(result.status).toBe(0);
+    expect(existsSync(homeDir)).toBe(true);
+    expect(entries(homeDir)).toEqual([]);
+  });
+
+  test("retired preserves everything that is not a $DOTFILES-prefixed absolute symlink", () => {
+    const { dotfiles, source, homeDir } = preparePruneFixture();
+    // 消えてよいのはこれだけ。他が残ることを対照として確かめる。
+    linkFromDotfiles(source, homeDir, "dotfiles-skill", true);
+
+    // 実ファイル / 実ディレクトリ
+    writeFileSync(join(homeDir, "real-file"), "keep me\n");
+    mkdirSync(join(homeDir, "real-dir"), { recursive: true });
+    // 他ツールが貼った絶対パス symlink ($DOTFILES 配下ではない)
+    const foreign = join(root, "foreign-store", "orca-cli");
+    mkdirSync(foreign, { recursive: true });
+    symlinkSync(foreign, join(homeDir, "foreign-link"));
+    // 相対パス symlink。解決先が $DOTFILES 配下であっても `case` に一致しないので残る
+    // (実機の ~/.claude/skills の find-skills / orca-cli がこの形)。
+    symlinkSync(join("..", "..", "relative-target"), join(homeDir, "relative-link"));
+    // 別 checkout (worktree 等) の dotfiles を指すリンク
+    const otherCheckout = join(root, "other-checkout", ...PRUNE_SUBDIR.split("/"), "adr-writer");
+    mkdirSync(otherCheckout, { recursive: true });
+    symlinkSync(otherCheckout, join(homeDir, "other-checkout-link"));
+
+    const result = runPruneDotfilesSymlinks(dotfiles, homeDir, PRUNE_SUBDIR, "retired");
+
+    expect(result.status).toBe(0);
+    expect(entries(homeDir)).toEqual([
+      "foreign-link",
+      "other-checkout-link",
+      "real-dir",
+      "real-file",
+      "relative-link",
+    ]);
+  });
+
+  test("retired does not match sibling directories that share the subdir prefix", () => {
+    const { dotfiles, homeDir } = preparePruneFixture();
+    // `$DOTFILES/.agents/skills` の接頭辞を共有するが別ディレクトリ。`case` の
+    // パターンが末尾に `/` を要求するので一致してはならない。
+    const sibling = join(dotfiles, ".agents", "skills-extra", "x");
+    mkdirSync(sibling, { recursive: true });
+    symlinkSync(sibling, join(homeDir, "sibling-link"));
+    // ディレクトリ自身を指すリンク (末尾の `/` が無いので同じく不一致)。
+    const exact = join(dotfiles, ...PRUNE_SUBDIR.split("/"));
+    symlinkSync(exact, join(homeDir, "exact-link"));
+
+    const result = runPruneDotfilesSymlinks(dotfiles, homeDir, PRUNE_SUBDIR, "retired");
+
+    expect(result.status).toBe(0);
+    expect(entries(homeDir)).toEqual(["exact-link", "sibling-link"]);
+  });
+
+  test("the case pattern matches $DOTFILES literally, not as a glob", () => {
+    // `case "$link_target" in "$DOTFILES/$subdir/"*)` の接頭辞は quoted なので
+    // literal 比較になる。glob 文字入りの checkout パスでも、glob 展開で
+    // 一致しうる別パスを巻き込んではならない。
+    const dotfiles = join(root, "dot?files");
+    const home = join(root, "home-glob");
+    const source = join(dotfiles, ...PRUNE_SUBDIR.split("/"));
+    const homeDir = join(home, ...PRUNE_SUBDIR.split("/"));
+    mkdirSync(source, { recursive: true });
+    mkdirSync(homeDir, { recursive: true });
+    linkFromDotfiles(source, homeDir, "literal-match", true);
+    // `?` を別の 1 文字に置き換えたパス。glob として解釈されると誤って消える。
+    const globOnly = join(root, "dotXfiles", ...PRUNE_SUBDIR.split("/"), "glob-only");
+    mkdirSync(globOnly, { recursive: true });
+    symlinkSync(globOnly, join(homeDir, "glob-only"));
+
+    const result = runPruneDotfilesSymlinks(dotfiles, homeDir, PRUNE_SUBDIR, "retired");
+
+    expect(result.status).toBe(0);
+    expect(entries(homeDir)).toEqual(["glob-only"]);
+  });
+
+  test.each(["retried", "Retired", "dangling ", ""])(
+    "rejects invalid mode %p without any side effect",
+    (mode) => {
+      const { dotfiles, source, homeDir } = preparePruneFixture();
+      linkFromDotfiles(source, homeDir, "dotfiles-skill", true);
+      linkFromDotfiles(source, homeDir, "dead-skill", false);
+
+      const result = runPruneDotfilesSymlinks(dotfiles, homeDir, PRUNE_SUBDIR, mode);
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("unknown prune mode");
+      // 検証は削除ループ (副作用) より前にあること。1 本も消えていてはならない。
+      expect(entries(homeDir)).toEqual(["dead-skill", "dotfiles-skill"]);
+    },
+  );
+
+  // 未インストールのマシン / cloud session では `$HOME` 側のディレクトリが無い。
+  // install.sh は裸で呼ぶので、ここで失敗すると install 全体が止まる。
+  // `[ -d ]` ガード自体は `rmdir ... || true` と glob の非展開で冗長になっているため、
+  // この 2 本が固定しているのは実装ではなく **契約** (「無ければ何もせず成功」)。
+  // 将来 `|| return 1` を足したり `2>/dev/null` を外したりした退行を捕まえる。
+  test.each(["retired", "dangling"])("succeeds silently when the target dir is missing (%s)", (mode) => {
+    const { dotfiles, homeDir } = preparePruneFixture();
+    rmSync(homeDir, { recursive: true, force: true });
+
+    const result = runPruneUnderAmbientErrexit(dotfiles, homeDir, PRUNE_SUBDIR, mode);
+
+    expect(result.status).toBe(0);
+    expect(result.continued).toBe(true);
+    expect(result.stderr).toBe("");
+    // ディレクトリを作り直してしまわないこと。
+    expect(existsSync(homeDir)).toBe(false);
+  });
+
+  test("retired prunes links whose entire $DOTFILES source tree is gone", () => {
+    // 本 PR 後の実際の状態: `$DOTFILES/.agents/skills/` 自体が存在しない。
+    // 親ディレクトリごと消えていても `case` の文字列一致で剪定できることを固定する
+    // (readlink の値だけを見ており、$DOTFILES 側を stat しないため)。
+    const { dotfiles, source, homeDir } = preparePruneFixture();
+    linkFromDotfiles(source, homeDir, "adr-writer", false);
+    rmSync(join(dotfiles, ".agents"), { recursive: true, force: true });
+    expect(existsSync(source)).toBe(false);
+
+    const result = runPruneDotfilesSymlinks(dotfiles, homeDir, PRUNE_SUBDIR, "retired");
+
+    expect(result.status).toBe(0);
+    expect(existsSync(homeDir)).toBe(false);
   });
 });
