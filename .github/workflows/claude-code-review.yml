@@ -11,8 +11,9 @@ concurrency:
 
 jobs:
   # kanade0404/skills の自作 code-review skill で 1 ジョブにレビューを統合。
-  # （ローカルでは rulesync で .claude/skills/ へ同期している skill。
-  #  CI ではソースリポジトリを SHA 固定で checkout して同じ skill を再現する）
+  # （このリポジトリは skill を配布・コミットしないため、CI 実行時に
+  #  ソースリポジトリを SHA 固定で checkout して .claude/skills/code-review を
+  #  その場で生成する。下の 2 ステップが自己完結しているので repo 側に skill は不要）
   #
   # built-in /review は run 成功でもレビューを出さず空振りすることがあったため、
   # findings を Critical / Important / Minor で安定して出す自作 skill を採用する。

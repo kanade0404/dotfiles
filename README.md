@@ -31,20 +31,11 @@ sudo darwin-rebuild switch --flake "$DOTFILES_DIR/nix"
 
 # Nix 管理外ファイルの symlink 再作成 (.config/, .local/bin/, .claude/ 等変更時)
 DOTFILES="$DOTFILES_DIR" bash "$DOTFILES_DIR/install.sh"
-
-# Codex skills を rulesync で生成して ~/.agents/skills に反映 (グローバル symlink)。
-# Claude skills は project (このリポジトリ自身) の .claude/skills/ を更新するのみで、
-# ~/.claude/skills へのグローバル symlink 配布は行わない (project が正の方針)。
-bun run rulesync:skills         # Codex (.agents/skills)
-bun run rulesync:skills:claude  # Claude (.claude/skills, 隔離 pipeline rulesync-claude/)
-DOTFILES="$DOTFILES_DIR" bash "$DOTFILES_DIR/install.sh"
-
-# skills 配列の追加/削除や upstream skill 参照の更新時は :update で再解決
-bun run rulesync:skills:update
-bun run rulesync:skills:claude:update
 ```
 
-`rulesync` を upgrade するときは、`package.json` の devDependency と、`rulesync.jsonc` / `rulesync-claude/rulesync.jsonc` の `$schema` URL を同じバージョンに更新する。
+agent skill (Claude / Codex / OpenCode) の生成・配布は行わないため、
+`bun run rulesync:skills*` 相当の手順はありません。経緯は
+[ADR 0003](docs/adr/0003-retire-skill-distribution-pipeline.md) を参照。
 
 ### worktree から適用する場合
 
@@ -89,8 +80,7 @@ nix/
 .config/nvim/            # Neovim (LazyVim)
 .config/ghostty/config   # Ghostty terminal
 .codex/                  # Codex user settings, rules, hooks, commands
-.agents/skills/          # Codex skills (rulesync generated)
-.claude/                 # Claude Code (settings, hooks, commands, skills)
+.claude/                 # Claude Code (settings, hooks, commands)
 .github/workflows/       # PR conflict 自動解決 workflows
 .local/bin/              # ヘルパースクリプト (tmux-project, gw, codex-otel)
 docs/adr/                # Architecture Decision Records (adr-tools, Nygard 形式)
@@ -114,18 +104,12 @@ project instructions (`CLAUDE.md` / `AGENTS.md`) は意図的に持たない (`A
 | Shell / Git / tmux | `nix/home.nix` | `darwin-rebuild switch` |
 | Neovim | `.config/nvim/` | `install.sh` |
 | Ghostty | `.config/ghostty/` | `install.sh` |
-| Codex skills | `rulesync.jsonc` → `.agents/skills/` (`~/.agents/skills` へグローバル symlink) | `bun run rulesync:skills:update` + `install.sh` |
-| Claude skills | `rulesync-claude/rulesync.jsonc` → `.claude/skills/` (project 単位。グローバル symlink 配布はしない) | `bun run rulesync:skills:claude:update` |
 | Codex settings/rules/hooks/commands | `.codex/` | `install.sh` |
 | Claude Code settings/hooks/commands | `.claude/` | `install.sh` |
 
-`kanade0404/skills` の取得元は `rulesync.jsonc` / `rulesync-claude/rulesync.jsonc` の
-`ref` で `v0.6.0` に固定している ([skills 側 CLAUDE.md](https://github.com/kanade0404/skills/blob/master/CLAUDE.md)
-の契約: consumer は `@<tag>` 固定取得)。upstream の master 追従はしない。
-現在の固定タグは常に上記 2 ファイルの `ref` フィールドが正 (このドキュメントの記述は
-更新が遅れうる)。`planetscale/database-skills` には `ref` を付けていないが、これは
-upstream にタグが存在しないためで、実際の取得内容は `rulesync.lock` /
-`rulesync-claude/rulesync.lock` の `resolvedRef` (commit SHA) で固定されている。
+agent skill (Claude / Codex / OpenCode) はこのリポジトリでは管理・配布しない。
+生成パイプライン (rulesync) ごと廃止した経緯と再考トリガは
+[ADR 0003](docs/adr/0003-retire-skill-distribution-pipeline.md) を参照。
 
 ## Claude Code Hooks
 
@@ -151,7 +135,10 @@ bun test
 | ファイル | 役割 |
 |---------|-----|
 | `.github/workflows/scan-pr-conflicts.yml` | 毎日深夜 (JST 00:00 / UTC 15:00) に open PR を走査。`mergeable: CONFLICTING` の PR ごとに matrix job (= 1 session) を割り当て、その job 内で [`anthropics/claude-code-action`](https://github.com/anthropics/claude-code-action) を直接実行して conflict を解決 |
-| `.claude/skills/pr-conflict-resolver/SKILL.md` | conflict 解決の安全手順 (checkout → merge → 解決 → lock 再生成 → 検証 → push → 報告) を Claude に渡す skill |
+
+conflict 解決の安全手順 (merge → 解決 → lock 再生成 → marker 検査 → 検証 → push → 報告、
+および撤退判断) は `scan-pr-conflicts.yml` の `prompt` に自己完結させています
+(以前は skill 参照でしたが、skill 配布を廃止したため prompt 内に取り込みました)。
 
 > **設計メモ**: GitHub の再帰防止ポリシーにより `GITHUB_TOKEN` で投稿したコメントは
 > 別 workflow の `issue_comment` を起動しません。そのため scan は「コメントで別 workflow を起こす」のではなく
@@ -203,7 +190,7 @@ deep-night cron ──▶ scan-pr-conflicts
                            ├─ 監査コメント投稿 (marker 埋め込み)
                            ├─ PR head ブランチを checkout
                            └─ claude-code-action (prompt モード) を直接実行
-                               └─ pr-conflict-resolver skill に従って解決 → push
+                               └─ prompt の手順に従って解決 → push
                                       │
                                       └─ CI 緑になったら人手で merge
 ```
