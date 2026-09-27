@@ -281,8 +281,10 @@ prune_dotfiles_symlinks() {
     link_target="$(readlink "$existing")"
     case "$link_target" in
       "$DOTFILES/$dotfiles_subdir/"*)
-        # `-e "$existing"` は symlink を辿るので、リンク先が生きていれば真になる
-        # (`-e "$link_target"` だと相対パス symlink を誤判定する)。
+        # `-e "$existing"` は symlink を辿るので、リンク先が生きていれば真になる。
+        # `-e "$link_target"` は cwd 相対で解決されるため、`DOTFILES` 自体が相対パスで
+        # 渡された実行では誤判定する (既定は L9 の `pwd` で絶対になるので、通常は
+        # どちらでも同じ結果になる — `$existing` を見るのが素直という選択)。
         if [ "$mode" = "dangling" ] && [ -e "$existing" ]; then
           continue
         fi

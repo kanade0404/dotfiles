@@ -237,8 +237,11 @@ jobs:
             6. 解決したファイルを `git add <path>` で **1 つずつ明示的に** stage する
                (`git add -A` / `git add .` は使わない — 無関係な変更や未解決の
                marker を巻き込むため)。`git diff --name-only --diff-filter=U` が
-               空になったことを確認してから `git commit` で merge を確定し、
-               `${{ matrix.pr.head }}` に push する
+               空になったことを確認してから `git commit --no-edit` で merge を確定し、
+               `${{ matrix.pr.head }}` に push する。**`--no-edit` は省略しないこと** —
+               `MERGE_HEAD` がある状態の裸の `git commit` はエディタを起動し、
+               runner には `GIT_EDITOR` も `core.editor` も無いので `vi` に落ちて
+               非 tty で失敗する
             7. このPRに「conflict 解決完了 / 残課題」を要約コメントで報告する
 
             撤退判断: 上記 2 で両側の意図を確信を持って両立できない場合、あるいは

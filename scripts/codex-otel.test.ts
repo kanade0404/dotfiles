@@ -279,11 +279,14 @@ function runPruneUnderAmbientErrexit(
 // `$HOME/<homeRel>/` 側へ install.sh と同じ形の絶対パス symlink を貼る。
 const PRUNE_SUBDIR = ".agents/skills";
 
-function preparePruneFixture(homeRel = ".agents/skills") {
+// `prune_dotfiles_symlinks` は `home_dir` の**名前**を一切見ない (見るのは
+// `readlink` の値と `$DOTFILES/<subdir>/` 接頭辞だけ) ので、fixture の `$HOME` 側は
+// 1 種類で足りる。mode の違いはテスト名と引数で表す。
+function preparePruneFixture() {
   const dotfiles = join(root, "dotfiles-prune");
   const home = join(root, "home-prune");
   const source = join(dotfiles, ...PRUNE_SUBDIR.split("/"));
-  const homeDir = join(home, ...homeRel.split("/"));
+  const homeDir = join(home, ...PRUNE_SUBDIR.split("/"));
   mkdirSync(source, { recursive: true });
   mkdirSync(homeDir, { recursive: true });
   return { dotfiles, home, source, homeDir };
@@ -1387,7 +1390,7 @@ describe("prune_dotfiles_symlinks", () => {
   });
 
   test("dangling removes only broken dotfiles symlinks and never rmdirs", () => {
-    const { dotfiles, source, homeDir } = preparePruneFixture(".claude/commands");
+    const { dotfiles, source, homeDir } = preparePruneFixture();
     linkFromDotfiles(source, homeDir, "live-command", true);
     linkFromDotfiles(source, homeDir, "dead-command", false);
 
@@ -1400,7 +1403,7 @@ describe("prune_dotfiles_symlinks", () => {
   });
 
   test("dangling leaves an empty dir in place instead of rmdir-ing it", () => {
-    const { dotfiles, source, homeDir } = preparePruneFixture(".claude/commands");
+    const { dotfiles, source, homeDir } = preparePruneFixture();
     linkFromDotfiles(source, homeDir, "dead-command", false);
 
     const result = runPruneDotfilesSymlinks(dotfiles, homeDir, PRUNE_SUBDIR, "dangling");
