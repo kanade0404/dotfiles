@@ -57,12 +57,20 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: kanade0404/skills
-          # 再現性のため commit SHA で固定。更新時は
-          #   gh api repos/kanade0404/skills/commits/master --jq .sha
-          # の結果に差し替える。
+          # 再現性のため commit SHA で固定。
+          # ⚠️ **master 追随は不可**。kanade0404/skills は upstream PR #145 で
+          #    harness を全削除しており、master HEAD には `skills/` が存在しない。
+          #    `gh api repos/kanade0404/skills/commits/master --jq .sha` の結果へ
+          #    差し替えると下の staging step が `::error::` で必ず失敗する。
+          #    最新タグ `v1.0.0` (fac1a609) も harness を含まないので同様に不可。
+          #    harness を含む最後のタグは **v0.10.0**
+          #    (20a0a4cb433031d1d758d290f2333a2ce1f03b5e) — 更新するならこれ以前の
+          #    commit / タグから選び、staging step が通ることを確認してから入れる。
+          #    (確認コマンド: gh api repos/kanade0404/skills/tags --jq '.[].name' と
+          #     gh api "repos/kanade0404/skills/contents/skills/code-review?ref=<ref>")
           # ※ dd4d49e の SKILL.md は frontmatter が本文と同一行に潰れており
           #   Claude Code が skill として読み込めず /code-review が空振りしていた。
-          #   frontmatter が正常な master 最新 SHA に更新済み。
+          #   現在の pin は frontmatter が正常なもの。
           ref: 363138744442c5f1f2b65a2414a4d8ba7e0ac264
           path: .tmp-skills-src
           fetch-depth: 1

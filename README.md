@@ -80,8 +80,8 @@ nix/
 .config/nvim/            # Neovim (LazyVim)
 .config/ghostty/config   # Ghostty terminal
 .codex/                  # Codex user settings, rules, hooks, commands
-.claude/                 # Claude Code (settings, hooks, commands)
-.github/workflows/       # PR conflict 自動解決 workflows
+.claude/                 # Claude Code (settings, hooks)
+.github/workflows/       # PR レビュー / PR conflict 自動解決 workflows
 .local/bin/              # ヘルパースクリプト (tmux-project, gw, codex-otel)
 docs/adr/                # Architecture Decision Records (adr-tools, Nygard 形式)
 .adr-dir                 # adr-tools の ADR 置き場指定 (docs/adr)
@@ -105,11 +105,19 @@ project instructions (`CLAUDE.md` / `AGENTS.md`) は意図的に持たない (`A
 | Neovim | `.config/nvim/` | `install.sh` |
 | Ghostty | `.config/ghostty/` | `install.sh` |
 | Codex settings/rules/hooks/commands | `.codex/` | `install.sh` |
-| Claude Code settings/hooks/commands | `.claude/` | `install.sh` |
+| Claude Code settings/hooks | `.claude/` | `install.sh` |
 
-agent skill (Claude / Codex / OpenCode) はこのリポジトリでは管理・配布しない。
-生成パイプライン (rulesync) ごと廃止した経緯と再考トリガは
+agent skill (Claude / Codex / OpenCode) はこのリポジトリでは管理・コミットせず、
+ローカルへの配布もしない。生成パイプライン (rulesync) ごと廃止した経緯と再考トリガは
 [ADR 0003](docs/adr/0003-retire-skill-distribution-pipeline.md) を参照。
+唯一の例外は `claude-code-review.yml` が **CI 実行時だけ** upstream から
+`code-review` skill を pin SHA で取得する経路 (下記 Actions の表を参照)。
+
+なお `install.sh` の再実行は、過去に配布した `~/.claude/skills` /
+`~/.agents/skills` / `~/.config/opencode/skills` / `~/.codex/skills` の symlink と、
+`~/.claude/commands` / `~/.codex/commands` の dangling symlink を掃除する
+(削除対象は `$DOTFILES` 配下を絶対パスで指すリンクだけ。詳細は `install.sh` の
+`prune_dotfiles_symlinks` のコメント)。
 
 ## Claude Code Hooks
 
@@ -128,12 +136,13 @@ TypeScript 製の PreToolUse hook で Bash コマンドの権限を統合管理�
 bun test
 ```
 
-## GitHub Actions: PR conflict 自動解決
+## GitHub Actions: PR レビュー / PR conflict 自動解決
 
-`.github/workflows/` に Claude Code Action を用いた PR conflict 自動解決の仕組みを同梱しています。
+`.github/workflows/` に Claude Code Action を用いた PR レビューと PR conflict 自動解決の仕組みを同梱しています。
 
 | ファイル | 役割 |
 |---------|-----|
+| `.github/workflows/claude-code-review.yml` | PR の open / synchronize 等で起動し、`kanade0404/skills` の `code-review` skill を **pin SHA で checkout して `.claude/skills/code-review` にその場で生成** し、Critical / Important / Minor の三分類でレビューを投稿。サマリは 1 コメントに upsert (`.github/scripts/upsert-pr-comment.sh`)。このリポジトリに残る唯一の live な upstream skill 依存 |
 | `.github/workflows/scan-pr-conflicts.yml` | 毎日深夜 (JST 00:00 / UTC 15:00) に open PR を走査。`mergeable: CONFLICTING` の PR ごとに matrix job (= 1 session) を割り当て、その job 内で [`anthropics/claude-code-action`](https://github.com/anthropics/claude-code-action) を直接実行して conflict を解決 |
 
 conflict 解決の安全手順 (merge → 解決 → lock 再生成 → marker 検査 → 検証 → push → 報告、
