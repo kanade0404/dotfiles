@@ -17,16 +17,32 @@ node_modules/
 .claude/worktrees/
 .claude/settings.local.json
 .claude/*.local.md
-# pr-monitor skill の監視状態ファイル (ローカル固有、リポを汚さない前提のパス)
+# 外部提供 (plugin marketplace 等) の pr-monitor skill が書く監視状態ファイル。
+# このリポジトリは skill を配布・コミットしない (docs/adr/0003) が、skill 自体は
+# 別経路で入ってくるのでローカル固有の出力は引き続き ignore する。
 .claude/.pr-monitor/
+# `.claude/skills/` は **意図的に ignore しない**。この .gitignore は
+# core.excludesFile として全リポジトリに効くため、ここに足すと他リポジトリの
+# project skill (コミット対象であることが普通) がマシン全体で git から不可視になる
+# — `!.agents/skills/` を消して踏んだのと同じ失敗。claude-code-review.yml と同じ
+# 手順をローカルで再現して `.claude/skills/code-review` が untracked に出る場合は、
+# 冒頭の禁則どおり `.git/info/exclude` で各リポジトリ側に閉じて対処する。
 
 # Claude Code プラグインの自動ダウンロード実体 (node_modules 相当)。
 .agents/*
+# `.agents/skills/` の negation は **このリポジトリに .agents/skills が無くなっても
+# 残す**。この .gitignore は core.excludesFile として「このマシンの全リポジトリ」に
+# 効くため、negation を消すと `.agents/skills/**` がマシン全体で git から不可視に
+# なる (隔離リポジトリでの実測で確認済み)。`.agents/skills/` は Codex / OpenCode が
+# project skill を読む標準パスで、他リポジトリではコミット対象であることが普通なので、
+# ここで隠してはならない。
+!.agents/skills/
 
 # Serena MCP server プロジェクト状態 (ローカル固有)
 .serena/
 
-# test-mutation-gate skill のローカルフォールバック出力。
-# LOOP_OPS_TOKEN / gh 送信が無い環境で .cache/test-mutation-gate/ に落ちるため、
-# 未追跡ファイルで worktree を汚さないよう ignore する。
+# 外部提供 (plugin marketplace 等) の test-mutation-gate skill のローカル
+# フォールバック出力。LOOP_OPS_TOKEN / gh 送信が無い環境で
+# .cache/test-mutation-gate/ に落ちるため、未追跡ファイルで worktree を
+# 汚さないよう ignore する。
 .cache/

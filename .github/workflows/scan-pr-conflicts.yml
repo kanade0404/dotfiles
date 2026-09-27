@@ -216,11 +216,22 @@ jobs:
             3. lock ファイル (`bun.lockb` 等) は手で conflict marker を消さず、
                base 側を採用してからパッケージマネージャで再生成する
                (このリポジトリなら `bun install`)
-            4. conflict marker (`<<<<<<<` / `=======` / `>>>>>>>`) が残っていないことを
-               `git grep -n -E '^(<{7}|={7}|>{7})'` で確認する
+            4. conflict marker が残っていないことを
+               `git grep -n -E '^(<{7} |={7}$|>{7} )'` で確認する。
+               git が書く marker は `<<<<<<< ` / `>>>>>>> ` の後にラベルが続き、
+               `=======` は行全体なので、この形に締める。`={7}` を `$` で
+               アンカーしないと Markdown の setext 見出し下線 (`=========` 等) を
+               誤検知する (このリポジトリは `.md` 主体)。なお下線がちょうど 7 文字
+               (`=======`) の場合は marker と字面が同一で区別できないので、
+               その行がヒットしたら前後を読んで判断すること
+               **マッチが 0 件のとき `git grep` は exit 1 を返すのが正常**で、
+               コマンド失敗ではない (= marker 無し = 解決済み)。exit 1 を
+               「検証が赤」と誤読して撤退しないこと
             5. 既存のテスト・Lint・型チェックが通ることを可能な範囲で確認する
                (このリポジトリなら `bun install && bun run test`、
-               `bunx tsc --noEmit`、`bun run lint:md`)
+               `bun x tsc --noEmit`、`bun run lint:md`。`bunx` ではなく `bun x` を
+               使うこと — このセッションの許可ツールは `Bash(bun:*)` であり
+               `bunx` は許可されていない)
             6. `git commit` で merge を確定し、`${{ matrix.pr.head }}` に push する
             7. このPRに「conflict 解決完了 / 残課題」を要約コメントで報告する
 
