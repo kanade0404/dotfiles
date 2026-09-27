@@ -79,7 +79,7 @@ nix/
 
 .config/nvim/            # Neovim (LazyVim)
 .config/ghostty/config   # Ghostty terminal
-.codex/                  # Codex user settings, rules, hooks, commands
+.codex/                  # Codex user settings, rules, hooks
 .claude/                 # Claude Code (settings, hooks)
 .github/workflows/       # PR レビュー / PR conflict 自動解決 workflows
 .local/bin/              # ヘルパースクリプト (tmux-project, gw, codex-otel)

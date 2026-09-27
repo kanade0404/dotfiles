@@ -250,7 +250,11 @@ retain_codex_config_backup() {
 # 一致せず残る。mode=retired の「無条件」は「**絶対パスで `$DOTFILES` 配下を指すものに
 # 限り**、リンク先の存在を問わない」の意味であって、文字どおりの無条件ではない。
 # 同じ理由で、`$DOTFILES` が symlink 作成時と別の checkout (worktree 等) を指している
-# 実行では 1 本も剪定されない。
+# 実行では 1 本も剪定されない。`DOTFILES` の**末尾スラッシュの有無**も同様に効く
+# (`DOTFILES=/p/dotfiles/` だと接頭辞が `/p/dotfiles//.agents/skills/` になり、
+# スラッシュ無しで貼られたリンクに一致しない)。install.sh は `DOTFILES` を正規化して
+# いないため、表記を揃えずに実行すると無言の no-op になる。どちらも「消さない」側に
+# 倒れる fail-safe な限界なので許容している。正規化は #259 で追う。
 #
 # 第 3 引数 (mode):
 #   retired  — リンク先の存在を問わず削除し、空になったら `rmdir` する。

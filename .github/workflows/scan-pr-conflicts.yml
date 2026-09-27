@@ -214,8 +214,10 @@ jobs:
                1 ファイルずつ解決する。**両側の意図を尊重し、どちらかの機能を
                黙って捨てない**。どちらを採るか判断できない箇所は残して撤退する
             3. lock ファイル (`bun.lockb` 等) は手で conflict marker を消さず、
-               base 側を採用してからパッケージマネージャで再生成する
-               (このリポジトリなら `bun install`)
+               base 側を採用してからパッケージマネージャで再生成する。
+               手順 1 は head を checkout した状態で base を merge するので
+               **base 側 = `--theirs`** (ours が head)。このリポジトリなら
+               `git checkout --theirs bun.lockb && bun install && git add bun.lockb`
             4. conflict marker が残っていないことを
                `git grep -n -E '^(<{7} |={7}$|>{7} )'` で確認する。
                git が書く marker は `<<<<<<< ` / `>>>>>>> ` の後にラベルが続き、
@@ -232,7 +234,11 @@ jobs:
                `bun x tsc --noEmit`、`bun run lint:md`。`bunx` ではなく `bun x` を
                使うこと — このセッションの許可ツールは `Bash(bun:*)` であり
                `bunx` は許可されていない)
-            6. `git commit` で merge を確定し、`${{ matrix.pr.head }}` に push する
+            6. 解決したファイルを `git add <path>` で **1 つずつ明示的に** stage する
+               (`git add -A` / `git add .` は使わない — 無関係な変更や未解決の
+               marker を巻き込むため)。`git diff --name-only --diff-filter=U` が
+               空になったことを確認してから `git commit` で merge を確定し、
+               `${{ matrix.pr.head }}` に push する
             7. このPRに「conflict 解決完了 / 残課題」を要約コメントで報告する
 
             撤退判断: 上記 2 で両側の意図を確信を持って両立できない場合、あるいは

@@ -214,7 +214,6 @@ function runPruneDotfilesSymlinks(
   homeDir: string,
   subdir: string,
   mode: string,
-  source?: string,
 ): { status: number; stderr: string } {
   const harness = join(root, "prune-harness.sh");
   writeFileSync(
@@ -222,7 +221,7 @@ function runPruneDotfilesSymlinks(
     [
       "set -euo pipefail",
       'DOTFILES="$1"',
-      extractShellFunction("prune_dotfiles_symlinks", source),
+      extractShellFunction("prune_dotfiles_symlinks"),
       "status=0",
       'prune_dotfiles_symlinks "$2" "$3" "$4" || status=$?',
       'printf "status=%s\\n" "$status"',
@@ -241,8 +240,8 @@ function runPruneDotfilesSymlinks(
 }
 
 // 上の harness は `f || status=$?` で呼ぶため、bash の仕様上 **関数本体の全体で
-// errexit が抑止される**。install.sh 本体 (installer:435-445) は同じ関数を
-// ambient errexit 下で **裸で** 呼ぶので、「内部のコマンドが失敗したときに
+// errexit が抑止される**。install.sh 本体 (`==> Pruning retired skill/command symlinks`
+// ブロックの 6 箇所) は同じ関数を ambient errexit 下で **裸で** 呼ぶので、「内部のコマンドが失敗したときに
 // install.sh ごと abort しないか」はこの harness では観測できない
 // (`rmdir` から `|| true` を外す変異が生き残ることで確認済み)。
 // そのケース専用に、裸呼び出し + 後続コマンド到達で観測する harness を分けて持つ。
@@ -1360,35 +1359,31 @@ describe("prune_dotfiles_symlinks", () => {
     expect(result.status).toBe(0);
     // retired は「リンク先の存在を問わず削除」。live 側も消えていなければならない。
     expect(existsSync(homeDir)).toBe(false);
-  });
-
-  test("retired tolerates rmdir failure when a foreign real entry co-resides", () => {
-    const { dotfiles, source, homeDir } = preparePruneFixture();
-    linkFromDotfiles(source, homeDir, "dotfiles-skill", true);
-    // 他ツール (plugin marketplace 等) が置いた実ディレクトリ。実機の
-    // ~/.agents/skills は symlink 37 / 実ディレクトリ 17 でこの状態にある。
-    mkdirSync(join(homeDir, "foreign-skill", "nested"), { recursive: true });
-
-    const result = runPruneDotfilesSymlinks(dotfiles, homeDir, PRUNE_SUBDIR, "retired");
-
-    // rmdir は失敗するが `|| true` で吸収され、errexit を踏まず 0 を返す。
-    expect(result.status).toBe(0);
-    expect(entries(homeDir)).toEqual(["foreign-skill"]);
+    // symlink だけを消し、リンク先の実体 ($DOTFILES 側) には触らない。
+    // これが無いと `rm -f "$existing"` を `rm -rf "$existing/"` (末尾スラッシュで
+    // symlink を辿る) に変える変異が全テストを通過する。
+    expect(existsSync(join(source, "live-skill"))).toBe(true);
   });
 
   test("retired does not abort install.sh when rmdir fails under ambient errexit", () => {
     // 実機の 4 ディレクトリすべてで `rmdir` は失敗する (他ツールの実体が同居)。
     // install.sh は裸で呼ぶので、`|| true` が外れると install.sh 全体が
     // そこで停止し、後続の managed file 生成が丸ごと走らなくなる。
+    // ⚠️ このケースは `runPruneDotfilesSymlinks` (`f || status=$?`) では観測できない。
+    // bash はその文脈で関数本体全体の errexit を抑止するため、`|| true` を外しても
+    // `return 0` に到達して status 0 のままになる (変異が生き残ることを実測済み)。
     const { dotfiles, source, homeDir } = preparePruneFixture();
     linkFromDotfiles(source, homeDir, "dotfiles-skill", true);
-    mkdirSync(join(homeDir, "foreign-skill"), { recursive: true });
+    // 他ツール (plugin marketplace 等) が置いた実ディレクトリ。実機の
+    // ~/.agents/skills は symlink 37 / 実ディレクトリ 17 でこの状態にある。
+    mkdirSync(join(homeDir, "foreign-skill", "nested"), { recursive: true });
 
     const result = runPruneUnderAmbientErrexit(dotfiles, homeDir, PRUNE_SUBDIR, "retired");
 
     expect(result.status).toBe(0);
     expect(result.continued).toBe(true);
     expect(entries(homeDir)).toEqual(["foreign-skill"]);
+    expect(existsSync(join(source, "dotfiles-skill"))).toBe(true);
   });
 
   test("dangling removes only broken dotfiles symlinks and never rmdirs", () => {
