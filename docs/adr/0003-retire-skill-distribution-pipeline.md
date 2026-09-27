@@ -107,7 +107,7 @@ repo 全体で 0 件だった) で、コード側に代替は無い。記録と�
   - `verify.sh` の exit code 保持保証 (「`|| true` は使わない」)。
   - `finalize.sh` の push 前チェックリスト (`git add` 前の marker 検査 / unmerged パス全量カバー確認 / working tree clean / `MERGE_HEAD` 消滅 / HEAD ブランチ確認) と `git add -A` 禁止。
   - **`needs-human` ラベル + 構造化コメント (`loop-escalation:v1` の JSON) によるエスカレーション契約。** 機械可読な停止シグナルが消えるため、ヘッドレス運用で「人間待ちで止まっている PR」を検知する経路が切れる。新 prompt の撤退手順は自由文コメントのみ。
-- **`claude-code-review.yml` の pin が到達不能になると PR レビューが機能停止する (fallback 無し)。** upstream が pin SHA を消す (force push / repo 削除) と staging step が `::error::` で失敗し、`continue-on-error` が付いているのでレビューは投稿されないまま CI は緑のまま進む。かつ master 追随も `v1.0.0` への切り替えもできない (どちらも `skills/` を含まない) ため、復旧には `v0.10.0` 以前の別 ref を選ぶか skill を vendor する判断が必要になる。
+- **`claude-code-review.yml` の pin が到達不能になると PR レビューが機能停止する (fallback 無し)。** upstream が pin SHA を消す (force push / repo 削除) と checkout / staging step が失敗し、**この 2 step には `continue-on-error` が無いので job ごと red になる** (`continue-on-error` が付いているのは skill 実行・サマリ抽出・コメント投稿の 3 step で、そちらの失敗は緑のまま `::warning::` に留まる)。つまりレビューは投稿されないが、pin の破損は CI に失敗として現れるので外部監視は要らない。かつ master 追随も `v1.0.0` への切り替えもできない (どちらも `skills/` を含まない) ため、復旧には `v0.10.0` 以前の別 ref を選ぶか skill を vendor する判断が必要になる。
 - **剪定ブロックには sunset 条件が無い。** 再考トリガに従ってユーザーが `$DOTFILES/.agents/skills/` を自前 vendor して `~/.agents/skills/` へ symlink した場合、`install.sh` の mode=retired 剪定が**無言でそれを消す**。vendor する際は剪定ブロック側も同時に外すこと。
 
 ## Alternatives Considered (rejected)
