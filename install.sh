@@ -350,32 +350,22 @@ if [ -d "$HOME/.codex/skills" ]; then
   done
   rmdir "$HOME/.codex/skills" 2>/dev/null || true
 fi
-# skills: symlink each generated skill directory (1 skill = 1 dir with SKILL.md + assets)
-# rulesync 9.1.1 は codexcli target の skills を .agents/skills (cwd相対) に出力し、
-# Codex CLI 本体も project skills を .agents/skills から読むため、生成先をここに合わせる。
+# skills: skill 配布パイプラインを廃止したため、旧 install.sh が
+# `~/.agents/skills/` へ貼った symlink を掃除する。repo 側の .agents/skills は
+# 削除済みで全リンクが陳腐化するので、リンク先の存在に関わらず
+# $DOTFILES/.agents/skills/ 配下を指す symlink は無条件で削除する
+# (上の .codex/skills 掃除ブロックと同型)。
 if [ -d "$HOME/.agents/skills" ]; then
   for existing in "$HOME/.agents/skills/"*; do
     [ -L "$existing" ] || continue
     link_target="$(readlink "$existing")"
     case "$link_target" in
       "$DOTFILES/.agents/skills/"*)
-        [ -e "$link_target" ] || rm -f "$existing"
+        rm -f "$existing"
       ;;
     esac
   done
-fi
-if [ -d "$DOTFILES/.agents/skills" ] && [ "$(ls -A "$DOTFILES/.agents/skills" 2>/dev/null)" ]; then
-  mkdir -p "$HOME/.agents/skills"
-  for d in "$DOTFILES/.agents/skills/"*/; do
-    if [ -d "$d" ]; then
-      target="$HOME/.agents/skills/$(basename "$d")"
-      if [ -e "$target" ] && [ ! -L "$target" ]; then
-        echo "Error: $target exists and is not a symlink. Move it aside before re-running install.sh." >&2
-        exit 1
-      fi
-      ln -sfn "${d%/}" "$target"
-    fi
-  done
+  rmdir "$HOME/.agents/skills" 2>/dev/null || true
 fi
 
 echo "==> Installing Claude Code user settings"
@@ -403,13 +393,10 @@ if [ -d "$DOTFILES/.claude/commands" ] && [ "$(ls -A "$DOTFILES/.claude/commands
     [ -f "$f" ] && ln -sf "$f" "$HOME/.claude/commands/$(basename "$f")"
   done
 fi
-# skills: project (各 repo の .claude/skills) を正とする方針のため、
-# ~/.claude/skills へのグローバル symlink 配布はしない。
-# 各 repo は rulesync fetch (kanade0404/skills を @<tag> で固定取得) で
-# 自分の .claude/skills/ を用意する。
+# skills: ~/.claude/skills へのグローバル symlink 配布はしない。
 # 旧バージョンの install.sh が作成した ~/.claude/skills 配下の symlink は
 # 陳腐化するので、リンク先の存在に関わらず無条件で削除する
-# (.codex/skills → .agents/skills 移行時の掃除ブロックと同型)。
+# (上の .codex/skills 掃除ブロックと同型)。
 if [ -d "$HOME/.claude/skills" ]; then
   for existing in "$HOME/.claude/skills/"*; do
     [ -L "$existing" ] || continue
@@ -423,35 +410,21 @@ if [ -d "$HOME/.claude/skills" ]; then
   rmdir "$HOME/.claude/skills" 2>/dev/null || true
 fi
 
-echo "==> Linking OpenCode user settings"
-# opencode は ~/.config/opencode/ を global config として読む。
-# skills は ~/.config/opencode/skills/<name>/SKILL.md を探索する (project の
-# .opencode/skills/ と .agents/skills/ 、~/.claude/skills/ も fallback で読む)。
-# rulesync で生成した .opencode/skills/ を global へ symlink し、どの cwd でも
-# フルセットが使えるようにする。
+# skills: OpenCode 向けの `~/.config/opencode/skills/` へのグローバル symlink 配布も
+# 廃止した。repo 側の .opencode/skills は削除済みで全リンクが陳腐化するので、
+# リンク先の存在に関わらず $DOTFILES/.opencode/skills/ 配下を指す symlink は
+# 無条件で削除する (.agents/skills / .codex/skills 掃除ブロックと同型)。
 if [ -d "$HOME/.config/opencode/skills" ]; then
   for existing in "$HOME/.config/opencode/skills/"*; do
     [ -L "$existing" ] || continue
     link_target="$(readlink "$existing")"
     case "$link_target" in
       "$DOTFILES/.opencode/skills/"*)
-        [ -e "$link_target" ] || rm -f "$existing"
+        rm -f "$existing"
       ;;
     esac
   done
-fi
-if [ -d "$DOTFILES/.opencode/skills" ] && [ "$(ls -A "$DOTFILES/.opencode/skills" 2>/dev/null)" ]; then
-  mkdir -p "$HOME/.config/opencode/skills"
-  for d in "$DOTFILES/.opencode/skills/"*/; do
-    if [ -d "$d" ]; then
-      target="$HOME/.config/opencode/skills/$(basename "$d")"
-      if [ -e "$target" ] && [ ! -L "$target" ]; then
-        echo "Error: $target exists and is not a symlink. Move it aside before re-running install.sh." >&2
-        exit 1
-      fi
-      ln -sfn "${d%/}" "$target"
-    fi
-  done
+  rmdir "$HOME/.config/opencode/skills" 2>/dev/null || true
 fi
 
 echo "==> Installing git hooks (lefthook)"
