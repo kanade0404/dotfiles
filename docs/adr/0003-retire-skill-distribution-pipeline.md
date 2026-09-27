@@ -26,7 +26,7 @@ Amends [2. CLAUDE.md を廃止し、root instructions を持たない](0002-reti
   - ただし**これが 63.6% を系統的に過小評価させると断定はできない**。同じ導出で非ゼロ起動 12 skill の側も 9 本 (75.0%) が subagent dispatch 経路を持ち、割合はゼロ起動側 (38.1%) より**高い**。したがってこの除外は「向きの分からない未定量の計測漏れ」であって、「63.6% が過小評価である」ことの根拠にはならない。
 - 維持コストの内訳: rulesync config 2 本 (`rulesync.jsonc` / `rulesync-claude/rulesync.jsonc`)、lock 2 本、補助スクリプト 5 本 (`patch-rulesync-skill-frontmatter.ts` / `rewrite-codex-skill-dir.ts` + test / `update-skills-ref.ts` + test)、daily cron 1 本、CI ガード 1 job (`codex-skill-dir-guard`)、生成物を lint / review 対象外にするための除外設定 3 箇所 (`.markdownlint-cli2.jsonc` / `.coderabbit.yaml` / `test.yml` の shellcheck prune)。
 - `planetscale/database-skills` 由来の 4 skill (`postgres` / `vitess` / `mysql` / `neki`) だけは upstream が生きているため、取得を続けること自体は可能だった。
-- skill listing が context budget を圧迫していた。**ただし「68 skills / 26,478 chars > budget 16,000 chars」という数値は本 ADR の初版が唯一の出典で、測定方法が記録されておらず再導出できない。** 本 ADR ではこの数値を根拠に使わない。代わりに再導出可能な事実として、削除した `.claude/skills/` 37 skill の frontmatter が listing に寄与していた分量は **22,698 chars** (`- <name>: <description>` 形式で合算) である。これは「削除で listing が小さくなる」ことは示すが、「budget 超過が解消される」ことは示さない (削除後の実測は未取得)。
+- skill listing が context budget を圧迫していた。**ただし「68 skills / 26,478 chars > budget 16,000 chars」という数値は本 ADR の初版 (PR #258 の commit `a600a8a`、当該 ADR の L16 / L35) が唯一の出典で、測定方法が記録されておらず再導出できない。** 本 ADR ではこの数値を根拠に使わない。代わりに再導出可能な事実として、削除した `.claude/skills/` 37 skill の frontmatter が listing に寄与していた分量は **22,698 chars** (`- <name>: <description>` 形式で合算) である。これは「削除で listing が小さくなる」ことは示すが、「budget 超過が解消される」ことは示さない (削除後の実測は未取得)。
 - 本リポジトリの ADR 0002 で root instructions (`CLAUDE.md`) を廃止した流れの続きにあたる。
 
 ## Decision

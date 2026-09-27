@@ -104,7 +104,7 @@ project instructions (`CLAUDE.md` / `AGENTS.md`) は意図的に持たない (`A
 | Shell / Git / tmux | `nix/home.nix` | `darwin-rebuild switch` |
 | Neovim | `.config/nvim/` | `install.sh` |
 | Ghostty | `.config/ghostty/` | `install.sh` |
-| Codex settings/rules/hooks/commands | `.codex/` | `install.sh` |
+| Codex settings/rules/hooks | `.codex/` | `install.sh` |
 | Claude Code settings/hooks | `.claude/` | `install.sh` |
 
 agent skill (Claude / Codex / OpenCode) はこのリポジトリでは管理・コミットせず、
@@ -118,6 +118,10 @@ agent skill (Claude / Codex / OpenCode) はこのリポジトリでは管理・�
 `~/.claude/commands` / `~/.codex/commands` の dangling symlink を掃除する
 (削除対象は `$DOTFILES` 配下を絶対パスで指すリンクだけ。詳細は `install.sh` の
 `prune_dotfiles_symlinks` のコメント)。
+skills は配布をやめたので生きたリンクごと消す (`mode=retired`) が、**commands は配布を
+続けている** — repo に `.claude/commands/` / `.codex/commands/` を置けば再び配布される
+(現在の head にはどちらも存在しない)。だから commands 側は壊れたリンクだけを消す
+`mode=dangling` にしてある。
 
 ## Claude Code Hooks
 
