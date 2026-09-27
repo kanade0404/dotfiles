@@ -6,6 +6,8 @@ Date: 2026-09-23
 
 Accepted
 
+Amended by [3. skill の生成・配布パイプラインを廃止する (CI の pin 取得のみ残す)](0003-retire-skill-distribution-pipeline.md)
+
 ## Context
 
 - このリポジトリには `CLAUDE.md` (596 行) と `AGENTS.md` (117 行) が併存していた。`AGENTS.md` は `CLAUDE.md` から機械的にコピーされて drift した派生コピーで、冒頭が `guidance to Codex (Codex.ai/code)` という存在しない URL になっており、`##` 見出し単位で **6 節が丸ごと欠落**していた (Claude Code テレメトリ / 危険 git コマンドのガード (rule-matcher) / Codex テレメトリ / herdr hook スクリプト / Orca による hook 自動注入と実体生成方式 / Linear → Claude Code 自走パイプライン)。

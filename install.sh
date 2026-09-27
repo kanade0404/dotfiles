@@ -232,8 +232,10 @@ retain_codex_config_backup() {
 }
 
 # 旧バージョンの install.sh が `$HOME` 配下へ貼った symlink を掃除する。
-# 同一ロジックが 4 箇所 (skills 4 ディレクトリ) + commands 2 箇所に散っていたため、
-# 片方だけ直す退行を避けてヘルパーへ寄せた (`install_managed_file` と同じ方針)。
+# 同一ロジックが skills の 4 ディレクトリに散っていたため、片方だけ直す退行を避けて
+# ヘルパーへ寄せた (`install_managed_file` と同じ方針)。あわせて commands 2 ディレクトリの
+# dangling 剪定を**新設**した (旧 install.sh に commands の剪定は無く、symlink 生成
+# ブロックが 2 箇所あっただけ)。
 #
 # ⚠️ 安全不変条件: 削除するのは `readlink` の値が **`$DOTFILES/<subdir>/` で始まる
 # 絶対パス**である symlink **だけ**。`case` の接頭辞に一致しないもの

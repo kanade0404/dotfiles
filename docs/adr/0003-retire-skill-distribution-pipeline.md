@@ -6,6 +6,8 @@ Date: 2026-09-27
 
 Accepted
 
+Amends [2. CLAUDE.md を廃止し、root instructions を持たない](0002-retire-root-instructions.md)
+
 ## Drivers
 
 保守性 > エージェント能力の広さ。「二度と更新されないスナップショットを再生成し続ける
@@ -33,7 +35,8 @@ Accepted
 - rulesync パイプライン一式 (config 2 本 / lock 2 本 / 補助スクリプト 5 本 / `package.json` の `rulesync:skills*` 4 script / devDependency `rulesync` と `jsonc-parser` / daily cron / CI ガード job) を削除する。
 - **`planetscale/database-skills` 由来の 4 skill も削除する。** upstream が生きているので取り直し可能であり、4 skill のために config 2 本・lock 2 本・script 5 本・生成 3 ディレクトリを維持するのは不均衡と判断した。
 - `.coderabbit.yaml` は**ファイルごと削除する**。このファイルの内容は `reviews.path_filters` の 3 エントリ (`!.claude/skills/**` / `!.agents/skills/**` / `!.opencode/skills/**`) だけで、他の設定を持っていなかったため、生成物が消えた時点で全内容が死に設定になる。CodeRabbit は設定ファイル不在なら既定値で動く。
-- `install.sh` は skill の symlink **生成**をやめ、既に貼られた symlink の**剪定だけ**を残す。剪定は「リンク先が存在しなければ削除」ではなく「`$DOTFILES` 配下を指す symlink を、リンク先の存在を問わず削除してから `rmdir`」型にする。**この「無条件削除」が安全なのは `case` で削除対象を `$DOTFILES/<subdir>/` で始まる絶対パスに限定しているから**であり、他ツールが置いた実体や別 checkout を指すリンクには触れない (実装は `prune_dotfiles_symlinks`。この不変条件はヘルパーのコメントにも書いてある)。
+- `install.sh` は skill の symlink **生成**をやめ、既に貼られた symlink の**剪定だけ**を残す。skills 4 ディレクトリの剪定は「リンク先が存在しなければ削除」ではなく「`$DOTFILES` 配下を指す symlink を、リンク先の存在を問わず削除してから `rmdir`」型 (`mode=retired`) にする。**この「無条件削除」が安全なのは `case` で削除対象を `$DOTFILES/<subdir>/` で始まる絶対パスに限定しているから**であり、他ツールが置いた実体や別 checkout を指すリンクには触れない (実装は `prune_dotfiles_symlinks`。この不変条件はヘルパーのコメントにも書いてあり、`scripts/codex-otel.test.ts` の `describe("prune_dotfiles_symlinks")` が固定している)。
+- 上記の対比は **skills に限る**。**配布を続ける `~/.claude/commands` / `~/.codex/commands` には「リンク先が存在しなければ削除」型 (`mode=dangling`、`rmdir` もしない) を新設する**。旧 `install.sh` に commands の剪定は無く、生成ブロックが 2 箇所あっただけなので、これは抽出ではなく**新しい振る舞いの追加**である。mode を分けたのは「配布をやめたディレクトリ (retired)」と「配布を続けており将来また中身が増えうるディレクトリ (dangling)」で、生きたリンクを消してよいかが逆になるため。
 - `scan-pr-conflicts.yml` が参照していた `pr-conflict-resolver` skill の手順は、workflow の `prompt` 内へ取り込んで自己完結させる。
 - **例外 — 残す upstream 依存**: `.github/workflows/claude-code-review.yml` は `kanade0404/skills` を pin SHA (`363138744442c5f1f2b65a2414a4d8ba7e0ac264`) で checkout し、CI 実行時に `.claude/skills/code-review` をその場で生成する経路を**残す**。これがこのリポジトリに残る唯一の live な upstream skill 依存である。「全廃」ではなく「repo にコミットする生成物と、それを作るローカル向けビルドパイプラインの廃止」が本決定の範囲。
 - 合計 **698 files** (削除前の tracked 772 の約 90%) を削除し、残りは 75 files になる (本 ADR を含む)。うち**本決定に直接帰属するのは 667 files**で、残る 31 files は下記「関連するが独立した整理」の `.claude-plugin/` である。
@@ -97,7 +100,8 @@ repo 全体で 0 件だった) で、コード側に代替は無い。記録と�
 - **`~/.agents/skills/` 経由で OpenCode / Codex にグローバルに効いていた 37 skill が全プロジェクトから消える。** `.claude/skills` は project 限定だったが、`.agents/skills` は `install.sh` が `~/.agents/skills/` へ symlink していたため、どの cwd でもフルセットが使えていた。この喪失が本決定の最大のコストである。
 - `install.sh` を再実行するまで `~/.agents/skills/` と `~/.config/opencode/skills/` に dangling symlink が残る。剪定ブロックは残したが、掃除の効き方には 2 つの条件がある:
   - **`$DOTFILES` が symlink を貼った時と同じ checkout パスであれば剪定される。** 実機の既存リンクは main checkout (`/Users/kanade0404/work/dotfiles/...`) を指しているため、worktree から `DOTFILES=<worktree>` で実行すると `case` の接頭辞に一致せず **1 本も剪定されない**。
-  - **`rmdir` は他ツール由来の実体が同居していれば恒久的に失敗する** (`|| true` なので無害)。実機の内訳は `~/.agents/skills` が symlink 37 / 実ディレクトリ 17、`~/.config/opencode/skills` が symlink 37 / 実 15、`~/.claude/skills` が symlink 2 / 実 16、`~/.codex/skills` が symlink 0 / 実 17。つまり 4 ディレクトリすべてで `rmdir` は失敗する。なお `~/.claude/skills` の symlink 2 本は `../../.agents/skills/...` という**相対パス**なので、剪定の `case` にも一致せず残る (他ツールの設置物なのでこれが正しい挙動)。
+  - **`rmdir` は他ツール由来の実体が同居していれば恒久的に失敗する** (`|| true` なので無害)。実機の内訳は `~/.agents/skills` が symlink 37 / 実ディレクトリ 17、`~/.config/opencode/skills` が symlink 37 / 実 15、`~/.claude/skills` が symlink 2 / 実 16、`~/.codex/skills` が symlink 0 / 実 17。つまり 4 ディレクトリすべてで `rmdir` は失敗する。なお `~/.claude/skills` の symlink 2 本 (`find-skills` / `orca-cli`) は `../../.agents/skills/...` という**相対パス**なので、剪定の `case` にも一致せず残る (他ツールの設置物なのでこれが正しい挙動)。
+    **二次的な dangling は発生しない**ことを実機で確認済み。この 2 本は `~/.agents/skills/find-skills` / `~/.agents/skills/orca-cli` に解決されるが、その解決先は **どちらも実ディレクトリ** (`drwxr-xr-x`) であって dotfiles を指す symlink ではない。つまり剪定される 37 本の symlink には含まれないので、剪定後もリンクは生きたまま残る。加えて `~/.agents/skills` には実ディレクトリが 17 個あるため `rmdir` も失敗し、親ディレクトリごと消える経路も無い。検証コマンドは下記「## 数値の導出」に含めた。
 - **可逆性: 本質的には two-way door。** 削除した 698 files は全量が git 履歴 (`origin/master`) にあり、source も upstream タグ `v0.9.0` / `v0.10.0` に全量残っている。`git checkout origin/master -- .claude/skills .agents/skills .opencode/skills` + `install.sh` で原状復帰でき、手数は削除と同程度。非対称なのは**生成物の復元ではなく (1) rulesync パイプラインの再構築と (2) `~/.agents/skills/` 配布経路の再設計**である。**唯一の不可逆リスクは upstream がタグを削除した場合** (`v0.9.0` / `v0.10.0` が消えると source 側の原本が失われる。生成物は git 履歴に残るのでそちらは残る)。
 - `linear-issue` slash command (`.claude/commands/linear-issue.md`) が失われる。参照先の `linear-issue-driven-development` skill が消えるため同時に落とした。Linear → Claude Code 自走パイプラインを手動で 1 件流す経路がなくなる。運用パラメータは上記「Amends ADR 0002 (b)」に書き残した。
 - `planetscale/database-skills` の 4 skill も失われる。DB 作業時に参照したくなった場合は取り直しが必要。
@@ -224,6 +228,13 @@ git grep -n '\.claude-plugin/' origin/master -- . ':!.claude-plugin'  # .markdow
 # 実機の ~/.agents/skills 等の同居状況 (rmdir が失敗する根拠)
 ls -la ~/.agents/skills ~/.config/opencode/skills ~/.claude/skills ~/.codex/skills
 readlink ~/.agents/skills/adr-writer   # /Users/kanade0404/work/dotfiles/.agents/skills/adr-writer
+
+# ~/.claude/skills の相対 symlink 2 本が剪定後も壊れないこと (二次的 dangling 無し)
+for n in find-skills orca-cli; do
+  readlink    ~/.claude/skills/$n   # ../../.agents/skills/<n>
+  readlink -f ~/.claude/skills/$n   # /Users/kanade0404/.agents/skills/<n>
+  ls -ld      ~/.agents/skills/$n   # drwxr-xr-x = 実ディレクトリ (剪定対象の symlink ではない)
+done
 ```
 
 listing 寄与 22,698 chars、および subagent dispatch 経路の 8/21 (38.1%) 対 9/12 (75.0%) は、
