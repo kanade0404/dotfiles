@@ -231,6 +231,67 @@ retain_codex_config_backup() {
   return 0
 }
 
+# 旧バージョンの install.sh が `$HOME` 配下へ貼った symlink を掃除する。
+# 同一ロジックが 4 箇所 (skills 4 ディレクトリ) + commands 2 箇所に散っていたため、
+# 片方だけ直す退行を避けてヘルパーへ寄せた (`install_managed_file` と同じ方針)。
+#
+# ⚠️ 安全不変条件: 削除するのは `readlink` の値が **`$DOTFILES/<subdir>/` で始まる
+# 絶対パス**である symlink **だけ**。`case` の接頭辞に一致しないもの
+# — 他ツール (plugin marketplace 等) が置いた実ディレクトリ、別 checkout の
+# dotfiles を指すリンク、相対パス symlink — は一切触らない。
+# この限定があるからこそ mode=retired の「リンク先の存在を問わず削除」を安全に
+# 名乗れる。**将来ここを緩める (例: `case` を外す / prefix を広げる) と、
+# `~/.agents/skills` や `~/.config/opencode/skills` のように他ツールの実体が同居する
+# ディレクトリで無関係な成果物を消す実害が出る。**
+#
+# 逆に言えば相対パス symlink (`../../work/dotfiles/.agents/skills/x` 等) は `case` に
+# 一致せず残る。mode=retired の「無条件」は「**絶対パスで `$DOTFILES` 配下を指すものに
+# 限り**、リンク先の存在を問わない」の意味であって、文字どおりの無条件ではない。
+# 同じ理由で、`$DOTFILES` が symlink 作成時と別の checkout (worktree 等) を指している
+# 実行では 1 本も剪定されない。
+#
+# 第 3 引数 (mode):
+#   retired  — リンク先の存在を問わず削除し、空になったら `rmdir` する。
+#              配布そのものをやめたディレクトリ用。
+#   dangling — リンク先が存在しないものだけ削除する。配布を続けており将来また
+#              中身が増えうるディレクトリ用 (`rmdir` もしない)。
+prune_dotfiles_symlinks() {
+  local home_dir="$1" dotfiles_subdir="$2" mode="$3"
+  local existing link_target
+
+  # stringly-typed なフラグなので、typo が黙って「何もしない」/「消しすぎる」に
+  # 落ちないよう未知の値は失敗させる (`install_managed_file` の backup フラグと同じ規律)。
+  case "$mode" in
+    retired | dangling) ;;
+    *)
+      echo "error: unknown prune mode '$mode' for $home_dir" >&2
+      return 1
+      ;;
+  esac
+
+  [ -d "$home_dir" ] || return 0
+  for existing in "$home_dir/"*; do
+    [ -L "$existing" ] || continue
+    link_target="$(readlink "$existing")"
+    case "$link_target" in
+      "$DOTFILES/$dotfiles_subdir/"*)
+        # `-e "$existing"` は symlink を辿るので、リンク先が生きていれば真になる
+        # (`-e "$link_target"` だと相対パス symlink を誤判定する)。
+        if [ "$mode" = "dangling" ] && [ -e "$existing" ]; then
+          continue
+        fi
+        rm -f "$existing"
+        ;;
+    esac
+  done
+  # 他ツール由来の実ディレクトリが同居していれば `rmdir` は失敗する。掃除は
+  # best-effort なので無視する (ADR 0003 の Negative に実機の同居状況を記録済み)。
+  if [ "$mode" = "retired" ]; then
+    rmdir "$home_dir" 2>/dev/null || true
+  fi
+  return 0
+}
+
 trap cleanup_install EXIT
 trap 'cleanup_install_and_exit 1' HUP
 trap 'cleanup_install_and_exit 2' INT
@@ -335,38 +396,6 @@ if [ -d "$DOTFILES/.codex/commands" ] && [ "$(ls -A "$DOTFILES/.codex/commands" 
     [ -f "$f" ] && ln -sf "$f" "$HOME/.codex/commands/$(basename "$f")"
   done
 fi
-# skills: .codex/skills から .agents/skills へ移行済みのため旧リンクを掃除する。
-# .codex/skills は repo から削除され全て陳腐化するので、リンク先の存在に関わらず
-# $DOTFILES/.codex/skills/ 配下を指す symlink は無条件で削除する。
-if [ -d "$HOME/.codex/skills" ]; then
-  for existing in "$HOME/.codex/skills/"*; do
-    [ -L "$existing" ] || continue
-    link_target="$(readlink "$existing")"
-    case "$link_target" in
-      "$DOTFILES/.codex/skills/"*)
-        rm -f "$existing"
-      ;;
-    esac
-  done
-  rmdir "$HOME/.codex/skills" 2>/dev/null || true
-fi
-# skills: skill 配布パイプラインを廃止したため、旧 install.sh が
-# `~/.agents/skills/` へ貼った symlink を掃除する。repo 側の .agents/skills は
-# 削除済みで全リンクが陳腐化するので、リンク先の存在に関わらず
-# $DOTFILES/.agents/skills/ 配下を指す symlink は無条件で削除する
-# (上の .codex/skills 掃除ブロックと同型)。
-if [ -d "$HOME/.agents/skills" ]; then
-  for existing in "$HOME/.agents/skills/"*; do
-    [ -L "$existing" ] || continue
-    link_target="$(readlink "$existing")"
-    case "$link_target" in
-      "$DOTFILES/.agents/skills/"*)
-        rm -f "$existing"
-      ;;
-    esac
-  done
-  rmdir "$HOME/.agents/skills" 2>/dev/null || true
-fi
 
 echo "==> Installing Claude Code user settings"
 mkdir -p "$HOME/.claude"
@@ -393,39 +422,27 @@ if [ -d "$DOTFILES/.claude/commands" ] && [ "$(ls -A "$DOTFILES/.claude/commands
     [ -f "$f" ] && ln -sf "$f" "$HOME/.claude/commands/$(basename "$f")"
   done
 fi
-# skills: ~/.claude/skills へのグローバル symlink 配布はしない。
-# 旧バージョンの install.sh が作成した ~/.claude/skills 配下の symlink は
-# 陳腐化するので、リンク先の存在に関わらず無条件で削除する
-# (上の .codex/skills 掃除ブロックと同型)。
-if [ -d "$HOME/.claude/skills" ]; then
-  for existing in "$HOME/.claude/skills/"*; do
-    [ -L "$existing" ] || continue
-    link_target="$(readlink "$existing")"
-    case "$link_target" in
-      "$DOTFILES/.claude/skills/"*)
-        rm -f "$existing"
-      ;;
-    esac
-  done
-  rmdir "$HOME/.claude/skills" 2>/dev/null || true
-fi
 
-# skills: OpenCode 向けの `~/.config/opencode/skills/` へのグローバル symlink 配布も
-# 廃止した。repo 側の .opencode/skills は削除済みで全リンクが陳腐化するので、
-# リンク先の存在に関わらず $DOTFILES/.opencode/skills/ 配下を指す symlink は
-# 無条件で削除する (.agents/skills / .codex/skills 掃除ブロックと同型)。
-if [ -d "$HOME/.config/opencode/skills" ]; then
-  for existing in "$HOME/.config/opencode/skills/"*; do
-    [ -L "$existing" ] || continue
-    link_target="$(readlink "$existing")"
-    case "$link_target" in
-      "$DOTFILES/.opencode/skills/"*)
-        rm -f "$existing"
-      ;;
-    esac
-  done
-  rmdir "$HOME/.config/opencode/skills" 2>/dev/null || true
-fi
+echo "==> Pruning retired skill/command symlinks"
+# skills: グローバル配布 (`~/.claude/skills` / `~/.agents/skills` /
+# `~/.config/opencode/skills`、および `.agents/skills` へ移行する前の
+# `~/.codex/skills`) は全て廃止した。repo 側の生成ディレクトリも削除済みで
+# 旧リンクは全て陳腐化するため mode=retired (リンク先の存在を問わず削除)。
+#
+# 探索パスの参考 (再導入を検討する際に必要になるため残す): OpenCode は
+# `~/.config/opencode/skills/<name>/SKILL.md` を global として探索し、project の
+# `.opencode/skills/` と `.agents/skills/`、`~/.claude/skills/` も fallback で読む。
+prune_dotfiles_symlinks "$HOME/.codex/skills" ".codex/skills" retired
+prune_dotfiles_symlinks "$HOME/.agents/skills" ".agents/skills" retired
+prune_dotfiles_symlinks "$HOME/.claude/skills" ".claude/skills" retired
+prune_dotfiles_symlinks "$HOME/.config/opencode/skills" ".opencode/skills" retired
+# commands: skills と違い **配布はやめていない** (上の symlink 生成ブロックは残っている)。
+# ただし現在 repo 側に `.claude/commands/` / `.codex/commands/` が無いため生成ブロックは
+# `[ -d ] && [ -n "$(ls -A)" ]` guard で skip され、過去に貼った symlink が dangling の
+# まま何度再実行しても消えなかった。将来 command を足せば再び配布されるので、
+# 無条件削除ではなく mode=dangling (リンク先が無いものだけ削除) にする。
+prune_dotfiles_symlinks "$HOME/.claude/commands" ".claude/commands" dangling
+prune_dotfiles_symlinks "$HOME/.codex/commands" ".codex/commands" dangling
 
 echo "==> Installing git hooks (lefthook)"
 if command -v lefthook >/dev/null 2>&1 && [ -d "$DOTFILES/.git" ]; then
