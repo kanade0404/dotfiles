@@ -1350,7 +1350,8 @@ describe("codex-otel", () => {
 
 // ADR 0003 で skill の symlink 生成をやめ、install.sh には剪定だけが残った。
 // 剪定は `$HOME` 配下を無条件に消す危険な操作なので、安全不変条件
-// (削除対象は `$DOTFILES/<subdir>/` を接頭辞とする絶対パス symlink だけ) を
+// (削除対象は `readlink` の値が `$DOTFILES/<subdir>/` を**文字列として**接頭辞に
+// 持つ symlink だけ。既定の `pwd` 由来 `DOTFILES` では絶対パスになる) を
 // テストで固定する。ここが壊れると他ツールの成果物を消す実害が出る。
 describe("prune_dotfiles_symlinks", () => {
   test("retired removes dotfiles symlinks regardless of target existence and rmdirs the emptied dir", () => {
@@ -1403,7 +1404,7 @@ describe("prune_dotfiles_symlinks", () => {
     expect(lstatSync(join(homeDir, "live-command")).isSymbolicLink()).toBe(true);
   });
 
-  test("dangling preserves broken symlinks that are not $DOTFILES-prefixed", () => {
+  test("dangling preserves broken symlinks whose readlink is not $DOTFILES-prefixed", () => {
     // `dangling` が当たるのは `~/.claude/commands` / `~/.codex/commands` という
     // **他ツールも書きうる**ディレクトリなので、「壊れていても dotfiles 由来で
     // なければ消さない」契約をこちら側でも固定する。
@@ -1462,7 +1463,7 @@ describe("prune_dotfiles_symlinks", () => {
     expect(entries(homeDir)).toEqual([]);
   });
 
-  test("retired preserves everything that is not a $DOTFILES-prefixed absolute symlink", () => {
+  test("retired preserves everything whose readlink is not $DOTFILES-prefixed", () => {
     const { dotfiles, source, homeDir } = preparePruneFixture();
     // 消えてよいのはこれだけ。他が残ることを対照として確かめる。
     linkFromDotfiles(source, homeDir, "dotfiles-skill", true);
@@ -1489,9 +1490,6 @@ describe("prune_dotfiles_symlinks", () => {
     mkdirSync(otherCheckout, { recursive: true });
     symlinkSync(otherCheckout, join(homeDir, "other-checkout-link"));
 
-    // fixture の前提を明示的に固定する: relative-link は **本当に** $DOTFILES 配下へ
-    // 解決している。これが崩れると下の「残る」assertion は「接頭辞不一致だから」では
-    // なく単に別ツリーを指していたから通ることになり、対照の意味が消える。
     // fixture の前提を明示的に固定する: relative-link は **本当に** $DOTFILES 配下へ
     // 解決している。これが崩れると下の「残る」assertion は「接頭辞不一致だから」では
     // なく単に別ツリーを指していたから通ることになり、対照の意味が消える。

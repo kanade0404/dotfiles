@@ -238,8 +238,8 @@ retain_codex_config_backup() {
 # ブロックが 2 箇所あっただけ)。
 #
 # ⚠️ 安全不変条件: 削除するのは `readlink` の値が **`$DOTFILES` と同じ表記のまま
-# `$DOTFILES/<subdir>/` を接頭辞に持つ** symlink **だけ** (`DOTFILES` は既定では L9 の
-# `pwd` により絶対パスなので、通常は「`$DOTFILES` 配下を指す絶対パス」と読んでよい。
+# `$DOTFILES/<subdir>/` を接頭辞に持つ** symlink **だけ** (`DOTFILES` は冒頭の既定値
+# (`pwd` 由来) では絶対パスなので、通常は「`$DOTFILES` 配下を指す絶対パス」と読んでよい。
 # ただし判定は `case` による純粋な文字列接頭辞比較であって「絶対パスかどうか」は
 # 見ていない — `DOTFILES=.` のような相対表記で実行すれば `./<subdir>/x` という
 # 相対リンクも一致して削除される)。`case` の接頭辞に一致しないもの
@@ -262,7 +262,7 @@ retain_codex_config_backup() {
 # スラッシュ無しで貼られたリンクに一致しない)。install.sh は `DOTFILES` を正規化して
 # いないため、表記を揃えずに実行すると無言の no-op になる。いずれも「消さない」側に
 # 倒れる fail-safe な限界なので許容している。唯一「消しすぎ」側に振れるのは上記の
-# 相対 `DOTFILES` で実行した場合だが、既定 (L9 の `pwd`) では起きない。
+# 相対 `DOTFILES` で実行した場合だが、冒頭の既定値 (`pwd` 由来) では起きない。
 # `DOTFILES` の正規化は #259 で追う。
 #
 # 第 3 引数 (mode):
@@ -292,7 +292,7 @@ prune_dotfiles_symlinks() {
       "$DOTFILES/$dotfiles_subdir/"*)
         # `-e "$existing"` は symlink を辿るので、リンク先が生きていれば真になる。
         # `-e "$link_target"` は cwd 相対で解決されるため、`DOTFILES` 自体が相対パスで
-        # 渡された実行では誤判定する (既定は L9 の `pwd` で絶対になるので、通常は
+        # 渡された実行では誤判定する (冒頭の既定値 `pwd` 由来で絶対になるので、通常は
         # どちらでも同じ結果になる — `$existing` を見るのが素直という選択)。
         if [ "$mode" = "dangling" ] && [ -e "$existing" ]; then
           continue
@@ -445,6 +445,13 @@ echo "==> Pruning retired skill/command symlinks"
 # `~/.config/opencode/skills`、および `.agents/skills` へ移行する前の
 # `~/.codex/skills`) は全て廃止した。repo 側の生成ディレクトリも削除済みで
 # 旧リンクは全て陳腐化するため mode=retired (リンク先の存在を問わず削除)。
+#
+# ⚠️ sunset 条件: mode=retired が正しいのは「repo 側に `$DOTFILES/<subdir>/` が
+# 存在しない」という前提の上でだけ。`prune_dotfiles_symlinks` はこの前提を
+# **検証していない** (見るのは `readlink` の値だけ) ので、将来どれかの skills
+# ディレクトリを再 vendor して配布を再開するなら、**生成ブロックを足すのと同時に
+# その行を retired から外すこと**。外し忘れると、貼った直後の生きたリンクを
+# 同じ実行内で無言で消す。判断の記録は ADR 0003 の Negative consequences を参照。
 #
 # 探索パスの参考 (再導入を検討する際に必要になるため残す): OpenCode は
 # `~/.config/opencode/skills/<name>/SKILL.md` を global として探索し、project の
