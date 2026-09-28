@@ -102,7 +102,7 @@ repo 全体で 0 件だった) で、コード側に代替は無い。記録と�
   - **`$DOTFILES` が symlink を貼った時と同じ checkout パスであれば剪定される。** 実機の既存リンクは main checkout (`/Users/kanade0404/work/dotfiles/...`) を指しているため、worktree から `DOTFILES=<worktree>` で実行すると `case` の接頭辞に一致せず **1 本も剪定されない**。
   - **`rmdir` は他ツール由来の実体が同居していれば恒久的に失敗する** (`|| true` なので無害)。実機の内訳は `~/.agents/skills` が symlink 37 / 実ディレクトリ 17、`~/.config/opencode/skills` が symlink 37 / 実 15、`~/.claude/skills` が symlink 2 / 実 16、`~/.codex/skills` が symlink 0 / 実 17。つまり 4 ディレクトリすべてで `rmdir` は失敗する。なお `~/.claude/skills` の symlink 2 本 (`find-skills` / `orca-cli`) は `../../.agents/skills/...` という**相対パス**なので、剪定の `case` にも一致せず残る (他ツールの設置物なのでこれが正しい挙動)。
     **二次的な dangling は発生しない**ことを実機で確認済み。この 2 本は `~/.agents/skills/find-skills` / `~/.agents/skills/orca-cli` に解決されるが、その解決先は **どちらも実ディレクトリ** (`drwxr-xr-x`) であって dotfiles を指す symlink ではない。つまり剪定される 37 本の symlink には含まれないので、剪定後もリンクは生きたまま残る。加えて `~/.agents/skills` には実ディレクトリが 17 個あるため `rmdir` も失敗し、親ディレクトリごと消える経路も無い。検証コマンドは下記「## 数値の導出」に含めた。
-- **可逆性: 本質的には two-way door。** 削除した 698 files は全量が git 履歴 (`origin/master`) にあり、source も upstream タグ `v0.9.0` / `v0.10.0` に全量残っている。`git checkout origin/master -- .claude/skills .agents/skills .opencode/skills` + `install.sh` で原状復帰でき、手数は削除と同程度。非対称なのは**生成物の復元ではなく (1) rulesync パイプラインの再構築と (2) `~/.agents/skills/` 配布経路の再設計**である。**唯一の不可逆リスクは upstream がタグを削除した場合** (`v0.9.0` / `v0.10.0` が消えると source 側の原本が失われる。生成物は git 履歴に残るのでそちらは残る)。
+- **可逆性: 本質的には two-way door。** 削除した 698 files は全量が git 履歴 (merge-base `03901ffa45755f3735eac333db6fa42b67fe8487`) にあり、source も upstream タグ `v0.9.0` / `v0.10.0` に全量残っている。`git restore --source=03901ffa45755f3735eac333db6fa42b67fe8487 -- .claude/skills .agents/skills .opencode/skills` + `install.sh` で原状復帰でき、手数は削除と同程度 (本 PR の merge 後は `origin/master` にこれらのファイルが無くなるため、branch 名ではなく SHA で参照する)。非対称なのは**生成物の復元ではなく (1) rulesync パイプラインの再構築と (2) `~/.agents/skills/` 配布経路の再設計**である。**唯一の不可逆リスクは upstream がタグを削除した場合** (`v0.9.0` / `v0.10.0` が消えると source 側の原本が失われる。生成物は git 履歴に残るのでそちらは残る)。
 - `linear-issue` slash command (`.claude/commands/linear-issue.md`) が失われる。参照先の `linear-issue-driven-development` skill が消えるため同時に落とした。Linear → Claude Code 自走パイプラインを手動で 1 件流す経路がなくなる。運用パラメータは上記「Amends ADR 0002 (b)」に書き残した。
 - `planetscale/database-skills` の 4 skill も失われる。DB 作業時に参照したくなった場合は取り直しが必要。
 - **上記「Amends ADR 0002」の (a) OpenCode 探索パス・(b) Linear 運用パラメータは、ADR 0002 が「喪失に数えない」としていた根拠を本決定が消したもの**であり、本 ADR の Negative に計上する。どちらも本 ADR 本文に書き残したので、実質的な喪失は「コード近傍にあったものが ADR に移った」ことに留まる。
@@ -179,23 +179,32 @@ dotfiles が担うべきは「グローバルに効く置き場所への配置�
 
 本 ADR の量化表現はすべて下記で再導出できる (実行時点: 2026-09-27)。
 
+`origin/master` / `HEAD` / working tree のような **可動な参照は使わない**。本 PR が
+merge されると `origin/master` は HEAD を含むようになり、`git diff origin/master..HEAD`
+は一律 0 行を返して「すべて再導出できる」が成立しなくなるため、測定時点の 2 つの
+commit を固定 SHA で参照する。
+
 ```bash
+# 再導出の基準点 (履歴上どの時点で実行しても同じ結果になるよう固定)
+BASE=03901ffa45755f3735eac333db6fa42b67fe8487   # merge-base = 測定時の master (#263 merge 後)
+HEAD_SHA=8a6a302ce966daec2acee96d3eaa7362b42d2f8a  # 本 ADR の数値を測った PR head
+
 # 削除 698 files / 内訳 654 + 31 + 13 / 帰属 667 / tracked 772 -> 75
-git diff --diff-filter=D --name-only origin/master..HEAD | wc -l                 # 698
-git diff --diff-filter=D --name-only origin/master..HEAD \
+git diff --diff-filter=D --name-only "$BASE..$HEAD_SHA" | wc -l                  # 698
+git diff --diff-filter=D --name-only "$BASE..$HEAD_SHA" \
   -- .claude/skills .agents/skills .opencode/skills | wc -l                      # 654 (218 x 3)
-git diff --diff-filter=D --name-only origin/master..HEAD -- .claude-plugin | wc -l  # 31
+git diff --diff-filter=D --name-only "$BASE..$HEAD_SHA" -- .claude-plugin | wc -l   # 31
 # 残り 13 (rulesync config/lock/script, daily cron, .coderabbit.yaml, linear-issue.md 等)
-git diff --diff-filter=D --name-only origin/master..HEAD \
+git diff --diff-filter=D --name-only "$BASE..$HEAD_SHA" \
   -- . ':!.claude/skills' ':!.agents/skills' ':!.opencode/skills' ':!.claude-plugin'  # 13 行
-git ls-tree -r --name-only origin/master | wc -l                                 # 772
-git ls-files | wc -l                                                             # 75
+git ls-tree -r --name-only "$BASE" | wc -l                                       # 772
+git ls-tree -r --name-only "$HEAD_SHA" | wc -l                                   # 75
 
 # 生成ディレクトリの skill 数 37 (= upstream 33 + planetscale 4)
-git ls-tree --name-only origin/master -- .claude/skills/ | wc -l                 # 37
+git ls-tree --name-only "$BASE" -- .claude/skills/ | wc -l                       # 37
 
 # v1.0.0 bump で消える 504 / 残る 150
-git ls-tree -r --name-only origin/master \
+git ls-tree -r --name-only "$BASE" \
   -- .claude/skills/postgres .claude/skills/vitess .claude/skills/mysql .claude/skills/neki \
      .agents/skills/postgres .agents/skills/vitess .agents/skills/mysql .agents/skills/neki \
      .opencode/skills/postgres .opencode/skills/vitess .opencode/skills/mysql .opencode/skills/neki \
@@ -219,11 +228,11 @@ gh api 'repos/kanade0404/skills/contents/skills/code-review?ref=363138744442c5f1
 
 # Linear 運用パラメータがコード側に残っていないこと
 # (本 ADR 自身が値を書き残しているので docs/adr は除外する)
-git grep -n 'claude:ready' -- . ':!docs/adr'   # 0 件 (exit 1)
+git grep -n 'claude:ready' "$HEAD_SHA" -- . ':!docs/adr'   # 0 件 (exit 1)
 
 # .claude-plugin がローカル marketplace として未登録であること
 # (`claude-plugins-official` は別文字列なので、パスとしての `.claude-plugin/` を見る)
-git grep -n '\.claude-plugin/' origin/master -- . ':!.claude-plugin'  # .markdownlint-cli2.jsonc の 1 行のみ
+git grep -n '\.claude-plugin/' "$BASE" -- . ':!.claude-plugin'  # .markdownlint-cli2.jsonc の 1 行のみ
 
 # 実機の ~/.agents/skills 等の同居状況 (rmdir が失敗する根拠)
 ls -la ~/.agents/skills ~/.config/opencode/skills ~/.claude/skills ~/.codex/skills
@@ -238,7 +247,7 @@ done
 ```
 
 listing 寄与 22,698 chars、および subagent dispatch 経路の 8/21 (38.1%) 対 9/12 (75.0%) は、
-`origin/master` の 37 個の `SKILL.md` を対象にした集計で得た:
+merge-base `03901ffa45755f3735eac333db6fa42b67fe8487` の 37 個の `SKILL.md` を対象にした集計で得た:
 
 - listing 寄与 — 各 `SKILL.md` の frontmatter から `name` と `description` を取り出し、
   `- <name>: <description>` (description は空白正規化) の文字数を 37 skill 分合算した値。

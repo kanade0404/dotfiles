@@ -237,24 +237,33 @@ retain_codex_config_backup() {
 # dangling 剪定を**新設**した (旧 install.sh に commands の剪定は無く、symlink 生成
 # ブロックが 2 箇所あっただけ)。
 #
-# ⚠️ 安全不変条件: 削除するのは `readlink` の値が **`$DOTFILES/<subdir>/` で始まる
-# 絶対パス**である symlink **だけ**。`case` の接頭辞に一致しないもの
+# ⚠️ 安全不変条件: 削除するのは `readlink` の値が **`$DOTFILES` と同じ表記のまま
+# `$DOTFILES/<subdir>/` を接頭辞に持つ** symlink **だけ** (`DOTFILES` は既定では L9 の
+# `pwd` により絶対パスなので、通常は「`$DOTFILES` 配下を指す絶対パス」と読んでよい。
+# ただし判定は `case` による純粋な文字列接頭辞比較であって「絶対パスかどうか」は
+# 見ていない — `DOTFILES=.` のような相対表記で実行すれば `./<subdir>/x` という
+# 相対リンクも一致して削除される)。`case` の接頭辞に一致しないもの
 # — 他ツール (plugin marketplace 等) が置いた実ディレクトリ、別 checkout の
-# dotfiles を指すリンク、相対パス symlink — は一切触らない。
+# dotfiles を指すリンク、`$DOTFILES` と表記が揃わない相対パス symlink — は一切触らない。
 # この限定があるからこそ mode=retired の「リンク先の存在を問わず削除」を安全に
 # 名乗れる。**将来ここを緩める (例: `case` を外す / prefix を広げる) と、
 # `~/.agents/skills` や `~/.config/opencode/skills` のように他ツールの実体が同居する
 # ディレクトリで無関係な成果物を消す実害が出る。**
 #
-# 逆に言えば相対パス symlink (`../../work/dotfiles/.agents/skills/x` 等) は `case` に
-# 一致せず残る。mode=retired の「無条件」は「**絶対パスで `$DOTFILES` 配下を指すものに
-# 限り**、リンク先の存在を問わない」の意味であって、文字どおりの無条件ではない。
+# 逆に言えば (既定の絶対パス `DOTFILES` で実行する限り) 相対パス symlink
+# — `../../work/dotfiles/.agents/skills/x` のように、解決先が `$DOTFILES` 配下で
+# あっても — は `case` に一致せず残る。比較対象は `readlink` の**文字列**であって
+# 解決後のパスではないため。mode=retired の「無条件」は「**`$DOTFILES/<subdir>/` を
+# 文字列として接頭辞に持つものに限り**、リンク先の存在を問わない」の意味であって、
+# 文字どおりの無条件ではない。
 # 同じ理由で、`$DOTFILES` が symlink 作成時と別の checkout (worktree 等) を指している
 # 実行では 1 本も剪定されない。`DOTFILES` の**末尾スラッシュの有無**も同様に効く
 # (`DOTFILES=/p/dotfiles/` だと接頭辞が `/p/dotfiles//.agents/skills/` になり、
 # スラッシュ無しで貼られたリンクに一致しない)。install.sh は `DOTFILES` を正規化して
-# いないため、表記を揃えずに実行すると無言の no-op になる。どちらも「消さない」側に
-# 倒れる fail-safe な限界なので許容している。正規化は #259 で追う。
+# いないため、表記を揃えずに実行すると無言の no-op になる。いずれも「消さない」側に
+# 倒れる fail-safe な限界なので許容している。唯一「消しすぎ」側に振れるのは上記の
+# 相対 `DOTFILES` で実行した場合だが、既定 (L9 の `pwd`) では起きない。
+# `DOTFILES` の正規化は #259 で追う。
 #
 # 第 3 引数 (mode):
 #   retired  — リンク先の存在を問わず削除し、空になったら `rmdir` する。

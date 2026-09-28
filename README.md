@@ -79,8 +79,8 @@ nix/
 
 .config/nvim/            # Neovim (LazyVim)
 .config/ghostty/config   # Ghostty terminal
-.codex/                  # Codex user settings, rules, hooks
-.claude/                 # Claude Code (settings, hooks)
+.codex/                  # Codex user settings, rules, hooks (+ commands: 現在は空、置けば配布)
+.claude/                 # Claude Code (settings, hooks, + commands: 現在は空、置けば配布)
 .github/workflows/       # PR レビュー / PR conflict 自動解決 workflows
 .local/bin/              # ヘルパースクリプト (tmux-project, gw, codex-otel)
 docs/adr/                # Architecture Decision Records (adr-tools, Nygard 形式)
@@ -116,8 +116,10 @@ agent skill (Claude / Codex / OpenCode) はこのリポジトリでは管理・�
 なお `install.sh` の再実行は、過去に配布した `~/.claude/skills` /
 `~/.agents/skills` / `~/.config/opencode/skills` / `~/.codex/skills` の symlink と、
 `~/.claude/commands` / `~/.codex/commands` の dangling symlink を掃除する
-(削除対象は `$DOTFILES` 配下を絶対パスで指すリンクだけ。詳細は `install.sh` の
-`prune_dotfiles_symlinks` のコメント)。
+(削除対象は `readlink` の値が `$DOTFILES/<subdir>/` を**文字列として**接頭辞に持つ
+リンクだけ。`DOTFILES` は既定で絶対パスなので通常は「`$DOTFILES` 配下を絶対パスで
+指すリンクだけ」と読んでよい。詳細は `install.sh` の `prune_dotfiles_symlinks` の
+コメント)。
 skills は配布をやめたので生きたリンクごと消す (`mode=retired`) が、**commands は配布を
 続けている** — repo に `.claude/commands/` / `.codex/commands/` を置けば再び配布される
 (現在の head にはどちらも存在しない)。だから commands 側は壊れたリンクだけを消す
