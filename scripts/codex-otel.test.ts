@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -1402,6 +1403,54 @@ describe("prune_dotfiles_symlinks", () => {
     expect(lstatSync(join(homeDir, "live-command")).isSymbolicLink()).toBe(true);
   });
 
+  test("dangling preserves broken symlinks that are not $DOTFILES-prefixed", () => {
+    // `dangling` が当たるのは `~/.claude/commands` / `~/.codex/commands` という
+    // **他ツールも書きうる**ディレクトリなので、「壊れていても dotfiles 由来で
+    // なければ消さない」契約をこちら側でも固定する。
+    // ⚠️ 接頭辞不一致の対照は retired のテスト ("retired preserves everything...") に
+    // もあるが、あちらのリンクは全て **live** なので「dangling かつ接頭辞不一致」の
+    // 組み合わせはそこでは押さえられていない (`[ -e ]` の分岐に入る前に `case` で
+    // 落ちる、という順序の契約がこのテストの対象)。
+    const { dotfiles, source, homeDir } = preparePruneFixture();
+    // 消えてよいのはこれだけ ($DOTFILES 接頭辞 かつ dangling)。
+    linkFromDotfiles(source, homeDir, "dead-command", false);
+    // $DOTFILES 接頭辞だが生きているリンクは dangling では残る (既存テストの再掲だが、
+    // 「消える 1 本」と「残る 4 本」を同じ entries() 比較に載せて vacuous 化を防ぐ)。
+    linkFromDotfiles(source, homeDir, "live-command", true);
+
+    // 他ツールが貼った絶対パス symlink。リンク先は存在しない (= dangling)。
+    symlinkSync(join(root, "foreign-store", "gone-orca-cli"), join(homeDir, "dead-foreign-link"));
+    // 別 checkout (worktree 等) の dotfiles を指す絶対リンク。同じく dangling。
+    symlinkSync(
+      join(root, "other-checkout", ...PRUNE_SUBDIR.split("/"), "gone-adr-writer"),
+      join(homeDir, "dead-other-checkout-link"),
+    );
+    // 相対リンク。解決先は $DOTFILES 配下だが実体が無いので dangling。
+    // `case` は `readlink` の**文字列**を見るため接頭辞に一致せず、
+    // `[ -e ]` の判定に到達しないまま残る。
+    symlinkSync(
+      join("..", "..", "..", "dotfiles-prune", ...PRUNE_SUBDIR.split("/"), "gone-relative"),
+      join(homeDir, "dead-relative-link"),
+    );
+
+    const result = runPruneDotfilesSymlinks(dotfiles, homeDir, PRUNE_SUBDIR, "dangling");
+
+    expect(result.status).toBe(0);
+    // exact 比較なので「dead-command だけが消えた」ことも同時に固定している
+    // (`existsSync` は dangling symlink を辿って false になるため単体では使えない)。
+    expect(entries(homeDir)).toEqual([
+      "dead-foreign-link",
+      "dead-other-checkout-link",
+      "dead-relative-link",
+      "live-command",
+    ]);
+    // 残った 3 本が「実体が無い symlink のまま」であること (誤って実体化していない)。
+    for (const name of ["dead-foreign-link", "dead-other-checkout-link", "dead-relative-link"]) {
+      expect(lstatSync(join(homeDir, name)).isSymbolicLink()).toBe(true);
+      expect(existsSync(join(homeDir, name))).toBe(false);
+    }
+  });
+
   test("dangling leaves an empty dir in place instead of rmdir-ing it", () => {
     const { dotfiles, source, homeDir } = preparePruneFixture();
     linkFromDotfiles(source, homeDir, "dead-command", false);
@@ -1427,11 +1476,28 @@ describe("prune_dotfiles_symlinks", () => {
     symlinkSync(foreign, join(homeDir, "foreign-link"));
     // 相対パス symlink。解決先が $DOTFILES 配下であっても `case` に一致しないので残る
     // (実機の ~/.claude/skills の find-skills / orca-cli がこの形)。
-    symlinkSync(join("..", "..", "relative-target"), join(homeDir, "relative-link"));
+    // ⚠️ この主張を実際に検証するには、解決先が **本当に** $DOTFILES 配下でなければ
+    // ならない。homeDir は `<root>/home-prune/<PRUNE_SUBDIR>` なので `../../..` で
+    // `<root>` まで戻り、そこから `dotfiles-prune/<PRUNE_SUBDIR>/dotfiles-skill`
+    // (= 上で実体を作った $DOTFILES 配下のディレクトリ) を指す。
+    symlinkSync(
+      join("..", "..", "..", "dotfiles-prune", ...PRUNE_SUBDIR.split("/"), "dotfiles-skill"),
+      join(homeDir, "relative-link"),
+    );
     // 別 checkout (worktree 等) の dotfiles を指すリンク
     const otherCheckout = join(root, "other-checkout", ...PRUNE_SUBDIR.split("/"), "adr-writer");
     mkdirSync(otherCheckout, { recursive: true });
     symlinkSync(otherCheckout, join(homeDir, "other-checkout-link"));
+
+    // fixture の前提を明示的に固定する: relative-link は **本当に** $DOTFILES 配下へ
+    // 解決している。これが崩れると下の「残る」assertion は「接頭辞不一致だから」では
+    // なく単に別ツリーを指していたから通ることになり、対照の意味が消える。
+    // fixture の前提を明示的に固定する: relative-link は **本当に** $DOTFILES 配下へ
+    // 解決している。これが崩れると下の「残る」assertion は「接頭辞不一致だから」では
+    // なく単に別ツリーを指していたから通ることになり、対照の意味が消える。
+    expect(realpathSync(join(homeDir, "relative-link"))).toBe(
+      realpathSync(join(source, "dotfiles-skill")),
+    );
 
     const result = runPruneDotfilesSymlinks(dotfiles, homeDir, PRUNE_SUBDIR, "retired");
 
@@ -1443,6 +1509,10 @@ describe("prune_dotfiles_symlinks", () => {
       "real-file",
       "relative-link",
     ]);
+    // 剪定後も相対リンクは生きたまま (実体は $DOTFILES 側に残っている)。
+    expect(realpathSync(join(homeDir, "relative-link"))).toBe(
+      realpathSync(join(source, "dotfiles-skill")),
+    );
   });
 
   test("retired does not match sibling directories that share the subdir prefix", () => {
