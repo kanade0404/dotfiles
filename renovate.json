@@ -8,11 +8,6 @@
     {
       "matchManagers": ["nix"],
       "groupName": "Nix flake inputs"
-    },
-    {
-      "description": "rulesync は skill 配布パイプラインの廃止 (#258) で依存から外す。レビュー窓の間に bump PR が出ると package.json / bun.lockb が衝突するため止める (#262 v17.1.0 / #263 v18 で実際に 2 回発生し、nightly の scan-pr-conflicts が自動解消した直後にまた conflict した)。#258 が merge されれば依存自体が消えてこのルールは no-op になるので、その時点で削除してよい。",
-      "matchPackageNames": ["rulesync"],
-      "enabled": false
     }
   ]
 }
