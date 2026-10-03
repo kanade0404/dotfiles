@@ -569,6 +569,15 @@ function normalizeArg(arg: string): string {
   return s;
 }
 
+/**
+ * normalizeArg に加えて途中のクォートも全て除去する。git の subcommand / global
+ * option / コマンド名のような「素の単語」であるべきトークンの比較に使う
+ * (`git re'set'` のように mid-word quote で判定を迂回されるのを防ぐ)。
+ */
+function normalizeWord(token: string): string {
+  return normalizeArg(token).replace(/['"]/g, "");
+}
+
 /** ANSI-C quoting ($'...') の 1 エスケープを復号する。`\` の次の位置を受け取る。 */
 function decodeAnsiCEscape(input: string, pos: number): { text: string; next: number } {
   const ch = input[pos];
@@ -717,14 +726,14 @@ const RCE_CONFIG_KEY_ONLY_PATTERN = /^(core\.(fsmonitor|hookspath|sshcommand)|al
  */
 function hasDangerousInlineConfig(parts: readonly string[], subcommandIndex: number): boolean {
   for (let i = 1; i < subcommandIndex; i++) {
-    const opt = normalizeArg(parts[i]).replace(/['"]/g, "");
+    const opt = normalizeWord(parts[i]);
 
     if (opt.startsWith("--config-env=")) {
       if (RCE_CONFIG_KEY_PATTERN.test(opt.slice("--config-env=".length))) return true;
       continue;
     }
     if (opt !== "-c" || i + 1 >= parts.length) continue;
-    const cfg = normalizeArg(parts[i + 1]).replace(/['"]/g, "");
+    const cfg = normalizeWord(parts[i + 1]);
     if (RCE_CONFIG_KEY_PATTERN.test(cfg)) return true;
   }
   return false;
@@ -772,7 +781,7 @@ function hasDangerousConfigEnv(command: string): boolean {
  * ベース名にする。例: `"git"` / `'g'it` / `/usr/bin/git` → `git`
  */
 function commandBaseName(token: string): string {
-  const name = normalizeArg(token).replace(/['"]/g, "");
+  const name = normalizeWord(token);
   return name.slice(name.lastIndexOf("/") + 1);
 }
 
@@ -795,6 +804,15 @@ const SIDE_EFFECT_FREE_GIT_GLOBAL_OPTS: ReadonlySet<string> = new Set([
   "--no-replace-objects",
 ]);
 
+/** 作業ディレクトリ / リポジトリを付け替える git global options */
+const GIT_REDIRECT_OPTS: readonly string[] = ["-C", "--git-dir", "--work-tree"];
+/** 単独で使う git global options (findGitSubcommand が読み飛ばす) */
+const GIT_SINGLE_GLOBAL_OPTS: ReadonlySet<string> = new Set([
+  ...SIDE_EFFECT_FREE_GIT_GLOBAL_OPTS, "--bare", "--paginate", "-p",
+]);
+/** 値を次トークンに取る git global options */
+const GIT_TWO_TOKEN_GLOBAL_OPTS: readonly string[] = ["-c", "-C", "--git-dir", "--work-tree", "--namespace"];
+
 /**
  * git global optionsをスキップしてsubcommandとその引数を検出する。
  * 例: ["git", "-c", "key=val", "push", "--force"] → { subcommand: "push", argsStartIndex: 4 }
@@ -805,12 +823,7 @@ function findGitSubcommand(parts: readonly string[]): {
   /** -C / --git-dir / --work-tree でディレクトリを付け替えているか */
   redirected: boolean;
 } | null {
-  // 作業ディレクトリ / リポジトリを付け替える global options
-  const redirectOpts = ["-C", "--git-dir", "--work-tree"];
   let redirected = false;
-  // git global options一覧
-  const singleGlobalOpts = new Set([...SIDE_EFFECT_FREE_GIT_GLOBAL_OPTS, "--bare", "--paginate", "-p"]);
-  const twoTokenGlobalOpts = ["-c", "-C", "--git-dir", "--work-tree", "--namespace"];
 
   let i = 1;
   while (i < parts.length) {
@@ -819,14 +832,14 @@ function findGitSubcommand(parts: readonly string[]): {
     // 同じコマンドになる形で危険サブコマンドの判定を迂回されるのを防ぐ。
     // git の subcommand / global option は素の単語なので、途中のクォートも含めて
     // 全て除去してよい。
-    const p = normalizeArg(parts[i]).replace(/['"]/g, "");
+    const p = normalizeWord(parts[i]);
     // 2トークン消費するglobal options
-    if (twoTokenGlobalOpts.includes(p) && i + 1 < parts.length) {
-      if (redirectOpts.includes(p)) redirected = true;
+    if (GIT_TWO_TOKEN_GLOBAL_OPTS.includes(p) && i + 1 < parts.length) {
+      if (GIT_REDIRECT_OPTS.includes(p)) redirected = true;
       // `-c` 一般は付け替えではないが `-c core.worktree=<dir>` は実質
       // --work-tree と同じ効果を持つので redirect 扱いにする。
       if (p === "-c") {
-        const cfg = normalizeArg(parts[i + 1]).replace(/['"]/g, "");
+        const cfg = normalizeWord(parts[i + 1]);
         if (/^core\.worktree=/i.test(cfg)) redirected = true;
       }
       i += 2;
@@ -834,12 +847,12 @@ function findGitSubcommand(parts: readonly string[]): {
     }
     // --key=value 形式のglobal options
     if (p.startsWith("--") && p.includes("=")) {
-      if (redirectOpts.includes(p.slice(0, p.indexOf("=")))) redirected = true;
+      if (GIT_REDIRECT_OPTS.includes(p.slice(0, p.indexOf("=")))) redirected = true;
       i++;
       continue;
     }
     // 単独global options
-    if (singleGlobalOpts.has(p)) { i++; continue; }
+    if (GIT_SINGLE_GLOBAL_OPTS.has(p)) { i++; continue; }
     // subcommandを発見（-で始まらない）
     if (!p.startsWith("-")) {
       return { subcommand: p, argsStartIndex: i + 1, redirected };
@@ -1112,7 +1125,7 @@ export function matchCommand(
   // anchor 検査用のトークン列は緩いマッチ候補が出た時に 1 回だけ作る
   let strippedParts: readonly string[] | undefined;
   const partsOfStripped = () =>
-    (strippedParts ??= tokenizeCommand(stripped).map((p) => normalizeArg(p).replace(/['"]/g, "")));
+    (strippedParts ??= tokenizeCommand(stripped).map(normalizeWord));
   for (const rule of rules) {
     if (rule.category !== "allow") continue;
     if (!candidates.some((cmd) => rule.regex.test(cmd))) continue;
