@@ -805,6 +805,7 @@ const SIDE_EFFECT_FREE_GIT_GLOBAL_OPTS: ReadonlySet<string> = new Set([
   "--noglob-pathspecs",
   "--icase-pathspecs",
   "--no-replace-objects",
+  "-P", // --no-pager の短縮形
 ]);
 
 /** 作業ディレクトリ / リポジトリを付け替える git global options */
@@ -1071,6 +1072,11 @@ export function gitCPatternSubTokens(pattern: string): readonly string[] | null 
  */
 function isAnchoredGitCMatch(parts: readonly string[], subTokens: readonly string[]): boolean {
   if (commandBaseName(parts[0] ?? "") !== "git" || parts[1] !== "-C") return false;
+  // `-C` の引数にシェル展開 (コマンド置換 / 変数 / glob / brace) が含まれると、展開後の
+  // 語数が変わって実サブコマンドの位置がずれうる (`$(echo)` / 空の `$X` は語ごと消え、
+  // `{x,rm}` や `*` は複数語になる)。tokenizeCommand はクォート除去済みで展開の
+  // 有無を区別できないため、展開文字を含む dir は一律 anchor 外とする。
+  if (/[$`*?[{]/.test(parts[2] ?? "")) return false;
   let i = 3;
   while (i < parts.length && SIDE_EFFECT_FREE_GIT_GLOBAL_OPTS.has(parts[i])) i++;
   return subTokens.every((t, j) => parts[i + j] === t);
@@ -1124,27 +1130,37 @@ export function matchCommand(
   }
 
   // allow チェック
-  // 優先順位: anchored な `git -C` ルール > 緩いだけの `git -C` マッチ (ask) > その他の allow。
+  // 優先順位: anchored な `git -C` ルール > `Bash(git -C * *)` 等の包括 `-C` allow
+  // (ユーザの明示意図) > 緩いだけの `git -C` マッチ (ask) > その他の allow。
   // 緩いマッチを他の allow (`Bash(command *)` 等、未 strip の候補に当たるもの) で
   // 打ち消すと、本体も同じルールで auto-approve して ask 昇格の意味が無くなる。
   let looseGitCPattern: string | null = null;
+  let wildcardGitCPattern: string | null = null;
   let otherAllowPattern: string | null = null;
-  // anchor 検査用のトークン列は緩いマッチ候補が出た時に 1 回だけ作る
+  // anchor 検査用のトークン列は必要になった時に 1 回だけ作る
   let strippedParts: readonly string[] | undefined;
   const partsOfStripped = () =>
     (strippedParts ??= tokenizeCommand(stripped).map(normalizeWord));
+  // `git -C` 形でなければ `-C` ルールは緩くもマッチしないので、最初の allow で確定してよい
+  const isGitCForm = () =>
+    commandBaseName(partsOfStripped()[0] ?? "") === "git" && partsOfStripped()[1] === "-C";
   for (const rule of rules) {
     if (rule.category !== "allow") continue;
     if (!candidates.some((cmd) => rule.regex.test(cmd))) continue;
     const subTokens = gitCPatternSubTokens(rule.pattern);
     if (!subTokens) {
-      otherAllowPattern ??= rule.pattern;
+      if (!isGitCForm()) return { decision: "allow", command, pattern: rule.pattern };
+      if (rule.pattern.startsWith("Bash(git -C *")) wildcardGitCPattern ??= rule.pattern;
+      else otherAllowPattern ??= rule.pattern;
       continue;
     }
     if (isAnchoredGitCMatch(partsOfStripped(), subTokens)) {
       return { decision: "allow", command, pattern: rule.pattern };
     }
     looseGitCPattern ??= rule.pattern;
+  }
+  if (wildcardGitCPattern) {
+    return { decision: "allow", command, pattern: wildcardGitCPattern };
   }
   // `Bash(git -C * <sub> *)` に「緩く」だけマッチした (実サブコマンドが <sub> ではない)。
   // ここで pass-through すると Claude Code 本体が同じ緩いパターンで auto-approve

@@ -1144,6 +1144,11 @@ describe("統合テスト: settings.json ルールでの判定", () => {
       // 副作用の無い global option は -C <dir> とサブコマンドの間に挟んでも anchor 内
       ["git -C /tmp/x --no-pager log --oneline", "Bash(git -C * log *)"],
       ["git -C /tmp/x --no-optional-locks status", "Bash(git -C * status *)"],
+      // -P は --no-pager の短縮形
+      ["git -C /tmp/x -P log --oneline", "Bash(git -C * log *)"],
+      // dir トークン自体が allow 語でも、実サブコマンド位置で判定する
+      ["git -C status status", "Bash(git -C * status *)"],
+      ["git -C '' status", "Bash(git -C * status *)"],
     ])("%s は %s で allow", (command, pattern) => {
       expect(matchCommand(command, settingsRules)).toEqual({ decision: "allow", command, pattern });
     });
@@ -1189,6 +1194,18 @@ describe("統合テスト: settings.json ルールでの判定", () => {
       // `--key=value` / 2 トークンの global option は anchor 外
       "git -C /tmp/x --git-dir=/tmp/y status",
       "git -C /tmp/x --namespace ns status",
+      // `-C` の引数にシェル展開 (コマンド置換 / 変数 / glob / brace) があると、展開後の
+      // 語数が変わって実サブコマンドがずれうる (`$(echo)` や空の `$X` は語ごと消え、
+      // `{x,rm}` は 2 語になる)。dir トークンに展開文字を含む形は一律 anchor 外 (ask)
+      "git -C $(echo status >/dev/null; echo /other) rm -r .",
+      "git -C `echo status ` rm -r .",
+      "git -C $(echo) status rm -r .",
+      "git -C $EMPTY status rm -r .",
+      "git -C {x,rm} status",
+      "git -C * status",
+      // クォートされた置換は 1 語に定まるが、クォート除去後のトークンでは区別できない
+      // ため安全側で同じく ask
+      'git -C "$(git rev-parse --show-toplevel)" status',
       // `command` 前置: 未 strip の候補が後続の `Bash(command *)` allow に当たっても
       // 緩いマッチの ask が優先される (本体も `Bash(command *)` で auto-approve するため)
       "command git -C /tmp/x replace -d status",
@@ -1220,6 +1237,13 @@ describe("統合テスト: settings.json ルールでの判定", () => {
       const rules = [rule("allow", "Bash(git -C * *)")];
       expect(gitCPatternSubTokens("Bash(git -C * *)")).toBeNull();
       expect(decision("git -C /tmp/x log --oneline", rules)).toBe("allow");
+    });
+
+    // ユーザが `-C` 以下を包括的に allow した場合は、その意図を緩いマッチの ask より優先する
+    test("Bash(git -C * *) と Bash(git -C * status *) の併存では包括 allow が優先", () => {
+      const rules = [rule("allow", "Bash(git -C * status *)"), rule("allow", "Bash(git -C * *)")];
+      expect(matchCommand("git -C /tmp/x replace -d status", rules)?.pattern).toBe("Bash(git -C * *)");
+      expect(matchCommand("git -C /tmp/x status", rules)?.pattern).toBe("Bash(git -C * status *)");
     });
   });
 
