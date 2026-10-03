@@ -386,6 +386,25 @@ type DangerousGitFlagRule = {
   readonly bareIsReadOnly?: boolean;
 };
 
+// ⚠️ settings.json の `Bash(git -C * <sub> *)` 系 allow ルール (push / add / commit 等) は
+// 中間ワイルドカードを持つ初めてのパターンで、patternToRegex はその `*` を
+// サブコマンド位置に anchor しない。例えば `git -C * push *` は
+// `/^git -C .* push( .*)?$/s` になり、「2番目の位置引数が push」ではなく
+// 「`-C` の後ろのどこかに ` push` という文字列が現れる」コマンド全てにマッチする
+// (`git -C /tmp/x branch -D push` のように、サブコマンドが branch でも引数に
+// "push" という文字列があれば同じ regex にマッチしてしまう)。
+// `rule-matcher.test.ts` の「patternToRegex: git -C * <sub> * は...」で
+// この緩さを既知・意図された挙動として固定している。
+//
+// この緩いマッチが安全なのは、matchCommand が allow 判定より前に無条件で
+// checkDangerousGitFlags (= 本テーブル) を実行し、`-C` 経由かどうかに関わらず
+// 破壊的なサブコマンド/フラグを deny に昇格させるからである。つまり
+// **本テーブルが `-C` 経由の破壊的操作に対する唯一の backstop** であり、
+// 安全性は settings.json のパターン anchor ではなく本テーブルの網羅性に
+// 完全に依存している。
+// 本テーブルは自己申告の denylist であり網羅を保証しない — 新しい破壊的な
+// git サブコマンド/フラグを見つけたら、anchor の甘さを当てにせず必ずここに
+// 追加すること。
 const DANGEROUS_GIT_FLAGS: readonly DangerousGitFlagRule[] = [
   {
     // settings.json の `Bash(git reset *)` / `Bash(git rebase *)` /

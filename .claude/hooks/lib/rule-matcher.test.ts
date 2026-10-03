@@ -1052,6 +1052,57 @@ describe("統合テスト: settings.json ルールでの判定", () => {
       expect(judgeCommand("git -C /tmp/x merge --no-verify feature")).toBe("deny"));
   });
 
+  // code-review Important finding: settings.json の `Bash(git -C * push *)` /
+  // `Bash(git -C * add *)` / `Bash(git -C * commit *)` は settings.json 初の
+  // 「中間ワイルドカード」を持つ allow パターンで、patternToRegex は `*` を
+  // サブコマンド位置に anchor しない。`git -C * push *` は
+  // `/^git -C .* push( .*)?$/s` になり、「2 番目の位置引数が push」ではなく
+  // 「`-C` の後ろのどこかに ` push` という文字列が現れる」コマンド全てに
+  // マッチする (例: サブコマンドが `branch` でも引数に `push` という文字列が
+  // あれば同じ regex にマッチする)。
+  //
+  // これは既知・意図された緩さとしてここで固定する。現状これが安全なのは、
+  // allow 判定より前に無条件で走る checkDangerousGitFlags
+  // (DANGEROUS_GIT_FLAGS テーブル、rule-matcher.ts 内) が `-C` 経由かどうかに
+  // 関わらず破壊的フラグを deny に昇格させる唯一の backstop だから。
+  // 以下の 2 ブロックで「緩いマッチ (loose match) + backstop で deny」という
+  // 結合を明文化する。
+  describe("patternToRegex: git -C * <sub> * は中間ワイルドカードでサブコマンド位置に anchor されない（既知・意図された緩さを固定）", () => {
+    const pushPattern = extractBashPattern("Bash(git -C * push *)");
+    if (!pushPattern) throw new Error("extractBashPattern の抽出に失敗");
+    const pushRegex = patternToRegex(pushPattern);
+
+    test("`git -C * push *` は /^git -C .* push( .*)?$/s に変換される", () => {
+      expect(pushRegex.source).toBe("^git -C .* push( .*)?$");
+      expect(pushRegex.flags).toBe("s");
+    });
+
+    test("意図したユースケース (git -C <dir> push <remote> <branch>) にマッチする", () => {
+      expect(pushRegex.test("git -C /tmp/x push origin main")).toBe(true);
+    });
+
+    test("既知の緩さ: サブコマンドが push でなくても、`-C` 以降のどこかに ` push` という文字列があれば同じ regex にマッチする", () => {
+      // 実サブコマンドは `branch` (push ではない)。`-C .*` が `branch -D` を
+      // 食い、末尾の `push` (削除対象のブランチ名) だけが文字列として
+      // push-allow パターンに合致してしまう。サブコマンド位置への anchor が
+      // 無いことの直接証拠。
+      expect(pushRegex.test("git -C /tmp/x branch -D push")).toBe(true);
+    });
+  });
+
+  describe("結合: 緩い allow マッチでも checkDangerousGitFlags の backstop が deny に昇格させる", () => {
+    test("git -C /tmp/x branch -D push は push-allow 正規表現にマッチするが、branch -D (破壊的フラグ) として deny になる", () => {
+      // 上の describe で確認した通り、`Bash(git -C * push *)` の正規表現単体
+      // ではこのコマンドに allow 判定を出しうる。しかし matchCommand は
+      // allow チェックより前に checkDangerousGitFlags を無条件で走らせており、
+      // `branch` サブコマンドの `-D` フラグ (ブランチ強制削除) は `-C` の有無に
+      // 関わらず deny 対象 (DANGEROUS_GIT_FLAGS) なので、最終的な評価結果は
+      // deny になる。「緩いマッチ + backstop で deny」という結合そのもの。
+      expect(checkDangerousGitFlags("git -C /tmp/x branch -D push")).toBe(true);
+      expect(judgeCommand("git -C /tmp/x branch -D push")).toBe("deny");
+    });
+  });
+
   describe("allow 系: パイプ後段フィルタ", () => {
     test("head -5", () => expect(judgeCommand("head -5")).toBe("allow"));
     test("tail -20", () => expect(judgeCommand("tail -20")).toBe("allow"));
