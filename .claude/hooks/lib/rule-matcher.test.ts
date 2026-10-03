@@ -7,6 +7,7 @@ import {
   checkDangerousGitFlags,
   extractBashPattern,
   patternToRegex,
+  gitCPatternSubTokens,
 } from "./rule-matcher.ts";
 import { loadRules } from "./rules.ts";
 import { parseShellCommands } from "./shell-parser.ts";
@@ -1198,8 +1199,8 @@ describe("統合テスト: settings.json ルールでの判定", () => {
       const plain = new Set<string>();
       const withC = new Set<string>();
       for (const p of raw.permissions[category] ?? []) {
-        const c = /^Bash\(git -C \* (.+) \*\)$/.exec(p);
-        if (c) { withC.add(c[1]); continue; }
+        const c = gitCPatternSubTokens(p);
+        if (c) { withC.add(c.join(" ")); continue; }
         const n = /^Bash\(git ([^-].*) \*\)$/.exec(p);
         if (n) plain.add(n[1]);
       }

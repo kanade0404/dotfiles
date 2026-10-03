@@ -759,6 +759,24 @@ function commandBaseName(token: string): string {
 }
 
 /**
+ * 単独で使う git global option のうち、出力形式・ロック・pathspec 解釈だけを変え、
+ * 外部コマンド起動やリポジトリの付け替えを伴わないもの。
+ * findGitSubcommand の読み飛ばし対象と、`git -C` allow の anchor 検査で
+ * `-C <dir>` とサブコマンドの間に挟んでよいもの (ANCHOR_TRANSPARENT_GIT_OPTS) の
+ * 共通の源泉にする。
+ */
+const SIDE_EFFECT_FREE_GIT_GLOBAL_OPTS: readonly string[] = [
+  "--no-pager",
+  "--no-optional-locks",
+  "--literal-pathspecs",
+  "--glob-pathspecs",
+  "--no-glob-pathspecs",
+  "--noglob-pathspecs",
+  "--icase-pathspecs",
+  "--no-replace-objects",
+];
+
+/**
  * git global optionsをスキップしてsubcommandとその引数を検出する。
  * 例: ["git", "-c", "key=val", "push", "--force"] → { subcommand: "push", argsStartIndex: 4 }
  */
@@ -772,11 +790,7 @@ function findGitSubcommand(parts: readonly string[]): {
   const redirectOpts = ["-C", "--git-dir", "--work-tree"];
   let redirected = false;
   // git global options一覧
-  const singleGlobalOpts = [
-    "--no-pager", "--bare", "--no-replace-objects", "--literal-pathspecs",
-    "--glob-pathspecs", "--no-glob-pathspecs", "--no-optional-locks",
-    "--paginate", "-p",
-  ];
+  const singleGlobalOpts = [...SIDE_EFFECT_FREE_GIT_GLOBAL_OPTS, "--bare", "--paginate", "-p"];
   const twoTokenGlobalOpts = ["-c", "-C", "--git-dir", "--work-tree", "--namespace"];
 
   let i = 1;
@@ -1004,35 +1018,25 @@ function normalizeCommandName(command: string): string {
  * `Bash(git -C * <sub...> *)` 形式のルールなら `<sub...>` のトークン列を返す。
  * それ以外のルールは null。
  */
-function gitCPatternSubTokens(pattern: string): readonly string[] | null {
+export function gitCPatternSubTokens(pattern: string): readonly string[] | null {
   const m = /^Bash\(git -C \* (.+) \*\)$/.exec(pattern);
   return m ? m[1].split(" ") : null;
 }
 
 /**
  * `git -C <dir>` とサブコマンドの間に挟んでも anchor 内とみなす global option。
- * 出力形式・ロック・pathspec 解釈だけを変え、外部コマンド起動やリポジトリの
- * 付け替えを伴わないものに限る。`-c` (core.pager 等で任意コマンドを起動しうる) /
- * `-C` / `--git-dir` / `--work-tree` / `--exec-path` / `-p` (pager 起動) は含めない。
+ * `-c` (core.pager 等で任意コマンドを起動しうる) / `-C` / `--git-dir` /
+ * `--work-tree` / `--exec-path` / `-p` (pager 起動) / `--bare` は含めない。
  */
-const ANCHOR_TRANSPARENT_GIT_OPTS: ReadonlySet<string> = new Set([
-  "--no-pager",
-  "--no-optional-locks",
-  "--literal-pathspecs",
-  "--glob-pathspecs",
-  "--no-glob-pathspecs",
-  "--noglob-pathspecs",
-  "--icase-pathspecs",
-  "--no-replace-objects",
-]);
+const ANCHOR_TRANSPARENT_GIT_OPTS: ReadonlySet<string> = new Set(SIDE_EFFECT_FREE_GIT_GLOBAL_OPTS);
 
 /**
- * コマンドが `git -C <dir> [安全な global option...] <sub...>` の形で、`<sub...>` が
+ * `git -C <dir> [安全な global option...] <sub...>` の形で、`<sub...>` が
  * サブコマンド位置に並んでいるかを判定する。patternToRegex の中間 `*` はこの位置に
  * anchor されないため、allow 判定時に実サブコマンドとの一致をここで確かめる。
+ * `parts` はクォート除去済みのトークン列。
  */
-function isAnchoredGitCMatch(stripped: string, subTokens: readonly string[]): boolean {
-  const parts = tokenizeCommand(stripped).map((p) => normalizeArg(p).replace(/['"]/g, ""));
+function isAnchoredGitCMatch(parts: readonly string[], subTokens: readonly string[]): boolean {
   if (commandBaseName(parts[0] ?? "") !== "git" || parts[1] !== "-C") return false;
   let i = 3;
   while (i < parts.length && ANCHOR_TRANSPARENT_GIT_OPTS.has(parts[i])) i++;
@@ -1088,11 +1092,15 @@ export function matchCommand(
 
   // allow チェック
   let looseGitCPattern: string | null = null;
+  // anchor 検査用のトークン列は緩いマッチ候補が出た時に 1 回だけ作る
+  let strippedParts: readonly string[] | undefined;
+  const partsOfStripped = () =>
+    (strippedParts ??= tokenizeCommand(stripped).map((p) => normalizeArg(p).replace(/['"]/g, "")));
   for (const rule of rules) {
     if (rule.category !== "allow") continue;
     if (candidates.some((cmd) => rule.regex.test(cmd))) {
       const subTokens = gitCPatternSubTokens(rule.pattern);
-      if (subTokens && !isAnchoredGitCMatch(stripped, subTokens)) {
+      if (subTokens && !isAnchoredGitCMatch(partsOfStripped(), subTokens)) {
         looseGitCPattern ??= rule.pattern;
         continue;
       }
