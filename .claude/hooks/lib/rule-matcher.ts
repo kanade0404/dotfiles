@@ -744,6 +744,15 @@ function hasDangerousConfigEnv(command: string): boolean {
 }
 
 /**
+ * コマンド名トークンをクォート・エスケープ除去 (mid-word quote 含む) した上で
+ * ベース名にする。例: `"git"` / `'g'it` / `/usr/bin/git` → `git`
+ */
+function commandBaseName(token: string): string {
+  const name = normalizeArg(token).replace(/['"]/g, "");
+  return name.slice(name.lastIndexOf("/") + 1);
+}
+
+/**
  * git global optionsをスキップしてsubcommandとその引数を検出する。
  * 例: ["git", "-c", "key=val", "push", "--force"] → { subcommand: "push", argsStartIndex: 4 }
  */
@@ -819,10 +828,7 @@ export function checkDangerousGitFlags(command: string): boolean {
   // 正規化前の生コマンドを渡すので、`"git"` / `'git'` / `/usr/bin/git` の形だと
   // リテラル比較では素通りしてしまう (`Bash(git -C *)` の deny を外した以上、
   // `-C` 付きの破壊的 git はこのガードが最後の砦になる)。
-  let name = normalizeArg(parts[0]).replace(/['"]/g, "");
-  const lastSlash = name.lastIndexOf("/");
-  if (lastSlash >= 0) name = name.slice(lastSlash + 1);
-  if (name !== "git") return false;
+  if (commandBaseName(parts[0]) !== "git") return false;
 
   // env 経由の RCE 指定はサブコマンドに依らないので先に判定する
   // (`GIT_SSH_COMMAND=/evil git fetch` のように読み取り系でも成立する)。
@@ -982,14 +988,7 @@ function normalizeCommandName(command: string): string {
   const originalName = spaceIndex === -1 ? command : command.slice(0, spaceIndex);
   const rest = spaceIndex === -1 ? "" : command.slice(spaceIndex);
 
-  let cmdName = normalizeArg(originalName);
-  // mid-word quoteの除去（シェルはクォート除去後に結合する）
-  cmdName = cmdName.replace(/['"]/g, "");
-  // フルパスからベース名を抽出
-  const lastSlash = cmdName.lastIndexOf("/");
-  if (lastSlash >= 0) {
-    cmdName = cmdName.slice(lastSlash + 1);
-  }
+  const cmdName = commandBaseName(originalName);
 
   if (cmdName === originalName) return command;
   return cmdName + rest;
@@ -1010,14 +1009,9 @@ function gitCPatternSubTokens(pattern: string): readonly string[] | null {
  * patternToRegex の中間 `*` はこの位置に anchor されないため、allow 判定時に
  * 実サブコマンドとの一致をここで確かめる。
  */
-function isAnchoredGitCMatch(command: string, subTokens: readonly string[]): boolean {
-  const parts = tokenizeCommand(stripShellPrefixes(command)).map((p) =>
-    normalizeArg(p).replace(/['"]/g, ""),
-  );
-  let name = parts[0] ?? "";
-  const lastSlash = name.lastIndexOf("/");
-  if (lastSlash >= 0) name = name.slice(lastSlash + 1);
-  if (name !== "git" || parts[1] !== "-C") return false;
+function isAnchoredGitCMatch(stripped: string, subTokens: readonly string[]): boolean {
+  const parts = tokenizeCommand(stripped).map((p) => normalizeArg(p).replace(/['"]/g, ""));
+  if (commandBaseName(parts[0] ?? "") !== "git" || parts[1] !== "-C") return false;
   return subTokens.every((t, i) => parts[3 + i] === t);
 }
 
@@ -1074,7 +1068,7 @@ export function matchCommand(
     if (rule.category !== "allow") continue;
     if (candidates.some((cmd) => rule.regex.test(cmd))) {
       const subTokens = gitCPatternSubTokens(rule.pattern);
-      if (subTokens && !isAnchoredGitCMatch(command, subTokens)) {
+      if (subTokens && !isAnchoredGitCMatch(stripped, subTokens)) {
         looseGitCPattern ??= rule.pattern;
         continue;
       }
