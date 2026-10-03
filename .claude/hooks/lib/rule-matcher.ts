@@ -386,6 +386,32 @@ type DangerousGitFlagRule = {
   readonly bareIsReadOnly?: boolean;
 };
 
+// ⚠️ settings.json の `Bash(git -C * <sub> *)` 系ルールは allow パターンとしては
+// 初めて中間ワイルドカードを持つもので (deny には `Bash(* .env *)` 等の先例がある)、
+// patternToRegex はその `*` をサブコマンド位置に anchor しない。例えば
+// `git -C * push *` は `/^git -C .* push( .*)?$/s` になり、「2番目の位置引数が push」
+// ではなく「`-C` の後ろのどこかに ` push` という文字列が現れる」コマンド全てに
+// マッチする (`git -C /tmp/x branch -D push` のように、サブコマンドが branch でも
+// 引数に "push" という文字列があれば同じ regex にマッチしてしまう)。
+// Claude Code 本体も同じ settings.json を同じく anchor 無しで評価する。
+// `rule-matcher.test.ts` の「patternToRegex: git -C * <sub> * は...」で
+// この regex の緩さを固定している。
+//
+// `-C` 経由の判定は次の 3 段で成り立っている (matchCommand の評価順):
+// 1. settings.json の `-C` 版 deny ルール (`git -C * reset *` 等) — anchor されない
+//    ため引数に reset 等を含む読み取り系も deny する (過剰 deny は安全側として受容)。
+// 2. 本テーブル (checkDangerousGitFlags) — 実サブコマンドを tokenize して判定し、
+//    `-C` 版 deny ルールに無い破壊的サブコマンド/フラグも deny に昇格させる。
+// 3. allow 判定時の anchor 検査 (isAnchoredGitCMatch) — `-C <dir>` 直後の実サブ
+//    コマンドがパターンと一致しない緩いマッチは ask に倒し、本体の auto-approve を
+//    上書きする。allow リストに無いサブコマンド (replace / submodule 等) は、
+//    いずれかの `-C` allow regex に緩くマッチした場合 (`... replace -d status`) は
+//    ここで hook が ask を返し、どれにもマッチしない場合 (`... replace -d foo`) は
+//    null (pass-through) で本体に委ねられ、本体にも一致ルールが無いので本体の
+//    デフォルトプロンプトになる。`-C` allow を増やす時はこの 2 経路を前提にすること。
+//    なお hook が動かない環境では本体が緩い regex のまま auto-approve しうる。
+// 本テーブルは自己申告の denylist であり網羅を保証しない — 新しい破壊的な
+// git サブコマンド/フラグを見つけたら必ずここに追加すること。
 const DANGEROUS_GIT_FLAGS: readonly DangerousGitFlagRule[] = [
   {
     // settings.json の `Bash(git reset *)` / `Bash(git rebase *)` /
@@ -435,8 +461,10 @@ const DANGEROUS_GIT_FLAGS: readonly DangerousGitFlagRule[] = [
     // switch は通常のブランチ切替 (`switch main` / `switch -c new`) は安全だが、
     // -f / --discard-changes はローカル変更を破棄する点で `checkout -- .` と同性質。
     // checkout を alwaysDangerous にした以上、こちらだけ通す非対称は残せない。
+    // -C / --force-create は既存ブランチを強制的に付け替える (branch -f と同じ効果)。
+    // サブコマンド後の -C なので global option の -C とは衝突しない。
     gitSubcommands: ["switch"],
-    flags: ["-f", "--force", "--discard-changes"],
+    flags: ["-f", "--force", "--discard-changes", "-C", "--force-create"],
   },
   {
     // tag は一覧 (bare / -l) が読み取り。削除・強制付け替えが破壊的。
@@ -495,8 +523,29 @@ const DANGEROUS_GIT_FLAGS: readonly DangerousGitFlagRule[] = [
     // -f / --force は `git branch -f <name> <start>` で既存ブランチのポインタを
     // 強制的に付け替えられる (commit を失いうる)。settings.json 側は
     // `Bash(git branch *)` を allow しているので、ここで拾わないと素通りする。
+    // -C (= --copy --force) も既存ブランチを強制上書きする点で -f と同じ。
+    // 長い形の --copy --force は --force 側で拾える (-C / -M に長い別名は無い)。
     gitSubcommands: ["branch"],
-    flags: ["-D", "-M", "-m", "--move", "--move-force", "-f", "--force"],
+    flags: ["-D", "-M", "-m", "--move", "--move-force", "-f", "--force", "-C"],
+  },
+  {
+    // -d / --delete (merged のみ削除) は CWD 内では許容するが、-C 付け替え時は
+    // 別リポジトリのブランチ削除になるので tag と同じく付け替え時のみ危険扱い。
+    // --delete-merged (upstream に取り込まれたブランチの一括削除) も同類。git 2.54 には
+    // まだ無いが git-scm.com の新しい版のドキュメントに記載があるため先回りで含める
+    // (存在しない版では単に一致しないだけで無害)。
+    gitSubcommands: ["branch"],
+    dangerousWhenRedirected: true,
+    flags: ["-d", "--delete", "--delete-merged"],
+  },
+  {
+    // remote の書き込み系 (add / remove / rename / set-url / prune 等) は付け替え先の
+    // .git/config を書き換える。config と同じ理由で付け替え時は読み取り以外を危険扱い。
+    // 引数無し / `-v` だけの一覧表示は読み取り。
+    gitSubcommands: ["remote"],
+    dangerousWhenRedirected: true,
+    readOnlySubActions: ["show", "get-url"],
+    bareIsReadOnly: true,
   },
   {
     gitSubcommands: ["restore"],
@@ -521,6 +570,15 @@ function normalizeArg(arg: string): string {
   // バックスラッシュエスケープを除去（\- → -）
   s = s.replace(/\\(.)/g, "$1");
   return s;
+}
+
+/**
+ * normalizeArg に加えて途中のクォートも全て除去する。git の subcommand / global
+ * option / コマンド名のような「素の単語」であるべきトークンの比較に使う
+ * (`git re'set'` のように mid-word quote で判定を迂回されるのを防ぐ)。
+ */
+function normalizeWord(token: string): string {
+  return normalizeArg(token).replace(/['"]/g, "");
 }
 
 /** ANSI-C quoting ($'...') の 1 エスケープを復号する。`\` の次の位置を受け取る。 */
@@ -671,14 +729,14 @@ const RCE_CONFIG_KEY_ONLY_PATTERN = /^(core\.(fsmonitor|hookspath|sshcommand)|al
  */
 function hasDangerousInlineConfig(parts: readonly string[], subcommandIndex: number): boolean {
   for (let i = 1; i < subcommandIndex; i++) {
-    const opt = normalizeArg(parts[i]).replace(/['"]/g, "");
+    const opt = normalizeWord(parts[i]);
 
     if (opt.startsWith("--config-env=")) {
       if (RCE_CONFIG_KEY_PATTERN.test(opt.slice("--config-env=".length))) return true;
       continue;
     }
     if (opt !== "-c" || i + 1 >= parts.length) continue;
-    const cfg = normalizeArg(parts[i + 1]).replace(/['"]/g, "");
+    const cfg = normalizeWord(parts[i + 1]);
     if (RCE_CONFIG_KEY_PATTERN.test(cfg)) return true;
   }
   return false;
@@ -722,6 +780,44 @@ function hasDangerousConfigEnv(command: string): boolean {
 }
 
 /**
+ * コマンド名トークンをクォート・エスケープ除去 (mid-word quote 含む) した上で
+ * ベース名にする。例: `"git"` / `'g'it` / `/usr/bin/git` → `git`
+ */
+function commandBaseName(token: string): string {
+  const name = normalizeWord(token);
+  return name.slice(name.lastIndexOf("/") + 1);
+}
+
+/**
+ * 単独で使う git global option のうち、出力形式・ロック・pathspec 解釈だけを変え、
+ * 外部コマンド起動やリポジトリの付け替えを伴わないもの。
+ * findGitSubcommand の読み飛ばし対象であり、`git -C` allow の anchor 検査で
+ * `-C <dir>` とサブコマンドの間に挟んでよいものでもある。
+ * `-c` (core.pager 等で任意コマンドを起動しうる) / `-C` / `--git-dir` /
+ * `--work-tree` / `--exec-path` / `-p` (pager 起動) / `--bare` は含めない。
+ */
+const SIDE_EFFECT_FREE_GIT_GLOBAL_OPTS: ReadonlySet<string> = new Set([
+  "--no-pager",
+  "--no-optional-locks",
+  "--literal-pathspecs",
+  "--glob-pathspecs",
+  "--no-glob-pathspecs",
+  "--noglob-pathspecs",
+  "--icase-pathspecs",
+  "--no-replace-objects",
+  "-P", // --no-pager の短縮形
+]);
+
+/** 作業ディレクトリ / リポジトリを付け替える git global options */
+const GIT_REDIRECT_OPTS: readonly string[] = ["-C", "--git-dir", "--work-tree"];
+/** 単独で使う git global options (findGitSubcommand が読み飛ばす) */
+const GIT_SINGLE_GLOBAL_OPTS: ReadonlySet<string> = new Set([
+  ...SIDE_EFFECT_FREE_GIT_GLOBAL_OPTS, "--bare", "--paginate", "-p",
+]);
+/** 値を次トークンに取る git global options */
+const GIT_TWO_TOKEN_GLOBAL_OPTS: readonly string[] = ["-c", "-C", "--git-dir", "--work-tree", "--namespace"];
+
+/**
  * git global optionsをスキップしてsubcommandとその引数を検出する。
  * 例: ["git", "-c", "key=val", "push", "--force"] → { subcommand: "push", argsStartIndex: 4 }
  */
@@ -731,16 +827,7 @@ function findGitSubcommand(parts: readonly string[]): {
   /** -C / --git-dir / --work-tree でディレクトリを付け替えているか */
   redirected: boolean;
 } | null {
-  // 作業ディレクトリ / リポジトリを付け替える global options
-  const redirectOpts = ["-C", "--git-dir", "--work-tree"];
   let redirected = false;
-  // git global options一覧
-  const singleGlobalOpts = [
-    "--no-pager", "--bare", "--no-replace-objects", "--literal-pathspecs",
-    "--glob-pathspecs", "--no-glob-pathspecs", "--no-optional-locks",
-    "--paginate", "-p",
-  ];
-  const twoTokenGlobalOpts = ["-c", "-C", "--git-dir", "--work-tree", "--namespace"];
 
   let i = 1;
   while (i < parts.length) {
@@ -749,14 +836,14 @@ function findGitSubcommand(parts: readonly string[]): {
     // 同じコマンドになる形で危険サブコマンドの判定を迂回されるのを防ぐ。
     // git の subcommand / global option は素の単語なので、途中のクォートも含めて
     // 全て除去してよい。
-    const p = normalizeArg(parts[i]).replace(/['"]/g, "");
+    const p = normalizeWord(parts[i]);
     // 2トークン消費するglobal options
-    if (twoTokenGlobalOpts.includes(p) && i + 1 < parts.length) {
-      if (redirectOpts.includes(p)) redirected = true;
+    if (GIT_TWO_TOKEN_GLOBAL_OPTS.includes(p) && i + 1 < parts.length) {
+      if (GIT_REDIRECT_OPTS.includes(p)) redirected = true;
       // `-c` 一般は付け替えではないが `-c core.worktree=<dir>` は実質
       // --work-tree と同じ効果を持つので redirect 扱いにする。
       if (p === "-c") {
-        const cfg = normalizeArg(parts[i + 1]).replace(/['"]/g, "");
+        const cfg = normalizeWord(parts[i + 1]);
         if (/^core\.worktree=/i.test(cfg)) redirected = true;
       }
       i += 2;
@@ -764,12 +851,12 @@ function findGitSubcommand(parts: readonly string[]): {
     }
     // --key=value 形式のglobal options
     if (p.startsWith("--") && p.includes("=")) {
-      if (redirectOpts.includes(p.slice(0, p.indexOf("=")))) redirected = true;
+      if (GIT_REDIRECT_OPTS.includes(p.slice(0, p.indexOf("=")))) redirected = true;
       i++;
       continue;
     }
     // 単独global options
-    if (singleGlobalOpts.includes(p)) { i++; continue; }
+    if (GIT_SINGLE_GLOBAL_OPTS.has(p)) { i++; continue; }
     // subcommandを発見（-で始まらない）
     if (!p.startsWith("-")) {
       return { subcommand: p, argsStartIndex: i + 1, redirected };
@@ -797,10 +884,7 @@ export function checkDangerousGitFlags(command: string): boolean {
   // 正規化前の生コマンドを渡すので、`"git"` / `'git'` / `/usr/bin/git` の形だと
   // リテラル比較では素通りしてしまう (`Bash(git -C *)` の deny を外した以上、
   // `-C` 付きの破壊的 git はこのガードが最後の砦になる)。
-  let name = normalizeArg(parts[0]).replace(/['"]/g, "");
-  const lastSlash = name.lastIndexOf("/");
-  if (lastSlash >= 0) name = name.slice(lastSlash + 1);
-  if (name !== "git") return false;
+  if (commandBaseName(parts[0]) !== "git") return false;
 
   // env 経由の RCE 指定はサブコマンドに依らないので先に判定する
   // (`GIT_SSH_COMMAND=/evil git fetch` のように読み取り系でも成立する)。
@@ -960,17 +1044,42 @@ function normalizeCommandName(command: string): string {
   const originalName = spaceIndex === -1 ? command : command.slice(0, spaceIndex);
   const rest = spaceIndex === -1 ? "" : command.slice(spaceIndex);
 
-  let cmdName = normalizeArg(originalName);
-  // mid-word quoteの除去（シェルはクォート除去後に結合する）
-  cmdName = cmdName.replace(/['"]/g, "");
-  // フルパスからベース名を抽出
-  const lastSlash = cmdName.lastIndexOf("/");
-  if (lastSlash >= 0) {
-    cmdName = cmdName.slice(lastSlash + 1);
-  }
+  const cmdName = commandBaseName(originalName);
 
   if (cmdName === originalName) return command;
   return cmdName + rest;
+}
+
+/**
+ * `Bash(git -C * <sub...> *)` 形式のルールなら `<sub...>` のトークン列を返す。
+ * それ以外のルールは null。
+ */
+export function gitCPatternSubTokens(pattern: string): readonly string[] | null {
+  // 末尾は ` *` / `:*` / 無し のいずれも patternToRegex が受け付ける同義形なので全て拾う
+  const m = /^Bash\(git -C \* (.+?)(?: \*|:\*)?\)$/.exec(pattern);
+  if (!m) return null;
+  const tokens = m[1].split(" ");
+  // サブコマンド側にワイルドカードを含むルール (`Bash(git -C * *)` 等) は固定の
+  // サブコマンドを持たないので anchor 検査の対象外 (通常の allow として扱う)
+  return tokens.some((t) => t.includes("*")) ? null : tokens;
+}
+
+/**
+ * `git -C <dir> [安全な global option...] <sub...>` の形で、`<sub...>` が
+ * サブコマンド位置に並んでいるかを判定する。patternToRegex の中間 `*` はこの位置に
+ * anchor されないため、allow 判定時に実サブコマンドとの一致をここで確かめる。
+ * `parts` はクォート除去済みのトークン列。
+ */
+function isAnchoredGitCMatch(parts: readonly string[], subTokens: readonly string[]): boolean {
+  if (commandBaseName(parts[0] ?? "") !== "git" || parts[1] !== "-C") return false;
+  // `-C` の引数にシェル展開 (コマンド置換 / 変数 / glob / brace) が含まれると、展開後の
+  // 語数が変わって実サブコマンドの位置がずれうる (`$(echo)` / 空の `$X` は語ごと消え、
+  // `{x,rm}` や `*` は複数語になる)。tokenizeCommand はクォート除去済みで展開の
+  // 有無を区別できないため、展開文字を含む dir は一律 anchor 外とする。
+  if (/[$`*?[{]/.test(parts[2] ?? "")) return false;
+  let i = 3;
+  while (i < parts.length && SIDE_EFFECT_FREE_GIT_GLOBAL_OPTS.has(parts[i])) i++;
+  return subTokens.every((t, j) => parts[i + j] === t);
 }
 
 /**
@@ -1021,11 +1130,46 @@ export function matchCommand(
   }
 
   // allow チェック
+  // 優先順位: anchored な `git -C` ルール > `Bash(git -C * *)` 等の包括 `-C` allow
+  // (ユーザの明示意図) > 緩いだけの `git -C` マッチ (ask) > その他の allow。
+  // 緩いマッチを他の allow (`Bash(command *)` 等、未 strip の候補に当たるもの) で
+  // 打ち消すと、本体も同じルールで auto-approve して ask 昇格の意味が無くなる。
+  let looseGitCPattern: string | null = null;
+  let wildcardGitCPattern: string | null = null;
+  let otherAllowPattern: string | null = null;
+  // anchor 検査用のトークン列は必要になった時に 1 回だけ作る
+  let strippedParts: readonly string[] | undefined;
+  const partsOfStripped = () =>
+    (strippedParts ??= tokenizeCommand(stripped).map(normalizeWord));
+  // `git -C` 形でなければ `-C` ルールは緩くもマッチしないので、最初の allow で確定してよい
+  const isGitCForm = () =>
+    commandBaseName(partsOfStripped()[0] ?? "") === "git" && partsOfStripped()[1] === "-C";
   for (const rule of rules) {
     if (rule.category !== "allow") continue;
-    if (candidates.some((cmd) => rule.regex.test(cmd))) {
+    if (!candidates.some((cmd) => rule.regex.test(cmd))) continue;
+    const subTokens = gitCPatternSubTokens(rule.pattern);
+    if (!subTokens) {
+      if (!isGitCForm()) return { decision: "allow", command, pattern: rule.pattern };
+      if (rule.pattern.startsWith("Bash(git -C *")) wildcardGitCPattern ??= rule.pattern;
+      else otherAllowPattern ??= rule.pattern;
+      continue;
+    }
+    if (isAnchoredGitCMatch(partsOfStripped(), subTokens)) {
       return { decision: "allow", command, pattern: rule.pattern };
     }
+    looseGitCPattern ??= rule.pattern;
+  }
+  if (wildcardGitCPattern) {
+    return { decision: "allow", command, pattern: wildcardGitCPattern };
+  }
+  // `Bash(git -C * <sub> *)` に「緩く」だけマッチした (実サブコマンドが <sub> ではない)。
+  // ここで pass-through すると Claude Code 本体が同じ緩いパターンで auto-approve
+  // してしまうため、ask を返して本体の allow を上書きする。
+  if (looseGitCPattern) {
+    return { decision: "ask", command, pattern: `${looseGitCPattern} (loose git -C match)` };
+  }
+  if (otherAllowPattern) {
+    return { decision: "allow", command, pattern: otherAllowPattern };
   }
 
   // ask チェック

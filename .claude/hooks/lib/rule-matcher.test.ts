@@ -1,4 +1,5 @@
 import { describe, test, expect } from "bun:test";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
   matchCommand,
@@ -6,6 +7,7 @@ import {
   checkDangerousGitFlags,
   extractBashPattern,
   patternToRegex,
+  gitCPatternSubTokens,
 } from "./rule-matcher.ts";
 import { loadRules } from "./rules.ts";
 import { parseShellCommands } from "./shell-parser.ts";
@@ -946,6 +948,41 @@ describe("checkDangerousGitFlags", () => {
     expect(checkDangerousGitFlags("git switch --discard-changes main")).toBe(true);
     expect(checkDangerousGitFlags("git -C /other switch -f main")).toBe(true);
   });
+
+  // branch -C (= --copy --force) は既存ブランチを強制上書きする (branch -f と同じ効果)。
+  // -d / --delete は CWD 内では許容するが、-C 付け替え時は別リポジトリのブランチ削除になる。
+  test("git branch -C / --copy --force は危険、-d / --delete は付け替え時のみ危険", () => {
+    expect(checkDangerousGitFlags("git branch -C main backup")).toBe(true);
+    expect(checkDangerousGitFlags("git -C /other branch --copy --force main backup")).toBe(true);
+    expect(checkDangerousGitFlags("git branch -c main copy")).toBe(false);
+    expect(checkDangerousGitFlags("git branch -d feature")).toBe(false);
+    expect(checkDangerousGitFlags("git -C /other branch -d feature")).toBe(true);
+    expect(checkDangerousGitFlags("git -C /other branch --delete feature")).toBe(true);
+    expect(checkDangerousGitFlags("git -C /other branch --delete-merged origin")).toBe(true);
+    expect(checkDangerousGitFlags("git branch --delete-merged origin")).toBe(false);
+    expect(checkDangerousGitFlags("git -C /other branch -a")).toBe(false);
+    expect(checkDangerousGitFlags("git -C /other branch --show-current")).toBe(false);
+  });
+
+  // remote の書き込み系サブアクションは付け替え先の .git/config を書き換える。
+  test("git -C <dir> remote は読み取り (bare / -v / show / get-url) 以外が危険", () => {
+    expect(checkDangerousGitFlags("git -C /other remote")).toBe(false);
+    expect(checkDangerousGitFlags("git -C /other remote -v")).toBe(false);
+    expect(checkDangerousGitFlags("git -C /other remote show origin")).toBe(false);
+    expect(checkDangerousGitFlags("git -C /other remote get-url origin")).toBe(false);
+    expect(checkDangerousGitFlags("git -C /other remote remove origin")).toBe(true);
+    expect(checkDangerousGitFlags("git -C /other remote set-url origin https://example.com/x.git")).toBe(true);
+    expect(checkDangerousGitFlags("git -C /other remote rename origin up")).toBe(true);
+    expect(checkDangerousGitFlags("git remote add upstream https://example.com/x.git")).toBe(false);
+  });
+
+  // switch -C / --force-create は既存ブランチを強制付け替えする (branch -f と同じ効果)。
+  test("git switch -C / --force-create は危険、小文字 -c は安全", () => {
+    expect(checkDangerousGitFlags("git switch -C main origin/main")).toBe(true);
+    expect(checkDangerousGitFlags("git -C /other switch --force-create main")).toBe(true);
+    expect(checkDangerousGitFlags("git switch -c new-branch")).toBe(false);
+    expect(checkDangerousGitFlags("git -C /other switch -c new-branch")).toBe(false);
+  });
 });
 
 /**
@@ -983,6 +1020,286 @@ describe("統合テスト: settings.json ルールでの判定", () => {
     test("git merge feature", () => expect(judgeCommand("git merge feature")).toBe("allow"));
     test("git switch -c new-branch", () => expect(judgeCommand("git switch -c new-branch")).toBe("allow"));
     test("git worktree add ../wt main", () => expect(judgeCommand("git worktree add ../wt main")).toBe("allow"));
+  });
+
+  // `Bash(git -C * <subcommand> *)` は settings.json に明示的な allow ルールとして
+  // 追加済み (以前は `Bash(git -C *)` の deny を外しただけで、読み取り系は
+  // 未マッチ pass-through allow に依存していた)。ここでは「ルールが明示的に
+  // マッチして allow になる」ことを固定する。
+  //
+  // この `-C` 版の allow/deny リストは通常の `git <subcommand>` 版リストを手動で
+  // 複製したもの。同期は「git -C 版ルールと通常版ルールの同期」テストで検査して
+  // いるので、通常版にサブコマンドを追加/削除したら `-C` 版にも反映すること。
+  //
+  // 姉妹オプションの `Bash(git --git-dir *)` / `Bash(git --work-tree *)` は deny の
+  // ままで、扱いは揃っていない。緩和したのは実運用で使う `-C` だけ、というのが
+  // 現状で、`--git-dir` / `--work-tree` を同じく緩和すべきかは未判断
+  // (使う場面が無いので deny のまま倒している)。
+  //
+  // CWD 内では allow されている破壊系 (`rm` / `cherry-pick` / `revert` / `worktree` /
+  // `restore` / `clean` / 無引数 `stash` 等) は、`-C` で付け替えるとプロジェクト外に
+  // 届いてリスクの性質が変わるため、意図的に `-C` 版の allow ルールを追加していない。
+  // これらは checkDangerousGitFlags の dangerousWhenRedirected ルールで付け替え時のみ
+  // deny になる (「-C でディレクトリ迂回した破壊的 git」テスト群を参照)。
+  describe("allow 系: git -C <dir> <サブコマンド>（明示ルール）", () => {
+    test("git -C /tmp/x status", () => expect(judgeCommand("git -C /tmp/x status")).toBe("allow"));
+    test("git -C /tmp/x status --short", () => expect(judgeCommand("git -C /tmp/x status --short")).toBe("allow"));
+    test("git -C /tmp/x log --oneline", () => expect(judgeCommand("git -C /tmp/x log --oneline")).toBe("allow"));
+    test("git -C /tmp/x diff HEAD~1", () => expect(judgeCommand("git -C /tmp/x diff HEAD~1")).toBe("allow"));
+    test("git -C /tmp/x branch -a", () => expect(judgeCommand("git -C /tmp/x branch -a")).toBe("allow"));
+    test("git -C /tmp/x show HEAD", () => expect(judgeCommand("git -C /tmp/x show HEAD")).toBe("allow"));
+    test("git -C /tmp/x stash list", () => expect(judgeCommand("git -C /tmp/x stash list")).toBe("allow"));
+    test("git -C /tmp/x rev-parse --show-toplevel", () =>
+      expect(judgeCommand("git -C /tmp/x rev-parse --show-toplevel")).toBe("allow"));
+    test("git -C /tmp/x remote -v", () => expect(judgeCommand("git -C /tmp/x remote -v")).toBe("allow"));
+    test("git -C /tmp/x tag", () => expect(judgeCommand("git -C /tmp/x tag")).toBe("allow"));
+    test("git -C /tmp/x add file.ts", () => expect(judgeCommand("git -C /tmp/x add file.ts")).toBe("allow"));
+    test('git -C /tmp/x commit -m "msg"', () => expect(judgeCommand('git -C /tmp/x commit -m "msg"')).toBe("allow"));
+    test("git -C /tmp/x push origin main", () => expect(judgeCommand("git -C /tmp/x push origin main")).toBe("allow"));
+    test("git -C /tmp/x switch main", () => expect(judgeCommand("git -C /tmp/x switch main")).toBe("allow"));
+    test("git -C /tmp/x fetch origin", () => expect(judgeCommand("git -C /tmp/x fetch origin")).toBe("allow"));
+    test("git -C /tmp/x pull", () => expect(judgeCommand("git -C /tmp/x pull")).toBe("allow"));
+    test("git -C /tmp/x merge feature", () => expect(judgeCommand("git -C /tmp/x merge feature")).toBe("allow"));
+    test("git -C /tmp/x ls-files", () => expect(judgeCommand("git -C /tmp/x ls-files")).toBe("allow"));
+  });
+
+  // reset / rebase / checkout は「deny 系: -C でディレクトリ迂回した破壊的 git」と
+  // 重複するためここには置かず、明示ルールでの deny は「git -C 明示ルール: マッチした
+  // ルールの特定」で pattern ごと固定している。
+  describe("deny 系: git -C <dir> <危険な破壊的操作>（明示ルール）", () => {
+    test("git -C /tmp/x add -A", () => expect(judgeCommand("git -C /tmp/x add -A")).toBe("deny"));
+    test("git -C /tmp/x add --all", () => expect(judgeCommand("git -C /tmp/x add --all")).toBe("deny"));
+    test("git -C /tmp/x add -u", () => expect(judgeCommand("git -C /tmp/x add -u")).toBe("deny"));
+    test("git -C /tmp/x add --update", () => expect(judgeCommand("git -C /tmp/x add --update")).toBe("deny"));
+    test("git -C /tmp/x push --force origin main", () =>
+      expect(judgeCommand("git -C /tmp/x push --force origin main")).toBe("deny"));
+    test("git -C /tmp/x push -f origin main", () =>
+      expect(judgeCommand("git -C /tmp/x push -f origin main")).toBe("deny"));
+    test("git -C /tmp/x push --force-with-lease origin main", () =>
+      expect(judgeCommand("git -C /tmp/x push --force-with-lease origin main")).toBe("deny"));
+    test("git -C /tmp/x push --force-if-includes origin main", () =>
+      expect(judgeCommand("git -C /tmp/x push --force-if-includes origin main")).toBe("deny"));
+    test("git -C /tmp/x push --delete origin branch", () =>
+      expect(judgeCommand("git -C /tmp/x push --delete origin branch")).toBe("deny"));
+    test('git -C /tmp/x commit --no-verify -m "msg"', () =>
+      expect(judgeCommand('git -C /tmp/x commit --no-verify -m "msg"')).toBe("deny"));
+    test('git -C /tmp/x commit -n -m "msg"', () =>
+      expect(judgeCommand('git -C /tmp/x commit -n -m "msg"')).toBe("deny"));
+    test("git -C /tmp/x merge --no-verify feature", () =>
+      expect(judgeCommand("git -C /tmp/x merge --no-verify feature")).toBe("deny"));
+  });
+
+  // `Bash(git -C * <sub> *)` の regex がサブコマンド位置に anchor されないことと、
+  // それを補う評価順 (deny ルール → backstop → allow 時の anchor 検査) の設計は
+  // rule-matcher.ts の DANGEROUS_GIT_FLAGS 直上コメントを正とする。
+  // 以下の 2 ブロックで regex の緩さと「緩いマッチ + backstop で deny」の結合を固定する。
+  describe("patternToRegex: git -C * <sub> * は中間ワイルドカードでサブコマンド位置に anchor されない（既知・意図された緩さを固定）", () => {
+    const pushPattern = extractBashPattern("Bash(git -C * push *)");
+    if (!pushPattern) throw new Error("extractBashPattern の抽出に失敗");
+    const pushRegex = patternToRegex(pushPattern);
+
+    test("`git -C * push *` は /^git -C .* push( .*)?$/s に変換される", () => {
+      expect(pushRegex.source).toBe("^git -C .* push( .*)?$");
+      expect(pushRegex.flags).toBe("s");
+    });
+
+    test("意図したユースケース (git -C <dir> push <remote> <branch>) にマッチする", () => {
+      expect(pushRegex.test("git -C /tmp/x push origin main")).toBe(true);
+    });
+
+    test("既知の緩さ: サブコマンドが push でなくても、`-C` 以降のどこかに ` push` という文字列があれば同じ regex にマッチする", () => {
+      // 実サブコマンドは `branch` (push ではない)。`-C .*` が `branch -D` を
+      // 食い、末尾の `push` (削除対象のブランチ名) だけが文字列として
+      // push-allow パターンに合致してしまう。サブコマンド位置への anchor が
+      // 無いことの直接証拠。
+      expect(pushRegex.test("git -C /tmp/x branch -D push")).toBe(true);
+    });
+  });
+
+  describe("結合: 緩い allow マッチでも checkDangerousGitFlags の backstop が deny に昇格させる", () => {
+    test("git -C /tmp/x branch -D push は push-allow 正規表現にマッチするが、branch -D (破壊的フラグ) として deny になる", () => {
+      // 上の describe で確認した通り、`Bash(git -C * push *)` の正規表現単体
+      // ではこのコマンドに allow 判定を出しうる。しかし matchCommand は
+      // allow チェックより前に checkDangerousGitFlags を無条件で走らせており、
+      // `branch` サブコマンドの `-D` フラグ (ブランチ強制削除) は `-C` の有無に
+      // 関わらず deny 対象 (DANGEROUS_GIT_FLAGS) なので、最終的な評価結果は
+      // deny になる。「緩いマッチ + backstop で deny」という結合そのもの。
+      expect(checkDangerousGitFlags("git -C /tmp/x branch -D push")).toBe(true);
+      expect(judgeCommand("git -C /tmp/x branch -D push")).toBe("deny");
+    });
+  });
+
+  // judgeCommand は未マッチ pass-through も "allow" を返すため、allow / deny が
+  // 「どのルールで」決まったかを matchCommand(...).pattern で固定する。
+  describe("git -C 明示ルール: マッチしたルールの特定", () => {
+    test.each([
+      ["git -C /tmp/x status", "Bash(git -C * status *)"],
+      ["git -C '/tmp/a b' status --short", "Bash(git -C * status *)"],
+      ["git -C /tmp/x stash list", "Bash(git -C * stash list *)"],
+      ["git -C /tmp/x push origin main", "Bash(git -C * push *)"],
+      // 先に `Bash(git -C * status *)` へ緩くマッチしても、後続の anchored な
+      // ルールで allow される (緩いマッチは即 ask ではなく continue)
+      ["git -C /tmp/x commit -m status", "Bash(git -C * commit *)"],
+      ["git -C /tmp/x log --grep status", "Bash(git -C * log *)"],
+      // 副作用の無い global option は -C <dir> とサブコマンドの間に挟んでも anchor 内
+      ["git -C /tmp/x --no-pager log --oneline", "Bash(git -C * log *)"],
+      ["git -C /tmp/x --no-optional-locks status", "Bash(git -C * status *)"],
+      // -P は --no-pager の短縮形
+      ["git -C /tmp/x -P log --oneline", "Bash(git -C * log *)"],
+      // dir トークン自体が allow 語でも、実サブコマンド位置で判定する
+      ["git -C status status", "Bash(git -C * status *)"],
+      ["git -C '' status", "Bash(git -C * status *)"],
+    ])("%s は %s で allow", (command, pattern) => {
+      expect(matchCommand(command, settingsRules)).toEqual({ decision: "allow", command, pattern });
+    });
+
+    test.each([
+      // 明示 deny ルールが backstop (dangerous-git-flags) より先に確定する
+      ["git -C /tmp/x reset --hard", "Bash(git -C * reset *)"],
+      ["git -C /tmp/x rebase main", "Bash(git -C * rebase *)"],
+      ["git -C /tmp/x checkout -- .", "Bash(git -C * checkout *)"],
+      ["git -C /tmp/x push --force origin main", "Bash(git -C * push --force *)"],
+      // 明示 deny ルールが無く backstop が拾う (`-C` allow ルールより backstop が勝つ)
+      ["git -C /tmp/x branch -D push", "dangerous-git-flags"],
+      ["git -C /tmp/x branch -d feature", "dangerous-git-flags"],
+      ["git -C /tmp/x remote add origin https://example.com/x.git", "dangerous-git-flags"],
+      ["git -C /tmp/x switch -C main origin/main", "dangerous-git-flags"],
+    ])("%s は %s で deny", (command, pattern) => {
+      expect(matchCommand(command, settingsRules)).toEqual({ decision: "deny", command, pattern });
+    });
+  });
+
+  // `Bash(git -C * <sub> *)` の allow は Claude Code 本体も同じ settings.json から
+  // 読み、本体の `*` もサブコマンド位置に anchor されない。hook が pass-through
+  // (= 本体判定に委ねる) すると、allow リストに無いサブコマンド (replace / init /
+  // submodule / bisect 等、backstop の denylist にも無いもの) が、後続の引数に
+  // `status` 等の語を置くだけで本体に auto-approve される。hook は実サブコマンドが
+  // パターンのサブコマンドと一致しない緩いマッチを ask に倒して本体の allow を
+  // 上書きする。
+  describe("git -C 緩い allow マッチ: 実サブコマンドが不一致なら ask", () => {
+    test.each([
+      "git -C /tmp/x replace -d status",
+      "git -C /tmp/x init status",
+      "git -C . submodule foreach touch /tmp/pwned status",
+      "git -C . bisect run ./evil.sh status",
+      // -C <dir> とサブコマンドの間の `-c` は anchor 外として ask。`core.pager` 等は
+      // RCE_CONFIG_KEY_PATTERN に含めていない (正当な常用形がある) ため、`-c` を
+      // 許すと `-c core.pager=<任意コマンド>` が auto-approve されてしまう。
+      "git -C /tmp/x -c color.ui=never status",
+      "git -C /tmp/x -c core.pager=./evil.sh log",
+      // 2 つ目の -C で付け替え先を変える形も anchor 外
+      "git -C /tmp/x -C /tmp/y status",
+      // 透過 option を読み飛ばした先で不一致
+      "git -C /tmp/x --no-pager replace -d status",
+      // `--key=value` / 2 トークンの global option は anchor 外
+      "git -C /tmp/x --git-dir=/tmp/y status",
+      "git -C /tmp/x --namespace ns status",
+      // `-C` の引数にシェル展開 (コマンド置換 / 変数 / glob / brace) があると、展開後の
+      // 語数が変わって実サブコマンドがずれうる (`$(echo)` や空の `$X` は語ごと消え、
+      // `{x,rm}` は 2 語になる)。dir トークンに展開文字を含む形は一律 anchor 外 (ask)
+      "git -C $(echo status >/dev/null; echo /other) rm -r .",
+      "git -C `echo status ` rm -r .",
+      "git -C $(echo) status rm -r .",
+      "git -C $EMPTY status rm -r .",
+      "git -C {x,rm} status",
+      "git -C * status",
+      // クォートされた置換は 1 語に定まるが、クォート除去後のトークンでは区別できない
+      // ため安全側で同じく ask
+      'git -C "$(git rev-parse --show-toplevel)" status',
+      // `command` 前置: 未 strip の候補が後続の `Bash(command *)` allow に当たっても
+      // 緩いマッチの ask が優先される (本体も `Bash(command *)` で auto-approve するため)
+      "command git -C /tmp/x replace -d status",
+    ])("%s は ask", (command) => {
+      expect(matchCommand(command, settingsRules)?.decision).toBe("ask");
+    });
+
+    test("command git -C /tmp/x status は anchored な -C ルールで allow", () => {
+      expect(matchCommand("command git -C /tmp/x status", settingsRules)).toEqual({
+        decision: "allow", command: "command git -C /tmp/x status", pattern: "Bash(git -C * status *)",
+      });
+    });
+
+    // `:*` 終端 / 末尾ワイルドカード無しの書き方 (patternToRegex が受け付ける同義形) で
+    // ユーザ設定に `-C` allow を足しても anchor 検査の対象になる
+    test.each([
+      "Bash(git -C * log:*)",
+      "Bash(git -C * log)",
+      "Bash(git -C * log *)",
+    ])("%s も anchor 検査の対象", (pattern) => {
+      const rules = [rule("allow", pattern)];
+      expect(decision("git -C /tmp/x replace -d log", rules)).toBe("ask");
+      expect(decision("git -C /tmp/x log", rules)).toBe("allow");
+    });
+
+    // サブコマンド位置自体がワイルドカードのルール (`-C` 以下を全て許可する意図) は
+    // anchor 検査の対象外で、通常の allow として扱う
+    test("Bash(git -C * *) は anchor 検査の対象外", () => {
+      const rules = [rule("allow", "Bash(git -C * *)")];
+      expect(gitCPatternSubTokens("Bash(git -C * *)")).toBeNull();
+      expect(decision("git -C /tmp/x log --oneline", rules)).toBe("allow");
+    });
+
+    // ユーザが `-C` 以下を包括的に allow した場合は、その意図を緩いマッチの ask より優先する
+    test("Bash(git -C * *) と Bash(git -C * status *) の併存では包括 allow が優先", () => {
+      const rules = [rule("allow", "Bash(git -C * status *)"), rule("allow", "Bash(git -C * *)")];
+      expect(matchCommand("git -C /tmp/x replace -d status", rules)?.pattern).toBe("Bash(git -C * *)");
+      expect(matchCommand("git -C /tmp/x status", rules)?.pattern).toBe("Bash(git -C * status *)");
+    });
+  });
+
+  // deny 側の `Bash(git -C * reset *)` 等も同じく anchor されず、引数に reset 等の
+  // 語を含む読み取り系も deny になる。deny は Claude Code 本体側でも評価され hook から
+  // 上書きできないため、hook 側だけ anchor しても挙動は揃わない。過剰 deny は
+  // 安全側の失敗として受け入れ、既知の緩さとしてここで固定する。
+  //
+  // 注意: ここで固定しているのは hook の挙動だけ。hook は deny 判定をクォート内を
+  // 除去した候補で行うので `git -C /repo commit -m "fix reset bug"` は hook では
+  // deny されないが、Claude Code 本体は生のコマンド文字列で deny ルールを評価する
+  // ため、クォート内の語 (` reset ` 等) にも反応して本体側で deny されうる。
+  // クォートで回避できるのは `log -S 'reset'` のように語の直前が空白でない場合だけ。
+  describe("git -C 緩い deny マッチ: 読み取り系でも引数に deny 対象語があれば deny（既知・受容）", () => {
+    test.each([
+      ["git -C /repo log -S reset", "Bash(git -C * reset *)"],
+      ["git -C /repo log --grep rebase", "Bash(git -C * rebase *)"],
+      ["git -C /repo diff -- reset", "Bash(git -C * reset *)"],
+    ])("%s は %s で deny", (command, pattern) => {
+      expect(matchCommand(command, settingsRules)).toEqual({ decision: "deny", command, pattern });
+    });
+  });
+
+  // `-C` 版の allow / deny は通常版からの手動複製。通常版の増減に `-C` 版が
+  // 追随しているかを機械的に検査する。
+  describe("git -C 版ルールと通常版ルールの同期", () => {
+    const raw = JSON.parse(readFileSync(resolve(repoRoot, ".claude", "settings.json"), "utf8")) as {
+      permissions: Record<RuleCategory, string[]>;
+    };
+    // CWD 内でのみ allow する破壊系。`-C` で付け替えると影響範囲が変わるため
+    // 意図的に `-C` 版を持たない (dangerousWhenRedirected で deny)。
+    const INTENTIONALLY_NOT_MIRRORED = new Set(["stash", "worktree", "cherry-pick", "revert", "clean", "restore", "rm"]);
+
+    function subsOf(category: RuleCategory) {
+      const plain = new Set<string>();
+      const withC = new Set<string>();
+      for (const p of raw.permissions[category] ?? []) {
+        const c = gitCPatternSubTokens(p);
+        if (c) { withC.add(c.join(" ")); continue; }
+        // gitCPatternSubTokens と同じく ` *` / `:*` / 末尾ワイルドカード無しの 3 形を受け付ける
+        const n = /^Bash\(git ([^-].*?)(?: \*|:\*)?\)$/.exec(p);
+        if (n) plain.add(n[1]);
+      }
+      return { plain, withC };
+    }
+
+    test("allow: 通常版 (意図的除外を除く) と -C 版のサブコマンド集合が一致する", () => {
+      const { plain, withC } = subsOf("allow");
+      const expected = [...plain].filter((s) => !INTENTIONALLY_NOT_MIRRORED.has(s)).sort();
+      expect([...withC].sort()).toEqual(expected);
+    });
+
+    test("deny: 通常版と -C 版のサブコマンド集合が一致する", () => {
+      const { plain, withC } = subsOf("deny");
+      expect([...withC].sort()).toEqual([...plain].sort());
+    });
   });
 
   describe("allow 系: パイプ後段フィルタ", () => {
@@ -1036,29 +1353,13 @@ describe("統合テスト: settings.json ルールでの判定", () => {
     test("ls", () => expect(judgeCommand("ls")).toBe("allow"));
     test("ls -la", () => expect(judgeCommand("ls -la")).toBe("allow"));
 
-    // `Bash(git -C *)` も deny から意図的に除外した。別ディレクトリに対する
-    // 読み取り系 git を通すための緩和で、以下はその意図を固定するテスト。
-    //
-    // 姉妹オプションの `Bash(git --git-dir *)` / `Bash(git --work-tree *)` は deny の
-    // ままで、扱いは揃っていない。緩和したのは実運用で使う `-C` だけ、というのが
-    // 現状で、`--git-dir` / `--work-tree` を同じく緩和すべきかは未判断
-    // (使う場面が無いので deny のまま倒している)。
-    // なお破壊的サブコマンドはどのオプション形式でも checkDangerousGitFlags が
-    // 捕捉するので、この非対称は読み取り系が通るかどうかの差でしかない。
-    //
-    // 緩和されるのは読み取り系だけで、破壊的サブコマンドは -C を挟んでも
-    // checkDangerousGitFlags が deny にする (下の deny 系テストを参照)。
-    //
-    // CWD 内では allow されている破壊系 (`rm` / `stash drop` / `update-ref` 等) も、
-    // `-C` で付け替えるとプロジェクト外に届いてリスクの性質が変わるため、
-    // dangerousWhenRedirected ルールで付け替え時のみ deny にしている
-    // (「ディレクトリ付け替え時のみ危険なサブコマンド」のテスト群を参照)。
-    //
-    // ⚠️ deny になるのは DANGEROUS_GIT_FLAGS に載っているものだけで、この表は
-    // denylist なので網羅ではない。他の破壊系が見つかったら表に足すこと。
-    test("git -C /tmp/x status", () => expect(judgeCommand("git -C /tmp/x status")).toBe("allow"));
-    test("git -C /tmp/x log", () => expect(judgeCommand("git -C /tmp/x log")).toBe("allow"));
-    test("git -C /tmp/x diff", () => expect(judgeCommand("git -C /tmp/x diff")).toBe("allow"));
+    // `git -C <dir> <allow 済みサブコマンド>` は明示ルールでマッチするので該当しない
+    // (詳細は「allow 系: git -C <dir> <サブコマンド>（明示ルール）」直前のコメント参照)。
+    // allow リスト外のサブコマンドで、どの `-C` allow regex にも緩くマッチしないもの
+    // (`git -C /x replace -d foo` 等) は依然ここ (pass-through) に該当し、本体の
+    // デフォルトプロンプトに委ねられる。
+    test("git -C /tmp/x replace -d foo", () =>
+      expect(matchCommand("git -C /tmp/x replace -d foo", settingsRules)).toBeNull());
   });
 
   describe("deny 系: -C でディレクトリ迂回した破壊的 git", () => {
