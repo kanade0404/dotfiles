@@ -457,8 +457,10 @@ const DANGEROUS_GIT_FLAGS: readonly DangerousGitFlagRule[] = [
     // switch は通常のブランチ切替 (`switch main` / `switch -c new`) は安全だが、
     // -f / --discard-changes はローカル変更を破棄する点で `checkout -- .` と同性質。
     // checkout を alwaysDangerous にした以上、こちらだけ通す非対称は残せない。
+    // -C / --force-create は既存ブランチを強制的に付け替える (branch -f と同じ効果)。
+    // サブコマンド後の -C なので global option の -C とは衝突しない。
     gitSubcommands: ["switch"],
-    flags: ["-f", "--force", "--discard-changes"],
+    flags: ["-f", "--force", "--discard-changes", "-C", "--force-create"],
   },
   {
     // tag は一覧 (bare / -l) が読み取り。削除・強制付け替えが破壊的。
@@ -1004,15 +1006,33 @@ function gitCPatternSubTokens(pattern: string): readonly string[] | null {
 }
 
 /**
- * コマンドが `git -C <dir> <sub...>` の形で、`-C` の直後の 1 トークンを
- * ディレクトリとして読み飛ばした位置に `<sub...>` が並んでいるかを判定する。
- * patternToRegex の中間 `*` はこの位置に anchor されないため、allow 判定時に
- * 実サブコマンドとの一致をここで確かめる。
+ * `git -C <dir>` とサブコマンドの間に挟んでも anchor 内とみなす global option。
+ * 出力形式・ロック・pathspec 解釈だけを変え、外部コマンド起動やリポジトリの
+ * 付け替えを伴わないものに限る。`-c` (core.pager 等で任意コマンドを起動しうる) /
+ * `-C` / `--git-dir` / `--work-tree` / `--exec-path` / `-p` (pager 起動) は含めない。
+ */
+const ANCHOR_TRANSPARENT_GIT_OPTS: ReadonlySet<string> = new Set([
+  "--no-pager",
+  "--no-optional-locks",
+  "--literal-pathspecs",
+  "--glob-pathspecs",
+  "--no-glob-pathspecs",
+  "--noglob-pathspecs",
+  "--icase-pathspecs",
+  "--no-replace-objects",
+]);
+
+/**
+ * コマンドが `git -C <dir> [安全な global option...] <sub...>` の形で、`<sub...>` が
+ * サブコマンド位置に並んでいるかを判定する。patternToRegex の中間 `*` はこの位置に
+ * anchor されないため、allow 判定時に実サブコマンドとの一致をここで確かめる。
  */
 function isAnchoredGitCMatch(stripped: string, subTokens: readonly string[]): boolean {
   const parts = tokenizeCommand(stripped).map((p) => normalizeArg(p).replace(/['"]/g, ""));
   if (commandBaseName(parts[0] ?? "") !== "git" || parts[1] !== "-C") return false;
-  return subTokens.every((t, i) => parts[3 + i] === t);
+  let i = 3;
+  while (i < parts.length && ANCHOR_TRANSPARENT_GIT_OPTS.has(parts[i])) i++;
+  return subTokens.every((t, j) => parts[i + j] === t);
 }
 
 /**

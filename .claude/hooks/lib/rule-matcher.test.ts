@@ -947,6 +947,14 @@ describe("checkDangerousGitFlags", () => {
     expect(checkDangerousGitFlags("git switch --discard-changes main")).toBe(true);
     expect(checkDangerousGitFlags("git -C /other switch -f main")).toBe(true);
   });
+
+  // switch -C / --force-create は既存ブランチを強制付け替えする (branch -f と同じ効果)。
+  test("git switch -C / --force-create は危険、小文字 -c は安全", () => {
+    expect(checkDangerousGitFlags("git switch -C main origin/main")).toBe(true);
+    expect(checkDangerousGitFlags("git -C /other switch --force-create main")).toBe(true);
+    expect(checkDangerousGitFlags("git switch -c new-branch")).toBe(false);
+    expect(checkDangerousGitFlags("git -C /other switch -c new-branch")).toBe(false);
+  });
 });
 
 /**
@@ -1027,10 +1035,10 @@ describe("統合テスト: settings.json ルールでの判定", () => {
     test("git -C /tmp/x ls-files", () => expect(judgeCommand("git -C /tmp/x ls-files")).toBe("allow"));
   });
 
+  // reset / rebase / checkout は「deny 系: -C でディレクトリ迂回した破壊的 git」と
+  // 重複するためここには置かず、明示ルールでの deny は「git -C 明示ルール: マッチした
+  // ルールの特定」で pattern ごと固定している。
   describe("deny 系: git -C <dir> <危険な破壊的操作>（明示ルール）", () => {
-    test("git -C /tmp/x reset --hard", () => expect(judgeCommand("git -C /tmp/x reset --hard")).toBe("deny"));
-    test("git -C /tmp/x rebase main", () => expect(judgeCommand("git -C /tmp/x rebase main")).toBe("deny"));
-    test("git -C /tmp/x checkout -- .", () => expect(judgeCommand("git -C /tmp/x checkout -- .")).toBe("deny"));
     test("git -C /tmp/x add -A", () => expect(judgeCommand("git -C /tmp/x add -A")).toBe("deny"));
     test("git -C /tmp/x add --all", () => expect(judgeCommand("git -C /tmp/x add --all")).toBe("deny"));
     test("git -C /tmp/x add -u", () => expect(judgeCommand("git -C /tmp/x add -u")).toBe("deny"));
@@ -1113,6 +1121,13 @@ describe("統合テスト: settings.json ルールでの判定", () => {
       ["git -C '/tmp/a b' status --short", "Bash(git -C * status *)"],
       ["git -C /tmp/x stash list", "Bash(git -C * stash list *)"],
       ["git -C /tmp/x push origin main", "Bash(git -C * push *)"],
+      // 先に `Bash(git -C * status *)` へ緩くマッチしても、後続の anchored な
+      // ルールで allow される (緩いマッチは即 ask ではなく continue)
+      ["git -C /tmp/x commit -m status", "Bash(git -C * commit *)"],
+      ["git -C /tmp/x log --grep status", "Bash(git -C * log *)"],
+      // 副作用の無い global option は -C <dir> とサブコマンドの間に挟んでも anchor 内
+      ["git -C /tmp/x --no-pager log --oneline", "Bash(git -C * log *)"],
+      ["git -C /tmp/x --no-optional-locks status", "Bash(git -C * status *)"],
     ])("%s は %s で allow", (command, pattern) => {
       expect(matchCommand(command, settingsRules)).toEqual({ decision: "allow", command, pattern });
     });
@@ -1120,6 +1135,8 @@ describe("統合テスト: settings.json ルールでの判定", () => {
     test.each([
       // 明示 deny ルールが backstop (dangerous-git-flags) より先に確定する
       ["git -C /tmp/x reset --hard", "Bash(git -C * reset *)"],
+      ["git -C /tmp/x rebase main", "Bash(git -C * rebase *)"],
+      ["git -C /tmp/x checkout -- .", "Bash(git -C * checkout *)"],
       ["git -C /tmp/x push --force origin main", "Bash(git -C * push --force *)"],
       // 明示 deny ルールが無く backstop が拾う
       ["git -C /tmp/x branch -D push", "dangerous-git-flags"],
@@ -1141,8 +1158,13 @@ describe("統合テスト: settings.json ルールでの判定", () => {
       "git -C /tmp/x init status",
       "git -C . submodule foreach touch /tmp/pwned status",
       "git -C . bisect run ./evil.sh status",
-      // -C <dir> とサブコマンドの間に別の global option を挟む形も anchor 外として ask
+      // -C <dir> とサブコマンドの間の `-c` は anchor 外として ask。`core.pager` 等は
+      // RCE_CONFIG_KEY_PATTERN に含めていない (正当な常用形がある) ため、`-c` を
+      // 許すと `-c core.pager=<任意コマンド>` が auto-approve されてしまう。
       "git -C /tmp/x -c color.ui=never status",
+      "git -C /tmp/x -c core.pager=./evil.sh log",
+      // 2 つ目の -C で付け替え先を変える形も anchor 外
+      "git -C /tmp/x -C /tmp/y status",
     ])("%s は ask", (command) => {
       expect(matchCommand(command, settingsRules)?.decision).toBe("ask");
     });
