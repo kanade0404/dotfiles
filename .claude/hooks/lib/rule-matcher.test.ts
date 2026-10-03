@@ -985,6 +985,69 @@ describe("統合テスト: settings.json ルールでの判定", () => {
     test("git worktree add ../wt main", () => expect(judgeCommand("git worktree add ../wt main")).toBe("allow"));
   });
 
+  // `Bash(git -C * <subcommand> *)` は settings.json に明示的な allow ルールとして
+  // 追加済み (以前は `Bash(git -C *)` の deny を外しただけで、読み取り系は
+  // 未マッチ pass-through allow に依存していた)。ここでは「ルールが明示的に
+  // マッチして allow になる」ことを固定する。
+  //
+  // 姉妹オプションの `Bash(git --git-dir *)` / `Bash(git --work-tree *)` は deny の
+  // ままで、扱いは揃っていない。緩和したのは実運用で使う `-C` だけ、というのが
+  // 現状で、`--git-dir` / `--work-tree` を同じく緩和すべきかは未判断
+  // (使う場面が無いので deny のまま倒している)。
+  //
+  // CWD 内では allow されている破壊系 (`rm` / `cherry-pick` / `revert` / `worktree` /
+  // `restore` / `clean` / 無引数 `stash` 等) は、`-C` で付け替えるとプロジェクト外に
+  // 届いてリスクの性質が変わるため、意図的に `-C` 版の allow ルールを追加していない。
+  // これらは checkDangerousGitFlags の dangerousWhenRedirected ルールで付け替え時のみ
+  // deny になる (「-C でディレクトリ迂回した破壊的 git」テスト群を参照)。
+  describe("allow 系: git -C <dir> <サブコマンド>（明示ルール）", () => {
+    test("git -C /tmp/x status", () => expect(judgeCommand("git -C /tmp/x status")).toBe("allow"));
+    test("git -C /tmp/x status --short", () => expect(judgeCommand("git -C /tmp/x status --short")).toBe("allow"));
+    test("git -C /tmp/x log --oneline", () => expect(judgeCommand("git -C /tmp/x log --oneline")).toBe("allow"));
+    test("git -C /tmp/x diff HEAD~1", () => expect(judgeCommand("git -C /tmp/x diff HEAD~1")).toBe("allow"));
+    test("git -C /tmp/x branch -a", () => expect(judgeCommand("git -C /tmp/x branch -a")).toBe("allow"));
+    test("git -C /tmp/x show HEAD", () => expect(judgeCommand("git -C /tmp/x show HEAD")).toBe("allow"));
+    test("git -C /tmp/x stash list", () => expect(judgeCommand("git -C /tmp/x stash list")).toBe("allow"));
+    test("git -C /tmp/x rev-parse --show-toplevel", () =>
+      expect(judgeCommand("git -C /tmp/x rev-parse --show-toplevel")).toBe("allow"));
+    test("git -C /tmp/x remote -v", () => expect(judgeCommand("git -C /tmp/x remote -v")).toBe("allow"));
+    test("git -C /tmp/x tag", () => expect(judgeCommand("git -C /tmp/x tag")).toBe("allow"));
+    test("git -C /tmp/x add file.ts", () => expect(judgeCommand("git -C /tmp/x add file.ts")).toBe("allow"));
+    test('git -C /tmp/x commit -m "msg"', () => expect(judgeCommand('git -C /tmp/x commit -m "msg"')).toBe("allow"));
+    test("git -C /tmp/x push origin main", () => expect(judgeCommand("git -C /tmp/x push origin main")).toBe("allow"));
+    test("git -C /tmp/x switch main", () => expect(judgeCommand("git -C /tmp/x switch main")).toBe("allow"));
+    test("git -C /tmp/x fetch origin", () => expect(judgeCommand("git -C /tmp/x fetch origin")).toBe("allow"));
+    test("git -C /tmp/x pull", () => expect(judgeCommand("git -C /tmp/x pull")).toBe("allow"));
+    test("git -C /tmp/x merge feature", () => expect(judgeCommand("git -C /tmp/x merge feature")).toBe("allow"));
+    test("git -C /tmp/x ls-files", () => expect(judgeCommand("git -C /tmp/x ls-files")).toBe("allow"));
+  });
+
+  describe("deny 系: git -C <dir> <危険な破壊的操作>（明示ルール）", () => {
+    test("git -C /tmp/x reset --hard", () => expect(judgeCommand("git -C /tmp/x reset --hard")).toBe("deny"));
+    test("git -C /tmp/x rebase main", () => expect(judgeCommand("git -C /tmp/x rebase main")).toBe("deny"));
+    test("git -C /tmp/x checkout -- .", () => expect(judgeCommand("git -C /tmp/x checkout -- .")).toBe("deny"));
+    test("git -C /tmp/x add -A", () => expect(judgeCommand("git -C /tmp/x add -A")).toBe("deny"));
+    test("git -C /tmp/x add --all", () => expect(judgeCommand("git -C /tmp/x add --all")).toBe("deny"));
+    test("git -C /tmp/x add -u", () => expect(judgeCommand("git -C /tmp/x add -u")).toBe("deny"));
+    test("git -C /tmp/x add --update", () => expect(judgeCommand("git -C /tmp/x add --update")).toBe("deny"));
+    test("git -C /tmp/x push --force origin main", () =>
+      expect(judgeCommand("git -C /tmp/x push --force origin main")).toBe("deny"));
+    test("git -C /tmp/x push -f origin main", () =>
+      expect(judgeCommand("git -C /tmp/x push -f origin main")).toBe("deny"));
+    test("git -C /tmp/x push --force-with-lease origin main", () =>
+      expect(judgeCommand("git -C /tmp/x push --force-with-lease origin main")).toBe("deny"));
+    test("git -C /tmp/x push --force-if-includes origin main", () =>
+      expect(judgeCommand("git -C /tmp/x push --force-if-includes origin main")).toBe("deny"));
+    test("git -C /tmp/x push --delete origin branch", () =>
+      expect(judgeCommand("git -C /tmp/x push --delete origin branch")).toBe("deny"));
+    test('git -C /tmp/x commit --no-verify -m "msg"', () =>
+      expect(judgeCommand('git -C /tmp/x commit --no-verify -m "msg"')).toBe("deny"));
+    test('git -C /tmp/x commit -n -m "msg"', () =>
+      expect(judgeCommand('git -C /tmp/x commit -n -m "msg"')).toBe("deny"));
+    test("git -C /tmp/x merge --no-verify feature", () =>
+      expect(judgeCommand("git -C /tmp/x merge --no-verify feature")).toBe("deny"));
+  });
+
   describe("allow 系: パイプ後段フィルタ", () => {
     test("head -5", () => expect(judgeCommand("head -5")).toBe("allow"));
     test("tail -20", () => expect(judgeCommand("tail -20")).toBe("allow"));
@@ -1036,29 +1099,14 @@ describe("統合テスト: settings.json ルールでの判定", () => {
     test("ls", () => expect(judgeCommand("ls")).toBe("allow"));
     test("ls -la", () => expect(judgeCommand("ls -la")).toBe("allow"));
 
-    // `Bash(git -C *)` も deny から意図的に除外した。別ディレクトリに対する
-    // 読み取り系 git を通すための緩和で、以下はその意図を固定するテスト。
-    //
-    // 姉妹オプションの `Bash(git --git-dir *)` / `Bash(git --work-tree *)` は deny の
-    // ままで、扱いは揃っていない。緩和したのは実運用で使う `-C` だけ、というのが
-    // 現状で、`--git-dir` / `--work-tree` を同じく緩和すべきかは未判断
-    // (使う場面が無いので deny のまま倒している)。
-    // なお破壊的サブコマンドはどのオプション形式でも checkDangerousGitFlags が
-    // 捕捉するので、この非対称は読み取り系が通るかどうかの差でしかない。
-    //
-    // 緩和されるのは読み取り系だけで、破壊的サブコマンドは -C を挟んでも
-    // checkDangerousGitFlags が deny にする (下の deny 系テストを参照)。
-    //
-    // CWD 内では allow されている破壊系 (`rm` / `stash drop` / `update-ref` 等) も、
-    // `-C` で付け替えるとプロジェクト外に届いてリスクの性質が変わるため、
-    // dangerousWhenRedirected ルールで付け替え時のみ deny にしている
-    // (「ディレクトリ付け替え時のみ危険なサブコマンド」のテスト群を参照)。
-    //
-    // ⚠️ deny になるのは DANGEROUS_GIT_FLAGS に載っているものだけで、この表は
-    // denylist なので網羅ではない。他の破壊系が見つかったら表に足すこと。
-    test("git -C /tmp/x status", () => expect(judgeCommand("git -C /tmp/x status")).toBe("allow"));
-    test("git -C /tmp/x log", () => expect(judgeCommand("git -C /tmp/x log")).toBe("allow"));
-    test("git -C /tmp/x diff", () => expect(judgeCommand("git -C /tmp/x diff")).toBe("allow"));
+    // `git -C <dir> <破壊系サブコマンド>` (rm / cherry-pick / revert / worktree /
+    // restore / clean / 無引数 stash 等) は settings.json に allow ルールが無く、
+    // checkDangerousGitFlags の dangerousWhenRedirected ルールで deny に昇格する
+    // ため、ここでの「未マッチ pass-through allow」には該当しない
+    // (「-C でディレクトリ迂回した破壊的 git」テスト群を参照)。
+    // `git -C <dir> status|log|diff|...` 等の読み取り/安全系は明示的な allow
+    // ルールを追加済みなので、同様にこのブロックの対象外
+    // (「git -C <dir> <サブコマンド>（明示ルール）」テスト群を参照)。
   });
 
   describe("deny 系: -C でディレクトリ迂回した破壊的 git", () => {
