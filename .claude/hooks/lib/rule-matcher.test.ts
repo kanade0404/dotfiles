@@ -1269,9 +1269,13 @@ describe("統合テスト: settings.json ルールでの判定", () => {
     test("ls", () => expect(judgeCommand("ls")).toBe("allow"));
     test("ls -la", () => expect(judgeCommand("ls -la")).toBe("allow"));
 
-    // `git -C <dir> ...` は allow 系・deny 系ともに明示ルール済みのため、ここでの
-    // 「未マッチ pass-through allow」には該当しない (詳細は「allow 系: git -C <dir>
-    // <サブコマンド>（明示ルール）」直前のコメント参照)。
+    // `git -C <dir> <allow 済みサブコマンド>` は明示ルールでマッチするので該当しない
+    // (詳細は「allow 系: git -C <dir> <サブコマンド>（明示ルール）」直前のコメント参照)。
+    // allow リスト外のサブコマンドで、どの `-C` allow regex にも緩くマッチしないもの
+    // (`git -C /x replace -d foo` 等) は依然ここ (pass-through) に該当し、本体の
+    // デフォルトプロンプトに委ねられる。
+    test("git -C /tmp/x replace -d foo", () =>
+      expect(matchCommand("git -C /tmp/x replace -d foo", settingsRules)).toBeNull());
   });
 
   describe("deny 系: -C でディレクトリ迂回した破壊的 git", () => {

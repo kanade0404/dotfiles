@@ -404,8 +404,12 @@ type DangerousGitFlagRule = {
 //    `-C` 版 deny ルールに無い破壊的サブコマンド/フラグも deny に昇格させる。
 // 3. allow 判定時の anchor 検査 (isAnchoredGitCMatch) — `-C <dir>` 直後の実サブ
 //    コマンドがパターンと一致しない緩いマッチは ask に倒し、本体の auto-approve を
-//    上書きする。allow リストに無いサブコマンド (replace / submodule 等) は
-//    本テーブルに無くてもここで止まる。
+//    上書きする。allow リストに無いサブコマンド (replace / submodule 等) は、
+//    いずれかの `-C` allow regex に緩くマッチした場合 (`... replace -d status`) は
+//    ここで hook が ask を返し、どれにもマッチしない場合 (`... replace -d foo`) は
+//    null (pass-through) で本体に委ねられ、本体にも一致ルールが無いので本体の
+//    デフォルトプロンプトになる。`-C` allow を増やす時はこの 2 経路を前提にすること。
+//    なお hook が動かない環境では本体が緩い regex のまま auto-approve しうる。
 // 本テーブルは自己申告の denylist であり網羅を保証しない — 新しい破壊的な
 // git サブコマンド/フラグを見つけたら必ずここに追加すること。
 const DANGEROUS_GIT_FLAGS: readonly DangerousGitFlagRule[] = [
