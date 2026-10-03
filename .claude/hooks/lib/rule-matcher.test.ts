@@ -1089,22 +1089,10 @@ describe("統合テスト: settings.json ルールでの判定", () => {
       expect(judgeCommand("git -C /tmp/x merge --no-verify feature")).toBe("deny"));
   });
 
-  // code-review Important finding: settings.json の `Bash(git -C * push *)` /
-  // `Bash(git -C * add *)` / `Bash(git -C * commit *)` は settings.json 初の
-  // 「中間ワイルドカード」を持つ allow パターンで、patternToRegex は `*` を
-  // サブコマンド位置に anchor しない。`git -C * push *` は
-  // `/^git -C .* push( .*)?$/s` になり、「2 番目の位置引数が push」ではなく
-  // 「`-C` の後ろのどこかに ` push` という文字列が現れる」コマンド全てに
-  // マッチする (例: サブコマンドが `branch` でも引数に `push` という文字列が
-  // あれば同じ regex にマッチする)。
-  //
-  // regex の緩さ自体は既知のものとしてここで固定する。安全性は regex ではなく
-  // matchCommand 側で担保する: allow 判定より前に無条件で走る checkDangerousGitFlags
-  // (DANGEROUS_GIT_FLAGS テーブル、rule-matcher.ts 内) が破壊的サブコマンド/フラグを
-  // deny に昇格させ、allow 判定時の anchor 検査が実サブコマンド不一致の緩いマッチを
-  // ask に倒す (「git -C 緩い allow マッチ」テスト群)。
-  // 以下の 2 ブロックで「緩いマッチ (loose match) + backstop で deny」という
-  // 結合を明文化する。
+  // `Bash(git -C * <sub> *)` の regex がサブコマンド位置に anchor されないことと、
+  // それを補う評価順 (deny ルール → backstop → allow 時の anchor 検査) の設計は
+  // rule-matcher.ts の DANGEROUS_GIT_FLAGS 直上コメントを正とする。
+  // 以下の 2 ブロックで regex の緩さと「緩いマッチ + backstop で deny」の結合を固定する。
   describe("patternToRegex: git -C * <sub> * は中間ワイルドカードでサブコマンド位置に anchor されない（既知・意図された緩さを固定）", () => {
     const pushPattern = extractBashPattern("Bash(git -C * push *)");
     if (!pushPattern) throw new Error("extractBashPattern の抽出に失敗");

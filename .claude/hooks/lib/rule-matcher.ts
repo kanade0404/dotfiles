@@ -779,11 +779,12 @@ function commandBaseName(token: string): string {
 /**
  * 単独で使う git global option のうち、出力形式・ロック・pathspec 解釈だけを変え、
  * 外部コマンド起動やリポジトリの付け替えを伴わないもの。
- * findGitSubcommand の読み飛ばし対象と、`git -C` allow の anchor 検査で
- * `-C <dir>` とサブコマンドの間に挟んでよいもの (ANCHOR_TRANSPARENT_GIT_OPTS) の
- * 共通の源泉にする。
+ * findGitSubcommand の読み飛ばし対象であり、`git -C` allow の anchor 検査で
+ * `-C <dir>` とサブコマンドの間に挟んでよいものでもある。
+ * `-c` (core.pager 等で任意コマンドを起動しうる) / `-C` / `--git-dir` /
+ * `--work-tree` / `--exec-path` / `-p` (pager 起動) / `--bare` は含めない。
  */
-const SIDE_EFFECT_FREE_GIT_GLOBAL_OPTS: readonly string[] = [
+const SIDE_EFFECT_FREE_GIT_GLOBAL_OPTS: ReadonlySet<string> = new Set([
   "--no-pager",
   "--no-optional-locks",
   "--literal-pathspecs",
@@ -792,7 +793,7 @@ const SIDE_EFFECT_FREE_GIT_GLOBAL_OPTS: readonly string[] = [
   "--noglob-pathspecs",
   "--icase-pathspecs",
   "--no-replace-objects",
-];
+]);
 
 /**
  * git global optionsをスキップしてsubcommandとその引数を検出する。
@@ -808,7 +809,7 @@ function findGitSubcommand(parts: readonly string[]): {
   const redirectOpts = ["-C", "--git-dir", "--work-tree"];
   let redirected = false;
   // git global options一覧
-  const singleGlobalOpts = [...SIDE_EFFECT_FREE_GIT_GLOBAL_OPTS, "--bare", "--paginate", "-p"];
+  const singleGlobalOpts = new Set([...SIDE_EFFECT_FREE_GIT_GLOBAL_OPTS, "--bare", "--paginate", "-p"]);
   const twoTokenGlobalOpts = ["-c", "-C", "--git-dir", "--work-tree", "--namespace"];
 
   let i = 1;
@@ -838,7 +839,7 @@ function findGitSubcommand(parts: readonly string[]): {
       continue;
     }
     // 単独global options
-    if (singleGlobalOpts.includes(p)) { i++; continue; }
+    if (singleGlobalOpts.has(p)) { i++; continue; }
     // subcommandを発見（-で始まらない）
     if (!p.startsWith("-")) {
       return { subcommand: p, argsStartIndex: i + 1, redirected };
@@ -1043,13 +1044,6 @@ export function gitCPatternSubTokens(pattern: string): readonly string[] | null 
 }
 
 /**
- * `git -C <dir>` とサブコマンドの間に挟んでも anchor 内とみなす global option。
- * `-c` (core.pager 等で任意コマンドを起動しうる) / `-C` / `--git-dir` /
- * `--work-tree` / `--exec-path` / `-p` (pager 起動) / `--bare` は含めない。
- */
-const ANCHOR_TRANSPARENT_GIT_OPTS: ReadonlySet<string> = new Set(SIDE_EFFECT_FREE_GIT_GLOBAL_OPTS);
-
-/**
  * `git -C <dir> [安全な global option...] <sub...>` の形で、`<sub...>` が
  * サブコマンド位置に並んでいるかを判定する。patternToRegex の中間 `*` はこの位置に
  * anchor されないため、allow 判定時に実サブコマンドとの一致をここで確かめる。
@@ -1058,7 +1052,7 @@ const ANCHOR_TRANSPARENT_GIT_OPTS: ReadonlySet<string> = new Set(SIDE_EFFECT_FRE
 function isAnchoredGitCMatch(parts: readonly string[], subTokens: readonly string[]): boolean {
   if (commandBaseName(parts[0] ?? "") !== "git" || parts[1] !== "-C") return false;
   let i = 3;
-  while (i < parts.length && ANCHOR_TRANSPARENT_GIT_OPTS.has(parts[i])) i++;
+  while (i < parts.length && SIDE_EFFECT_FREE_GIT_GLOBAL_OPTS.has(parts[i])) i++;
   return subTokens.every((t, j) => parts[i + j] === t);
 }
 
