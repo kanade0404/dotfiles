@@ -949,11 +949,11 @@ describe("checkDangerousGitFlags", () => {
     expect(checkDangerousGitFlags("git -C /other switch -f main")).toBe(true);
   });
 
-  // branch -C / --copy-force は既存ブランチを強制上書きする (branch -f と同じ効果)。
+  // branch -C (= --copy --force) は既存ブランチを強制上書きする (branch -f と同じ効果)。
   // -d / --delete は CWD 内では許容するが、-C 付け替え時は別リポジトリのブランチ削除になる。
-  test("git branch -C / --copy-force は危険、-d / --delete は付け替え時のみ危険", () => {
+  test("git branch -C / --copy --force は危険、-d / --delete は付け替え時のみ危険", () => {
     expect(checkDangerousGitFlags("git branch -C main backup")).toBe(true);
-    expect(checkDangerousGitFlags("git -C /other branch --copy-force main backup")).toBe(true);
+    expect(checkDangerousGitFlags("git -C /other branch --copy --force main backup")).toBe(true);
     expect(checkDangerousGitFlags("git branch -c main copy")).toBe(false);
     expect(checkDangerousGitFlags("git branch -d feature")).toBe(false);
     expect(checkDangerousGitFlags("git -C /other branch -d feature")).toBe(true);
@@ -1213,12 +1213,26 @@ describe("統合テスト: settings.json ルールでの判定", () => {
       expect(decision("git -C /tmp/x replace -d log", rules)).toBe("ask");
       expect(decision("git -C /tmp/x log", rules)).toBe("allow");
     });
+
+    // サブコマンド位置自体がワイルドカードのルール (`-C` 以下を全て許可する意図) は
+    // anchor 検査の対象外で、通常の allow として扱う
+    test("Bash(git -C * *) は anchor 検査の対象外", () => {
+      const rules = [rule("allow", "Bash(git -C * *)")];
+      expect(gitCPatternSubTokens("Bash(git -C * *)")).toBeNull();
+      expect(decision("git -C /tmp/x log --oneline", rules)).toBe("allow");
+    });
   });
 
   // deny 側の `Bash(git -C * reset *)` 等も同じく anchor されず、引数に reset 等の
   // 語を含む読み取り系も deny になる。deny は Claude Code 本体側でも評価され hook から
   // 上書きできないため、hook 側だけ anchor しても挙動は揃わない。過剰 deny は
   // 安全側の失敗として受け入れ、既知の緩さとしてここで固定する。
+  //
+  // 注意: ここで固定しているのは hook の挙動だけ。hook は deny 判定をクォート内を
+  // 除去した候補で行うので `git -C /repo commit -m "fix reset bug"` は hook では
+  // deny されないが、Claude Code 本体は生のコマンド文字列で deny ルールを評価する
+  // ため、クォート内の語 (` reset ` 等) にも反応して本体側で deny されうる。
+  // クォートで回避できるのは `log -S 'reset'` のように語の直前が空白でない場合だけ。
   describe("git -C 緩い deny マッチ: 読み取り系でも引数に deny 対象語があれば deny（既知・受容）", () => {
     test.each([
       ["git -C /repo log -S reset", "Bash(git -C * reset *)"],
@@ -1245,7 +1259,8 @@ describe("統合テスト: settings.json ルールでの判定", () => {
       for (const p of raw.permissions[category] ?? []) {
         const c = gitCPatternSubTokens(p);
         if (c) { withC.add(c.join(" ")); continue; }
-        const n = /^Bash\(git ([^-].*) \*\)$/.exec(p);
+        // gitCPatternSubTokens と同じく ` *` / `:*` / 末尾ワイルドカード無しの 3 形を受け付ける
+        const n = /^Bash\(git ([^-].*?)(?: \*|:\*)?\)$/.exec(p);
         if (n) plain.add(n[1]);
       }
       return { plain, withC };

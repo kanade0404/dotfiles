@@ -523,14 +523,17 @@ const DANGEROUS_GIT_FLAGS: readonly DangerousGitFlagRule[] = [
     // -f / --force は `git branch -f <name> <start>` で既存ブランチのポインタを
     // 強制的に付け替えられる (commit を失いうる)。settings.json 側は
     // `Bash(git branch *)` を allow しているので、ここで拾わないと素通りする。
-    // -C / --copy-force も既存ブランチを強制上書きする点で -f と同じ。
+    // -C (= --copy --force) も既存ブランチを強制上書きする点で -f と同じ。
+    // 長い形の --copy --force は --force 側で拾える (-C / -M に長い別名は無い)。
     gitSubcommands: ["branch"],
-    flags: ["-D", "-M", "-m", "--move", "--move-force", "-f", "--force", "-C", "--copy-force"],
+    flags: ["-D", "-M", "-m", "--move", "--move-force", "-f", "--force", "-C"],
   },
   {
     // -d / --delete (merged のみ削除) は CWD 内では許容するが、-C 付け替え時は
     // 別リポジトリのブランチ削除になるので tag と同じく付け替え時のみ危険扱い。
-    // --delete-merged (upstream に取り込まれたブランチの一括削除) も同類。
+    // --delete-merged (upstream に取り込まれたブランチの一括削除) も同類。git 2.54 には
+    // まだ無いが git-scm.com の新しい版のドキュメントに記載があるため先回りで含める
+    // (存在しない版では単に一致しないだけで無害)。
     gitSubcommands: ["branch"],
     dangerousWhenRedirected: true,
     flags: ["-d", "--delete", "--delete-merged"],
@@ -1053,7 +1056,11 @@ function normalizeCommandName(command: string): string {
 export function gitCPatternSubTokens(pattern: string): readonly string[] | null {
   // 末尾は ` *` / `:*` / 無し のいずれも patternToRegex が受け付ける同義形なので全て拾う
   const m = /^Bash\(git -C \* (.+?)(?: \*|:\*)?\)$/.exec(pattern);
-  return m ? m[1].split(" ") : null;
+  if (!m) return null;
+  const tokens = m[1].split(" ");
+  // サブコマンド側にワイルドカードを含むルール (`Bash(git -C * *)` 等) は固定の
+  // サブコマンドを持たないので anchor 検査の対象外 (通常の allow として扱う)
+  return tokens.some((t) => t.includes("*")) ? null : tokens;
 }
 
 /**
