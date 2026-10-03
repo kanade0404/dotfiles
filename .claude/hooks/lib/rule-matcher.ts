@@ -993,6 +993,32 @@ function normalizeCommandName(command: string): string {
 }
 
 /**
+ * `Bash(git -C * <sub...> *)` 形式のルールなら `<sub...>` のトークン列を返す。
+ * それ以外のルールは null。
+ */
+function gitCPatternSubTokens(pattern: string): readonly string[] | null {
+  const m = /^Bash\(git -C \* (.+) \*\)$/.exec(pattern);
+  return m ? m[1].split(" ") : null;
+}
+
+/**
+ * コマンドが `git -C <dir> <sub...>` の形で、`-C` の直後の 1 トークンを
+ * ディレクトリとして読み飛ばした位置に `<sub...>` が並んでいるかを判定する。
+ * patternToRegex の中間 `*` はこの位置に anchor されないため、allow 判定時に
+ * 実サブコマンドとの一致をここで確かめる。
+ */
+function isAnchoredGitCMatch(command: string, subTokens: readonly string[]): boolean {
+  const parts = tokenizeCommand(stripShellPrefixes(command)).map((p) =>
+    normalizeArg(p).replace(/['"]/g, ""),
+  );
+  let name = parts[0] ?? "";
+  const lastSlash = name.lastIndexOf("/");
+  if (lastSlash >= 0) name = name.slice(lastSlash + 1);
+  if (name !== "git" || parts[1] !== "-C") return false;
+  return subTokens.every((t, i) => parts[3 + i] === t);
+}
+
+/**
  * コマンドがルールパターンにマッチするか判定する。
  * マッチした場合、判定結果・コマンド・マッチしたパターンを返す。
  */
@@ -1040,11 +1066,23 @@ export function matchCommand(
   }
 
   // allow チェック
+  let looseGitCPattern: string | null = null;
   for (const rule of rules) {
     if (rule.category !== "allow") continue;
     if (candidates.some((cmd) => rule.regex.test(cmd))) {
+      const subTokens = gitCPatternSubTokens(rule.pattern);
+      if (subTokens && !isAnchoredGitCMatch(command, subTokens)) {
+        looseGitCPattern ??= rule.pattern;
+        continue;
+      }
       return { decision: "allow", command, pattern: rule.pattern };
     }
+  }
+  // `Bash(git -C * <sub> *)` に「緩く」だけマッチした (実サブコマンドが <sub> ではない)。
+  // ここで pass-through すると Claude Code 本体が同じ緩いパターンで auto-approve
+  // してしまうため、ask を返して本体の allow を上書きする。
+  if (looseGitCPattern) {
+    return { decision: "ask", command, pattern: `${looseGitCPattern} (loose git -C match)` };
   }
 
   // ask チェック

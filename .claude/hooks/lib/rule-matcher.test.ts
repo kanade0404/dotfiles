@@ -1,4 +1,5 @@
 import { describe, test, expect } from "bun:test";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
   matchCommand,
@@ -1100,6 +1101,97 @@ describe("統合テスト: settings.json ルールでの判定", () => {
       // deny になる。「緩いマッチ + backstop で deny」という結合そのもの。
       expect(checkDangerousGitFlags("git -C /tmp/x branch -D push")).toBe(true);
       expect(judgeCommand("git -C /tmp/x branch -D push")).toBe("deny");
+    });
+  });
+
+  // judgeCommand は未マッチ pass-through も "allow" を返すため、allow / deny が
+  // 「どのルールで」決まったかを matchCommand(...).pattern で固定する。
+  describe("git -C 明示ルール: マッチしたルールの特定", () => {
+    test.each([
+      ["git -C /tmp/x status", "Bash(git -C * status *)"],
+      ["git -C '/tmp/a b' status --short", "Bash(git -C * status *)"],
+      ["git -C /tmp/x stash list", "Bash(git -C * stash list *)"],
+      ["git -C /tmp/x push origin main", "Bash(git -C * push *)"],
+    ])("%s は %s で allow", (command, pattern) => {
+      expect(matchCommand(command, settingsRules)).toEqual({ decision: "allow", command, pattern });
+    });
+
+    test.each([
+      // 明示 deny ルールが backstop (dangerous-git-flags) より先に確定する
+      ["git -C /tmp/x reset --hard", "Bash(git -C * reset *)"],
+      ["git -C /tmp/x push --force origin main", "Bash(git -C * push --force *)"],
+      // 明示 deny ルールが無く backstop が拾う
+      ["git -C /tmp/x branch -D push", "dangerous-git-flags"],
+    ])("%s は %s で deny", (command, pattern) => {
+      expect(matchCommand(command, settingsRules)).toEqual({ decision: "deny", command, pattern });
+    });
+  });
+
+  // `Bash(git -C * <sub> *)` の allow は Claude Code 本体も同じ settings.json から
+  // 読み、本体の `*` もサブコマンド位置に anchor されない。hook が pass-through
+  // (= 本体判定に委ねる) すると、allow リストに無いサブコマンド (replace / init /
+  // submodule / bisect 等、backstop の denylist にも無いもの) が、後続の引数に
+  // `status` 等の語を置くだけで本体に auto-approve される。hook は実サブコマンドが
+  // パターンのサブコマンドと一致しない緩いマッチを ask に倒して本体の allow を
+  // 上書きする。
+  describe("git -C 緩い allow マッチ: 実サブコマンドが不一致なら ask", () => {
+    test.each([
+      "git -C /tmp/x replace -d status",
+      "git -C /tmp/x init status",
+      "git -C . submodule foreach touch /tmp/pwned status",
+      "git -C . bisect run ./evil.sh status",
+      // -C <dir> とサブコマンドの間に別の global option を挟む形も anchor 外として ask
+      "git -C /tmp/x -c color.ui=never status",
+    ])("%s は ask", (command) => {
+      expect(matchCommand(command, settingsRules)?.decision).toBe("ask");
+    });
+  });
+
+  // deny 側の `Bash(git -C * reset *)` 等も同じく anchor されず、引数に reset 等の
+  // 語を含む読み取り系も deny になる。deny は Claude Code 本体側でも評価され hook から
+  // 上書きできないため、hook 側だけ anchor しても挙動は揃わない。過剰 deny は
+  // 安全側の失敗として受け入れ、既知の緩さとしてここで固定する。
+  describe("git -C 緩い deny マッチ: 読み取り系でも引数に deny 対象語があれば deny（既知・受容）", () => {
+    test.each([
+      ["git -C /repo log -S reset", "Bash(git -C * reset *)"],
+      ["git -C /repo log --grep rebase", "Bash(git -C * rebase *)"],
+      ["git -C /repo diff -- reset", "Bash(git -C * reset *)"],
+    ])("%s は %s で deny", (command, pattern) => {
+      expect(matchCommand(command, settingsRules)).toEqual({ decision: "deny", command, pattern });
+    });
+  });
+
+  // `-C` 版の allow / deny は通常版からの手動複製。通常版の増減に `-C` 版が
+  // 追随しているかを機械的に検査する。
+  describe("git -C 版ルールと通常版ルールの同期", () => {
+    const raw = JSON.parse(readFileSync(resolve(repoRoot, ".claude", "settings.json"), "utf8")) as {
+      permissions: Record<RuleCategory, string[]>;
+    };
+    // CWD 内でのみ allow する破壊系。`-C` で付け替えると影響範囲が変わるため
+    // 意図的に `-C` 版を持たない (dangerousWhenRedirected で deny)。
+    const INTENTIONALLY_NOT_MIRRORED = new Set(["stash", "worktree", "cherry-pick", "revert", "clean", "restore", "rm"]);
+
+    function subsOf(category: RuleCategory) {
+      const plain = new Set<string>();
+      const withC = new Set<string>();
+      for (const p of raw.permissions[category] ?? []) {
+        const c = /^Bash\(git -C \* (.+) \*\)$/.exec(p);
+        if (c) { withC.add(c[1]); continue; }
+        const n = /^Bash\(git ([^-].*) \*\)$/.exec(p);
+        if (n) plain.add(n[1]);
+      }
+      return { plain, withC };
+    }
+
+    test("allow: 通常版 (意図的除外を除く) と -C 版のサブコマンド集合が一致する", () => {
+      const { plain, withC } = subsOf("allow");
+      const expected = [...plain].filter((s) => !INTENTIONALLY_NOT_MIRRORED.has(s)).sort();
+      expect([...withC].sort()).toEqual(expected);
+    });
+
+    test("deny: 通常版と -C 版のサブコマンド集合が一致する", () => {
+      const { plain, withC } = subsOf("deny");
+      expect([...withC].sort()).toEqual([...plain].sort());
     });
   });
 
