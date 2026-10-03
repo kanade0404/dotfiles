@@ -990,6 +990,10 @@ describe("統合テスト: settings.json ルールでの判定", () => {
   // 未マッチ pass-through allow に依存していた)。ここでは「ルールが明示的に
   // マッチして allow になる」ことを固定する。
   //
+  // この `-C` 版の allow/deny リストは通常の `git <subcommand>` 版リストを手動で
+  // 複製したもので、両者を同期させる仕組みは無い。通常版にサブコマンドを
+  // 追加/削除したら、`-C` 版にも同じ変更を手動で反映すること。
+  //
   // 姉妹オプションの `Bash(git --git-dir *)` / `Bash(git --work-tree *)` は deny の
   // ままで、扱いは揃っていない。緩和したのは実運用で使う `-C` だけ、というのが
   // 現状で、`--git-dir` / `--work-tree` を同じく緩和すべきかは未判断
@@ -1099,14 +1103,9 @@ describe("統合テスト: settings.json ルールでの判定", () => {
     test("ls", () => expect(judgeCommand("ls")).toBe("allow"));
     test("ls -la", () => expect(judgeCommand("ls -la")).toBe("allow"));
 
-    // `git -C <dir> <破壊系サブコマンド>` (rm / cherry-pick / revert / worktree /
-    // restore / clean / 無引数 stash 等) は settings.json に allow ルールが無く、
-    // checkDangerousGitFlags の dangerousWhenRedirected ルールで deny に昇格する
-    // ため、ここでの「未マッチ pass-through allow」には該当しない
-    // (「-C でディレクトリ迂回した破壊的 git」テスト群を参照)。
-    // `git -C <dir> status|log|diff|...` 等の読み取り/安全系は明示的な allow
-    // ルールを追加済みなので、同様にこのブロックの対象外
-    // (「git -C <dir> <サブコマンド>（明示ルール）」テスト群を参照)。
+    // `git -C <dir> ...` は allow 系・deny 系ともに明示ルール済みのため、ここでの
+    // 「未マッチ pass-through allow」には該当しない (詳細は「allow 系: git -C <dir>
+    // <サブコマンド>（明示ルール）」直前のコメント参照)。
   });
 
   describe("deny 系: -C でディレクトリ迂回した破壊的 git", () => {
