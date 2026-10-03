@@ -958,6 +958,8 @@ describe("checkDangerousGitFlags", () => {
     expect(checkDangerousGitFlags("git branch -d feature")).toBe(false);
     expect(checkDangerousGitFlags("git -C /other branch -d feature")).toBe(true);
     expect(checkDangerousGitFlags("git -C /other branch --delete feature")).toBe(true);
+    expect(checkDangerousGitFlags("git -C /other branch --delete-merged origin")).toBe(true);
+    expect(checkDangerousGitFlags("git branch --delete-merged origin")).toBe(false);
     expect(checkDangerousGitFlags("git -C /other branch -a")).toBe(false);
     expect(checkDangerousGitFlags("git -C /other branch --show-current")).toBe(false);
   });
@@ -1164,8 +1166,11 @@ describe("統合テスト: settings.json ルールでの判定", () => {
       ["git -C /tmp/x rebase main", "Bash(git -C * rebase *)"],
       ["git -C /tmp/x checkout -- .", "Bash(git -C * checkout *)"],
       ["git -C /tmp/x push --force origin main", "Bash(git -C * push --force *)"],
-      // 明示 deny ルールが無く backstop が拾う
+      // 明示 deny ルールが無く backstop が拾う (`-C` allow ルールより backstop が勝つ)
       ["git -C /tmp/x branch -D push", "dangerous-git-flags"],
+      ["git -C /tmp/x branch -d feature", "dangerous-git-flags"],
+      ["git -C /tmp/x remote add origin https://example.com/x.git", "dangerous-git-flags"],
+      ["git -C /tmp/x switch -C main origin/main", "dangerous-git-flags"],
     ])("%s は %s で deny", (command, pattern) => {
       expect(matchCommand(command, settingsRules)).toEqual({ decision: "deny", command, pattern });
     });
@@ -1191,6 +1196,11 @@ describe("統合テスト: settings.json ルールでの判定", () => {
       "git -C /tmp/x -c core.pager=./evil.sh log",
       // 2 つ目の -C で付け替え先を変える形も anchor 外
       "git -C /tmp/x -C /tmp/y status",
+      // 透過 option を読み飛ばした先で不一致
+      "git -C /tmp/x --no-pager replace -d status",
+      // `--key=value` / 2 トークンの global option は anchor 外
+      "git -C /tmp/x --git-dir=/tmp/y status",
+      "git -C /tmp/x --namespace ns status",
       // `command` 前置: 未 strip の候補が後続の `Bash(command *)` allow に当たっても
       // 緩いマッチの ask が優先される (本体も `Bash(command *)` で auto-approve するため)
       "command git -C /tmp/x replace -d status",

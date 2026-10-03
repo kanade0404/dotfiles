@@ -530,9 +530,10 @@ const DANGEROUS_GIT_FLAGS: readonly DangerousGitFlagRule[] = [
   {
     // -d / --delete (merged のみ削除) は CWD 内では許容するが、-C 付け替え時は
     // 別リポジトリのブランチ削除になるので tag と同じく付け替え時のみ危険扱い。
+    // --delete-merged (upstream に取り込まれたブランチの一括削除) も同類。
     gitSubcommands: ["branch"],
     dangerousWhenRedirected: true,
-    flags: ["-d", "--delete"],
+    flags: ["-d", "--delete", "--delete-merged"],
   },
   {
     // remote の書き込み系 (add / remove / rename / set-url / prune 等) は付け替え先の
