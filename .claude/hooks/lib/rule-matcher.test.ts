@@ -992,8 +992,8 @@ describe("統合テスト: settings.json ルールでの判定", () => {
   // マッチして allow になる」ことを固定する。
   //
   // この `-C` 版の allow/deny リストは通常の `git <subcommand>` 版リストを手動で
-  // 複製したもので、両者を同期させる仕組みは無い。通常版にサブコマンドを
-  // 追加/削除したら、`-C` 版にも同じ変更を手動で反映すること。
+  // 複製したもの。同期は「git -C 版ルールと通常版ルールの同期」テストで検査して
+  // いるので、通常版にサブコマンドを追加/削除したら `-C` 版にも反映すること。
   //
   // 姉妹オプションの `Bash(git --git-dir *)` / `Bash(git --work-tree *)` は deny の
   // ままで、扱いは揃っていない。緩和したのは実運用で使う `-C` だけ、というのが
@@ -1062,10 +1062,11 @@ describe("統合テスト: settings.json ルールでの判定", () => {
   // マッチする (例: サブコマンドが `branch` でも引数に `push` という文字列が
   // あれば同じ regex にマッチする)。
   //
-  // これは既知・意図された緩さとしてここで固定する。現状これが安全なのは、
-  // allow 判定より前に無条件で走る checkDangerousGitFlags
-  // (DANGEROUS_GIT_FLAGS テーブル、rule-matcher.ts 内) が `-C` 経由かどうかに
-  // 関わらず破壊的フラグを deny に昇格させる唯一の backstop だから。
+  // regex の緩さ自体は既知のものとしてここで固定する。安全性は regex ではなく
+  // matchCommand 側で担保する: allow 判定より前に無条件で走る checkDangerousGitFlags
+  // (DANGEROUS_GIT_FLAGS テーブル、rule-matcher.ts 内) が破壊的サブコマンド/フラグを
+  // deny に昇格させ、allow 判定時の anchor 検査が実サブコマンド不一致の緩いマッチを
+  // ask に倒す (「git -C 緩い allow マッチ」テスト群)。
   // 以下の 2 ブロックで「緩いマッチ (loose match) + backstop で deny」という
   // 結合を明文化する。
   describe("patternToRegex: git -C * <sub> * は中間ワイルドカードでサブコマンド位置に anchor されない（既知・意図された緩さを固定）", () => {

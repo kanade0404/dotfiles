@@ -386,25 +386,28 @@ type DangerousGitFlagRule = {
   readonly bareIsReadOnly?: boolean;
 };
 
-// ⚠️ settings.json の `Bash(git -C * <sub> *)` 系 allow ルール (push / add / commit 等) は
-// 中間ワイルドカードを持つ初めてのパターンで、patternToRegex はその `*` を
-// サブコマンド位置に anchor しない。例えば `git -C * push *` は
-// `/^git -C .* push( .*)?$/s` になり、「2番目の位置引数が push」ではなく
-// 「`-C` の後ろのどこかに ` push` という文字列が現れる」コマンド全てにマッチする
-// (`git -C /tmp/x branch -D push` のように、サブコマンドが branch でも引数に
-// "push" という文字列があれば同じ regex にマッチしてしまう)。
+// ⚠️ settings.json の `Bash(git -C * <sub> *)` 系ルールは allow パターンとしては
+// 初めて中間ワイルドカードを持つもので (deny には `Bash(* .env *)` 等の先例がある)、
+// patternToRegex はその `*` をサブコマンド位置に anchor しない。例えば
+// `git -C * push *` は `/^git -C .* push( .*)?$/s` になり、「2番目の位置引数が push」
+// ではなく「`-C` の後ろのどこかに ` push` という文字列が現れる」コマンド全てに
+// マッチする (`git -C /tmp/x branch -D push` のように、サブコマンドが branch でも
+// 引数に "push" という文字列があれば同じ regex にマッチしてしまう)。
+// Claude Code 本体も同じ settings.json を同じく anchor 無しで評価する。
 // `rule-matcher.test.ts` の「patternToRegex: git -C * <sub> * は...」で
-// この緩さを既知・意図された挙動として固定している。
+// この regex の緩さを固定している。
 //
-// この緩いマッチが安全なのは、matchCommand が allow 判定より前に無条件で
-// checkDangerousGitFlags (= 本テーブル) を実行し、`-C` 経由かどうかに関わらず
-// 破壊的なサブコマンド/フラグを deny に昇格させるからである。つまり
-// **本テーブルが `-C` 経由の破壊的操作に対する唯一の backstop** であり、
-// 安全性は settings.json のパターン anchor ではなく本テーブルの網羅性に
-// 完全に依存している。
+// `-C` 経由の判定は次の 3 段で成り立っている (matchCommand の評価順):
+// 1. settings.json の `-C` 版 deny ルール (`git -C * reset *` 等) — anchor されない
+//    ため引数に reset 等を含む読み取り系も deny する (過剰 deny は安全側として受容)。
+// 2. 本テーブル (checkDangerousGitFlags) — 実サブコマンドを tokenize して判定し、
+//    `-C` 版 deny ルールに無い破壊的サブコマンド/フラグも deny に昇格させる。
+// 3. allow 判定時の anchor 検査 (isAnchoredGitCMatch) — `-C <dir>` 直後の実サブ
+//    コマンドがパターンと一致しない緩いマッチは ask に倒し、本体の auto-approve を
+//    上書きする。allow リストに無いサブコマンド (replace / submodule 等) は
+//    本テーブルに無くてもここで止まる。
 // 本テーブルは自己申告の denylist であり網羅を保証しない — 新しい破壊的な
-// git サブコマンド/フラグを見つけたら、anchor の甘さを当てにせず必ずここに
-// 追加すること。
+// git サブコマンド/フラグを見つけたら必ずここに追加すること。
 const DANGEROUS_GIT_FLAGS: readonly DangerousGitFlagRule[] = [
   {
     // settings.json の `Bash(git reset *)` / `Bash(git rebase *)` /
