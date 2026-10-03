@@ -523,8 +523,25 @@ const DANGEROUS_GIT_FLAGS: readonly DangerousGitFlagRule[] = [
     // -f / --force は `git branch -f <name> <start>` で既存ブランチのポインタを
     // 強制的に付け替えられる (commit を失いうる)。settings.json 側は
     // `Bash(git branch *)` を allow しているので、ここで拾わないと素通りする。
+    // -C / --copy-force も既存ブランチを強制上書きする点で -f と同じ。
     gitSubcommands: ["branch"],
-    flags: ["-D", "-M", "-m", "--move", "--move-force", "-f", "--force"],
+    flags: ["-D", "-M", "-m", "--move", "--move-force", "-f", "--force", "-C", "--copy-force"],
+  },
+  {
+    // -d / --delete (merged のみ削除) は CWD 内では許容するが、-C 付け替え時は
+    // 別リポジトリのブランチ削除になるので tag と同じく付け替え時のみ危険扱い。
+    gitSubcommands: ["branch"],
+    dangerousWhenRedirected: true,
+    flags: ["-d", "--delete"],
+  },
+  {
+    // remote の書き込み系 (add / remove / rename / set-url / prune 等) は付け替え先の
+    // .git/config を書き換える。config と同じ理由で付け替え時は読み取り以外を危険扱い。
+    // 引数無し / `-v` だけの一覧表示は読み取り。
+    gitSubcommands: ["remote"],
+    dangerousWhenRedirected: true,
+    readOnlySubActions: ["show", "get-url"],
+    bareIsReadOnly: true,
   },
   {
     gitSubcommands: ["restore"],
@@ -1019,7 +1036,8 @@ function normalizeCommandName(command: string): string {
  * それ以外のルールは null。
  */
 export function gitCPatternSubTokens(pattern: string): readonly string[] | null {
-  const m = /^Bash\(git -C \* (.+) \*\)$/.exec(pattern);
+  // 末尾は ` *` / `:*` / 無し のいずれも patternToRegex が受け付ける同義形なので全て拾う
+  const m = /^Bash\(git -C \* (.+?)(?: \*|:\*)?\)$/.exec(pattern);
   return m ? m[1].split(" ") : null;
 }
 
@@ -1091,27 +1109,36 @@ export function matchCommand(
   }
 
   // allow チェック
+  // 優先順位: anchored な `git -C` ルール > 緩いだけの `git -C` マッチ (ask) > その他の allow。
+  // 緩いマッチを他の allow (`Bash(command *)` 等、未 strip の候補に当たるもの) で
+  // 打ち消すと、本体も同じルールで auto-approve して ask 昇格の意味が無くなる。
   let looseGitCPattern: string | null = null;
+  let otherAllowPattern: string | null = null;
   // anchor 検査用のトークン列は緩いマッチ候補が出た時に 1 回だけ作る
   let strippedParts: readonly string[] | undefined;
   const partsOfStripped = () =>
     (strippedParts ??= tokenizeCommand(stripped).map((p) => normalizeArg(p).replace(/['"]/g, "")));
   for (const rule of rules) {
     if (rule.category !== "allow") continue;
-    if (candidates.some((cmd) => rule.regex.test(cmd))) {
-      const subTokens = gitCPatternSubTokens(rule.pattern);
-      if (subTokens && !isAnchoredGitCMatch(partsOfStripped(), subTokens)) {
-        looseGitCPattern ??= rule.pattern;
-        continue;
-      }
+    if (!candidates.some((cmd) => rule.regex.test(cmd))) continue;
+    const subTokens = gitCPatternSubTokens(rule.pattern);
+    if (!subTokens) {
+      otherAllowPattern ??= rule.pattern;
+      continue;
+    }
+    if (isAnchoredGitCMatch(partsOfStripped(), subTokens)) {
       return { decision: "allow", command, pattern: rule.pattern };
     }
+    looseGitCPattern ??= rule.pattern;
   }
   // `Bash(git -C * <sub> *)` に「緩く」だけマッチした (実サブコマンドが <sub> ではない)。
   // ここで pass-through すると Claude Code 本体が同じ緩いパターンで auto-approve
   // してしまうため、ask を返して本体の allow を上書きする。
   if (looseGitCPattern) {
     return { decision: "ask", command, pattern: `${looseGitCPattern} (loose git -C match)` };
+  }
+  if (otherAllowPattern) {
+    return { decision: "allow", command, pattern: otherAllowPattern };
   }
 
   // ask チェック

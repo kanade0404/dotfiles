@@ -949,6 +949,31 @@ describe("checkDangerousGitFlags", () => {
     expect(checkDangerousGitFlags("git -C /other switch -f main")).toBe(true);
   });
 
+  // branch -C / --copy-force は既存ブランチを強制上書きする (branch -f と同じ効果)。
+  // -d / --delete は CWD 内では許容するが、-C 付け替え時は別リポジトリのブランチ削除になる。
+  test("git branch -C / --copy-force は危険、-d / --delete は付け替え時のみ危険", () => {
+    expect(checkDangerousGitFlags("git branch -C main backup")).toBe(true);
+    expect(checkDangerousGitFlags("git -C /other branch --copy-force main backup")).toBe(true);
+    expect(checkDangerousGitFlags("git branch -c main copy")).toBe(false);
+    expect(checkDangerousGitFlags("git branch -d feature")).toBe(false);
+    expect(checkDangerousGitFlags("git -C /other branch -d feature")).toBe(true);
+    expect(checkDangerousGitFlags("git -C /other branch --delete feature")).toBe(true);
+    expect(checkDangerousGitFlags("git -C /other branch -a")).toBe(false);
+    expect(checkDangerousGitFlags("git -C /other branch --show-current")).toBe(false);
+  });
+
+  // remote の書き込み系サブアクションは付け替え先の .git/config を書き換える。
+  test("git -C <dir> remote は読み取り (bare / -v / show / get-url) 以外が危険", () => {
+    expect(checkDangerousGitFlags("git -C /other remote")).toBe(false);
+    expect(checkDangerousGitFlags("git -C /other remote -v")).toBe(false);
+    expect(checkDangerousGitFlags("git -C /other remote show origin")).toBe(false);
+    expect(checkDangerousGitFlags("git -C /other remote get-url origin")).toBe(false);
+    expect(checkDangerousGitFlags("git -C /other remote remove origin")).toBe(true);
+    expect(checkDangerousGitFlags("git -C /other remote set-url origin https://example.com/x.git")).toBe(true);
+    expect(checkDangerousGitFlags("git -C /other remote rename origin up")).toBe(true);
+    expect(checkDangerousGitFlags("git remote add upstream https://example.com/x.git")).toBe(false);
+  });
+
   // switch -C / --force-create は既存ブランチを強制付け替えする (branch -f と同じ効果)。
   test("git switch -C / --force-create は危険、小文字 -c は安全", () => {
     expect(checkDangerousGitFlags("git switch -C main origin/main")).toBe(true);
@@ -1166,8 +1191,29 @@ describe("統合テスト: settings.json ルールでの判定", () => {
       "git -C /tmp/x -c core.pager=./evil.sh log",
       // 2 つ目の -C で付け替え先を変える形も anchor 外
       "git -C /tmp/x -C /tmp/y status",
+      // `command` 前置: 未 strip の候補が後続の `Bash(command *)` allow に当たっても
+      // 緩いマッチの ask が優先される (本体も `Bash(command *)` で auto-approve するため)
+      "command git -C /tmp/x replace -d status",
     ])("%s は ask", (command) => {
       expect(matchCommand(command, settingsRules)?.decision).toBe("ask");
+    });
+
+    test("command git -C /tmp/x status は anchored な -C ルールで allow", () => {
+      expect(matchCommand("command git -C /tmp/x status", settingsRules)).toEqual({
+        decision: "allow", command: "command git -C /tmp/x status", pattern: "Bash(git -C * status *)",
+      });
+    });
+
+    // `:*` 終端 / 末尾ワイルドカード無しの書き方 (patternToRegex が受け付ける同義形) で
+    // ユーザ設定に `-C` allow を足しても anchor 検査の対象になる
+    test.each([
+      "Bash(git -C * log:*)",
+      "Bash(git -C * log)",
+      "Bash(git -C * log *)",
+    ])("%s も anchor 検査の対象", (pattern) => {
+      const rules = [rule("allow", pattern)];
+      expect(decision("git -C /tmp/x replace -d log", rules)).toBe("ask");
+      expect(decision("git -C /tmp/x log", rules)).toBe("allow");
     });
   });
 
