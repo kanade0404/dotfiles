@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeAll, afterAll, afterEach } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createGitFixture, envWithoutGit, type GitFixture } from "./git-fixture.ts";
 import { isSameGitRepository, localSettingsRootsOf } from "./git-repository.ts";
@@ -226,5 +226,91 @@ describe("isSameGitRepository: config.worktree の allowlist の境界", () => {
     writeFileSync(target, "[core]\n\tsparseCheckout = true\n");
     symlinkSync(target, configWorktree);
     expect(isSameGitRepository(fx.worktreeConfig, "../wtc-wt", {})).toBe(false);
+  });
+});
+
+// common dir の config は構文解析せず、core.worktree / bare / include になりうる字句があれば
+// 解決不能にする。git はヘッダと同じ行の設定 (`[core] worktree = X`) も受け付けるので、
+// ヘッダの `]` の後に空白以外があれば一律に解決不能にする (安全側)。
+describe("isSameGitRepository: common config の境界", () => {
+  let fx: GitFixture;
+  let config: string;
+  let original: string;
+  beforeAll(() => {
+    fx = createGitFixture();
+    config = join(fx.main, ".git", "config");
+    original = readFileSync(config, "utf8");
+  });
+  afterAll(() => { fx.cleanup(); });
+  afterEach(() => { writeFileSync(config, original); });
+
+  const sameWith = (content: string) => {
+    writeFileSync(config, content);
+    return isSameGitRepository(fx.main, "sub", {});
+  };
+
+  test("前提: git はヘッダと同じ行の core.worktree を読む", () => {
+    writeFileSync(config, `${original}[core] worktree = ${fx.plain}\n`);
+    const r = spawnSync("git", ["-C", join(fx.main, "sub"), "config", "--get", "core.worktree"], {
+      encoding: "utf8",
+      env: envWithoutGit({ GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" }),
+    });
+    expect({ status: r.status, stdout: r.stdout.trim() }).toEqual({ status: 0, stdout: fx.plain });
+  });
+
+  test.each([
+    ["git init が書いた config", () => original],
+    [
+      "通常の複数行 config (remote / branch / extensions / bare = false)",
+      () =>
+        [
+          "[core]",
+          "\trepositoryformatversion = 0",
+          "\tfilemode = true",
+          "\tbare = false",
+          "\tlogallrefupdates = true",
+          "\tignorecase = true",
+          "\tprecomposeunicode = true",
+          '[remote "origin"]',
+          "\turl = https://example.com/x.git",
+          "\tfetch = +refs/heads/*:refs/remotes/origin/*",
+          '[branch "master"]',
+          "\tremote = origin",
+          "\tmerge = refs/heads/master",
+          '[branch "feat/x"]',
+          "\tbase = refs/remotes/origin/master",
+          "\tremote = origin",
+          "\tmerge = refs/heads/feat/x",
+          "[extensions]",
+          "\tworktreeConfig = true",
+          "[push]",
+          "\tautoSetupRemote = true",
+          "",
+        ].join("\n"),
+    ],
+    ["ヘッダの後の空白・CRLF", () => "[core]  \r\n\tbare = false\r\n"],
+  ])("%s は true", (_, content) => {
+    expect(sameWith(content())).toBe(true);
+  });
+
+  test.each([
+    ["ヘッダと同じ行の worktree", (p: string) => `[core] worktree = ${p}\n`],
+    ["ヘッダと同じ行の worktree (空白無し)", (p: string) => `[core]worktree=${p}\n`],
+    ["ヘッダと同じ行の worktree (タブ)", (p: string) => `[core]\tworktree = ${p}\n`],
+    ["ヘッダと同じ行の worktree (大文字のセクション)", (p: string) => `[CORE] WorkTree = ${p}\n`],
+    ["インデントしたヘッダと同じ行の worktree", (p: string) => `\t[core] worktree = ${p}\n`],
+    ["ヘッダと同じ行の bare", () => "[core] bare = true\n"],
+    ["ヘッダと同じ行の include", () => "[include] path = /tmp/x\n"],
+    ["ヘッダと同じ行の includeIf", () => '[includeIf "gitdir:/"] path = /tmp/x\n'],
+    ["サブセクションのヘッダと同じ行の設定", (p: string) => `[core "x"] worktree = ${p}\n`],
+    ["サブセクション名に ] を含むヘッダ", (p: string) => `[remote "a]"] worktree = ${p}\n`],
+    ["# コメント付きのヘッダ", () => "[core] # c\n"],
+    ["; コメント付きのヘッダ", () => "[core] ; c\n"],
+    // 従来どおり行頭の形も解決不能
+    ["行頭の worktree", (p: string) => `[core]\n\tworktree = ${p}\n`],
+    ["行頭の bare = true", () => "[core]\n\tbare = true\n"],
+    ["include セクション", () => "[include]\n\tpath = /tmp/x\n"],
+  ])("%s は false", (_, content) => {
+    expect(sameWith(original + content(fx.plain))).toBe(false);
   });
 });

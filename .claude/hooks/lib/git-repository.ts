@@ -57,9 +57,16 @@ function parseGitFile(content: string): string {
 /**
  * 設定ファイルに作業ツリーの付け替え (core.worktree)・bare 指定・include が無いか。
  * 構文解析はせず、該当しうる行があれば解決不能として扱う (安全側)。
+ *
+ * git はヘッダと同じ行にも設定を書ける (`[core] worktree = X`) ので、行頭のキーだけを
+ * 見ると見逃す。ヘッダ行の最初の `]` の後に空白以外 (同じ行の設定・コメント・`]` を含む
+ * サブセクション名の残り) があれば、中身によらず解決不能にする。
  */
 function assertPlainConfig(path: string): void {
   const config = readFileSync(path, "utf8");
+  if (/^\s*\[[^\]\n]*\][^\S\n]*\S/m.test(config)) {
+    throw new UnresolvableRepository(`${path} にヘッダと同じ行の記述がある`);
+  }
   const bareNotFalse = /^\s*bare\b(?!\s*=\s*(?:false|no|off|0)\s*$)/im;
   if (/^\s*worktree\s*(?:=|$)/im.test(config) || bareNotFalse.test(config) || /^\s*\[\s*include/im.test(config)) {
     throw new UnresolvableRepository(`${path} に core.worktree / bare / include がある`);
