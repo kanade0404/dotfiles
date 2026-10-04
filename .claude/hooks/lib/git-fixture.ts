@@ -67,6 +67,8 @@ export type GitFixture = {
  *                         common dir と逆リンクは正しいが gitdir が main/.git/worktrees/<name> ではない
  *   - hijack/             .git ファイル → main/.git/worktrees/wt (wt の正規の gitdir)。
  *                         gitdir 側の逆リンク (worktrees/wt/gitdir) は wt/.git を指す
+ *   - .git/worktrees/.git/ `.git` ディレクトリに HEAD・commondir (→ main/.git)・自分自身を指す
+ *                         逆リンク (gitdir)。`git -C .git/worktrees` の探索で最初に見つかる
  * - wt/                   main の worktree
  * - other/inner/          無関係なリポジトリ
  * - plain/                git 管理外
@@ -121,6 +123,14 @@ export function createGitFixture(): GitFixture {
   writeFileSync(join(main, "notwt", ".git"), "gitdir: ../fakegit/n\n");
   mkdirSync(join(main, "hijack"));
   writeFileSync(join(main, "hijack", ".git"), `gitdir: ${join(main, ".git", "worktrees", "wt")}\n`);
+  // `.git` ディレクトリ自体を <common>/worktrees/<name> の位置 (<common>/worktrees/.git) に置き、
+  // commondir と逆リンク (自分自身を指す) を持たせる。linked worktree の条件のうち
+  // 「`.git` がファイルである」以外を満たす形
+  const dotGitInWorktrees = join(main, ".git", "worktrees", ".git");
+  mkdirSync(dotGitInWorktrees);
+  writeFileSync(join(dotGitInWorktrees, "HEAD"), "ref: refs/heads/main\n");
+  writeFileSync(join(dotGitInWorktrees, "commondir"), "../..\n");
+  writeFileSync(join(dotGitInWorktrees, "gitdir"), `${dotGitInWorktrees}\n`);
 
   const wtc = join(base, "wtc");
   mkdirSync(wtc);

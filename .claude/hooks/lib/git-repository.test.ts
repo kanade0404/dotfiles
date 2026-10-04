@@ -1,5 +1,6 @@
-import { describe, test, expect, beforeAll, afterAll } from "bun:test";
+import { describe, test, expect, beforeAll, afterAll, afterEach } from "bun:test";
 import { spawnSync } from "node:child_process";
+import { mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createGitFixture, envWithoutGit, type GitFixture } from "./git-fixture.ts";
 import { isSameGitRepository } from "./git-repository.ts";
@@ -67,6 +68,9 @@ describe("isSameGitRepository", () => {
       ["手で作った gitdir (.git ディレクトリに commondir → main)", (f: GitFixture) => [f.main, "crafted"]],
       ["commondir は main だが gitdir が worktrees/<name> 配下でない", (f: GitFixture) => [f.main, "notwt"]],
       ["正規の worktree の gitdir を指すが逆リンクが一致しない", (f: GitFixture) => [f.main, "hijack"]],
+      // 位置 (<common>/worktrees/<name>) と逆リンクの条件を満たしても、`.git` がディレクトリなら
+      // commondir を持つ時点で linked worktree とは認めない
+      ["<common>/worktrees/.git に置いた commondir 付きの .git ディレクトリ", (f: GitFixture) => [f.main, ".git/worktrees"]],
       ["worktreeConfig 有効 + 手で作った gitdir の config.worktree に core.fsmonitor", (f: GitFixture) => [f.worktreeConfig, "crafted"]],
       // 防御として、正規の worktree でも config.worktree に sparse-checkout 以外の設定があれば false
       ["正規の worktree の config.worktree に core.fsmonitor", (f: GitFixture) => [f.worktreeConfig, "../wtc-evil"]],
@@ -117,5 +121,78 @@ describe("isSameGitRepository", () => {
     "GIT_DISCOVERY_ACROSS_FILESYSTEM",
   ])("環境変数 %s があれば false", (name) => {
     expect(same(fx.main, ".", { [name]: "/x" })).toBe(false);
+  });
+});
+
+// config.worktree は sparse-checkout が書く `[core] sparseCheckout*` / `[index] sparse` の
+// 真偽値だけを許す allowlist。git の config パーサが別の解釈をしうる字句 (大小文字・
+// サブセクション・BOM・改行の種類・継続行・同じ行の複数要素・NUL 等) の境界を固定する。
+describe("isSameGitRepository: config.worktree の allowlist の境界", () => {
+  let fx: GitFixture;
+  let configWorktree: string;
+  beforeAll(() => {
+    fx = createGitFixture();
+    configWorktree = join(fx.worktreeConfig, ".git", "worktrees", "wtc-wt", "config.worktree");
+  });
+  afterAll(() => { fx.cleanup(); });
+  afterEach(() => { rmSync(configWorktree, { recursive: true, force: true }); });
+
+  const sameWith = (content: string) => {
+    writeFileSync(configWorktree, content);
+    return isSameGitRepository(fx.worktreeConfig, "../wtc-wt", {});
+  };
+
+  test.each([
+    ["空ファイル", ""],
+    ["[core] sparseCheckout", "[core]\n\tsparseCheckout = true\n"],
+    ["[core] sparseCheckoutCone と [index] sparse", "[core]\n\tsparseCheckoutCone = false\n[index]\n\tsparse = yes\n"],
+    ["セクション名の大文字 ([CORE])", "[CORE]\n\tsparseCheckout = true\n"],
+    ["キー名の大小文字", "[core]\n\tSPARSECHECKOUT = On\n"],
+    ["先頭の BOM", "﻿[core]\n\tsparseCheckout = true\n"],
+    ["CRLF", "[core]\r\n\tsparseCheckout = true\r\n"],
+    ["重複したセクション", "[core]\n\tsparseCheckout = true\n[index]\n\tsparse = true\n[core]\n\tsparseCheckoutCone = true\n"],
+    ["; コメント", "; c\n[index]\n\tsparse = 1\n"],
+    ["# コメント", "# c\n[index]\n\tsparse = 0\n"],
+  ])("%s は true", (_, content) => {
+    expect(sameWith(content)).toBe(true);
+  });
+
+  test.each([
+    ["[CORE] の fsmonitor", '[CORE]\n\tfsmonitor = "touch X; false"\n'],
+    ["サブセクション [core \"x\"]", '[core]\n\tsparseCheckout = true\n[core "x"]\n\tfsmonitor = x\n'],
+    ["BOM の後の fsmonitor", '﻿[core]\n\tfsmonitor = "touch X; false"\n'],
+    ["単独の CR で区切った fsmonitor", '[core]\r\tfsmonitor = "touch X; false"\n'],
+    ["真偽値の後に CR と fsmonitor", '[core]\n\tsparseCheckout = true\rfsmonitor = "touch X; false"\n'],
+    ["ヘッダと同じ行の fsmonitor", '[core]fsmonitor = "touch X; false"\n'],
+    ["ヘッダと同じ行の sparseCheckout", "[core] sparseCheckout = true\n"],
+    ["\\ による継続行", '[core]\n\tsparseCheckout = true\\\n\tfsmonitor = "touch X; false"\n'],
+    ["プロトタイプのプロパティ名のセクション [constructor]", "[constructor]\n\tsparse = true\n"],
+    ["プロトタイプのプロパティ名のセクション [toString]", "[toString]\n\tsparse = true\n"],
+    ["NUL の後の fsmonitor", "[core]\n\tsparseCheckout = true\0fsmonitor = x\n"],
+    ["U+2028 の後の fsmonitor", "[core]\n\tsparseCheckout = true fsmonitor = x\n"],
+    ["キーにドット", "[core]\n\tsparseCheckout.x = true\n"],
+    ["値の無いキー (暗黙の true)", "[core]\n\tsparseCheckout\n"],
+    ["値の後のコメント", "[core]\n\tsparseCheckout = true # c\n"],
+    ["クォートした値", '[core]\n\tsparseCheckout = "true"\n'],
+    ["真偽値でない値", "[core]\n\tsparseCheckout = always\n"],
+    ["セクション外のキー", "sparseCheckout = true\n"],
+    ["空白を含むヘッダ [core ]", "[core ]\n\tsparseCheckout = true\n"],
+    ["許可外のセクション [extensions]", "[extensions]\n\tworktreeConfig = true\n"],
+    ["許可外のキー [core] bare", "[core]\n\tbare = false\n"],
+    ["include", "[include]\n\tpath = /tmp/x\n"],
+  ])("%s は false", (_, content) => {
+    expect(sameWith(content)).toBe(false);
+  });
+
+  test("config.worktree がディレクトリなら false", () => {
+    mkdirSync(configWorktree);
+    expect(isSameGitRepository(fx.worktreeConfig, "../wtc-wt", {})).toBe(false);
+  });
+
+  test("config.worktree がシンボリックリンクなら false", () => {
+    const target = join(fx.base, "sparse.cfg");
+    writeFileSync(target, "[core]\n\tsparseCheckout = true\n");
+    symlinkSync(target, configWorktree);
+    expect(isSameGitRepository(fx.worktreeConfig, "../wtc-wt", {})).toBe(false);
   });
 });
