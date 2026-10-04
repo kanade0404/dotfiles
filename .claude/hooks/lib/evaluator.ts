@@ -61,6 +61,14 @@ function plainGitCDirectory(command: string): string | null {
   return word.startsWith("'") || word.startsWith('"') ? word.slice(1, -1) : word;
 }
 
+/**
+ * hook allow の判定に使うルール。allow は Claude Code 本体が実際に読む設定由来
+ * (readByClaudeCode) だけに絞り、deny / ask は出自を問わず残す (判定を厳しくする方向のため)。
+ */
+function rulesForHookAllow(rules: readonly Rule[]): readonly Rule[] {
+  return rules.filter((rule) => rule.category !== "allow" || rule.readByClaudeCode === true);
+}
+
 export type EvaluationResult =
   | { decision: "deny"; denyReasons: readonly { command: string; pattern: string }[] }
   | { decision: "ask"; reason: string }
@@ -175,7 +183,8 @@ export function isAssignmentOnly(command: string): boolean {
  *   `git ... -C <dir> ... <sub> ...`) に完全一致する
  * - 生コマンドを matchCommand で照合した結果が、正規化した `git <sub> ...` の
  *   非 -C allow への一致 (gitCNormalized) である (deny / 危険 git フラグ / 機密パスは
- *   matchCommand が先に判定する)
+ *   matchCommand が先に判定する)。照合に使う allow は Claude Code 本体が実際に読む設定
+ *   由来 (readByClaudeCode) だけ。deny / ask は全ての設定由来を使う (rulesForHookAllow)
  * - `-C` の対象が hook 入力の cwd と同じ git common dir を持つ (isSameGitRepository)。
  *   別リポジトリの .git/config (core.fsmonitor 等) や .git/hooks 経由で確認無しに
  *   コマンドを実行させないため
@@ -224,7 +233,7 @@ export function evaluateCommand(
   const hookApproved =
     rawCommand !== undefined &&
     dir !== null &&
-    matchCommand(rawCommand, rules)?.gitCNormalized === true &&
+    matchCommand(rawCommand, rulesForHookAllow(rules))?.gitCNormalized === true &&
     isSameGitRepository(cwd, dir, env);
   return { decision: "allow", hookApproved };
 }

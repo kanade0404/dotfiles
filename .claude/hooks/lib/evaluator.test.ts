@@ -1,5 +1,5 @@
-import { describe, test, expect, beforeAll, afterAll } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { describe, test, expect, beforeAll, afterAll, afterEach } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { evaluateCommand, isAssignmentOnly, isPlainGitCCommand } from "./evaluator.ts";
@@ -15,16 +15,13 @@ const worktreeRoot = resolve(import.meta.dir, "..", "..", "..");
  * リポジトリ同梱の settings.json だけからルールを読む。loadRules は $HOME 配下の
  * ~/.claude/settings.json 等もマージするので、HOME を空の一時ディレクトリに差し替えて
  * 個人設定の影響 (ローカルの allow / deny の有無でテスト結果が変わること) を排除する。
+ * CLAUDE_PROJECT_DIR は worktree のルート (Claude Code がこのリポジトリで起動された状態)。
  */
 function loadRepoRules() {
   const home = mkdtempSync(join(tmpdir(), "evaluator-test-"));
-  const original = process.env.HOME;
-  process.env.HOME = home;
   try {
-    return loadRules(worktreeRoot);
+    return loadRules(worktreeRoot, { HOME: home, CLAUDE_PROJECT_DIR: worktreeRoot });
   } finally {
-    if (original === undefined) delete process.env.HOME;
-    else process.env.HOME = original;
     rmSync(home, { recursive: true, force: true });
   }
 }
@@ -475,5 +472,109 @@ describe("evaluateCommand - git -C と ask ルール", () => {
 
   test("deny は ask より優先: git -C /r push --force は deny", () => {
     expect(evaluate("git -C /r push --force").decision).toBe("deny");
+  });
+});
+
+// hook の allow は Claude Code 本体の確認を省略させるので、その根拠になる allow ルールは
+// 本体が実際に読む設定 (~/.claude/settings.json と、CLAUDE_PROJECT_DIR = セッションを
+// 開始したプロジェクトルートの .claude/settings.json / settings.local.json) に限る。
+// .codex/* や hook 入力の cwd 基準の .claude/* はリポジトリ内容 (エージェントが書ける /
+// clone 元が仕込める) で、本体は読まないので allow の根拠にしない (deny / ask には使う)。
+describe("evaluateCommand - hook allow の根拠になる設定ファイル", () => {
+  let fx: GitFixture;
+  let home: string;
+  beforeAll(() => {
+    fx = createGitFixture();
+    home = mkdtempSync(join(tmpdir(), "evaluator-sources-"));
+  });
+  afterAll(() => {
+    fx.cleanup();
+    rmSync(home, { recursive: true, force: true });
+  });
+  afterEach(() => {
+    for (const dir of [join(home, ".claude"), join(fx.main, ".codex"), join(fx.main, ".claude"), join(fx.main, "sub", ".claude")]) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  function writeSettings(path: string, permissions: Record<string, string[]>) {
+    mkdirSync(join(path, ".."), { recursive: true });
+    writeFileSync(path, JSON.stringify({ permissions }));
+  }
+
+  function evaluate(command: string, opts: { cwd?: string; env?: Record<string, string> } = {}) {
+    const cwd = opts.cwd ?? fx.main;
+    const env = opts.env ?? { HOME: home, CLAUDE_PROJECT_DIR: fx.main };
+    return evaluateCommand(parseShellCommands(command), loadRules(cwd, env), command, cwd, {});
+  }
+
+  const hookApproved = { decision: "allow", hookApproved: true } as const;
+  const passThrough = { decision: "allow", hookApproved: false } as const;
+  const submoduleAllow = { allow: ["Bash(git submodule *)"] };
+
+  test.each([
+    [".codex/settings.json", () => join(fx.main, ".codex", "settings.json")],
+    [".codex/settings.local.json", () => join(fx.main, ".codex", "settings.local.json")],
+  ] as const)("%s の allow は hookApproved の根拠にしない", (_, path) => {
+    writeSettings(path(), submoduleAllow);
+    expect(evaluate("git -C . submodule foreach touch pwned")).toEqual(passThrough);
+  });
+
+  test("cwd (サブディレクトリ) の .claude/settings.json の allow は hookApproved の根拠にしない", () => {
+    writeSettings(join(fx.main, "sub", ".claude", "settings.json"), submoduleAllow);
+    expect(evaluate("git -C . submodule foreach touch pwned", { cwd: join(fx.main, "sub") })).toEqual(passThrough);
+  });
+
+  test.each([
+    ["settings.json", "settings.json"],
+    ["settings.local.json", "settings.local.json"],
+  ])("プロジェクトルート (CLAUDE_PROJECT_DIR) の .claude/%s の allow は hookApproved", (_, file) => {
+    writeSettings(join(fx.main, ".claude", file), submoduleAllow);
+    expect(evaluate("git -C . submodule status")).toEqual(hookApproved);
+  });
+
+  test("cwd がサブディレクトリでもプロジェクトルートの .claude/settings.json の allow は hookApproved", () => {
+    writeSettings(join(fx.main, ".claude", "settings.json"), submoduleAllow);
+    expect(evaluate("git -C . submodule status", { cwd: join(fx.main, "sub") })).toEqual(hookApproved);
+  });
+
+  test("~/.claude/settings.json の allow は hookApproved", () => {
+    writeSettings(join(home, ".claude", "settings.json"), submoduleAllow);
+    expect(evaluate("git -C . submodule status")).toEqual(hookApproved);
+  });
+
+  // CLAUDE_PROJECT_DIR は Claude Code が hook に渡す。無い / 相対 / 存在しないなら
+  // 本体がどの設定を読んでいるか分からないので、どのルールも hook allow の根拠にしない。
+  test.each([
+    ["未設定", (h: string) => ({ HOME: h })],
+    ["相対パス", (h: string) => ({ HOME: h, CLAUDE_PROJECT_DIR: "main" })],
+    ["存在しないパス", (h: string) => ({ HOME: h, CLAUDE_PROJECT_DIR: join(h, "no-such-dir") })],
+  ] as const)("CLAUDE_PROJECT_DIR が%sなら hookApproved にしない", (_, env) => {
+    writeSettings(join(home, ".claude", "settings.json"), submoduleAllow);
+    writeSettings(join(fx.main, ".claude", "settings.json"), submoduleAllow);
+    expect(evaluate("git -C . submodule status", { env: env(home) })).toEqual(passThrough);
+  });
+
+  // CLAUDE_CONFIG_DIR があると本体はユーザ設定を ~/.claude ではなくそこから読む
+  test("CLAUDE_CONFIG_DIR があれば ~/.claude/settings.json の allow は hookApproved の根拠にしない", () => {
+    writeSettings(join(home, ".claude", "settings.json"), submoduleAllow);
+    expect(
+      evaluate("git -C . submodule status", {
+        env: { HOME: home, CLAUDE_PROJECT_DIR: fx.main, CLAUDE_CONFIG_DIR: join(home, "elsewhere") },
+      }),
+    ).toEqual(passThrough);
+  });
+
+  // deny / ask は厳しくなる方向なので、本体が読まない設定由来でも従来どおり効かせる
+  test(".codex/settings.json の deny は git -C の正規化候補にも効く", () => {
+    writeSettings(join(home, ".claude", "settings.json"), { allow: ["Bash(git status *)"] });
+    writeSettings(join(fx.main, ".codex", "settings.json"), { deny: ["Bash(git status *)"] });
+    expect(evaluate("git -C . status").decision).toBe("deny");
+  });
+
+  test("cwd の .claude/settings.json の ask は git -C の正規化候補にも効く", () => {
+    writeSettings(join(home, ".claude", "settings.json"), submoduleAllow);
+    writeSettings(join(fx.main, "sub", ".claude", "settings.json"), { ask: ["Bash(git submodule *)"] });
+    expect(evaluate("git -C . submodule status", { cwd: join(fx.main, "sub") }).decision).toBe("ask");
   });
 });

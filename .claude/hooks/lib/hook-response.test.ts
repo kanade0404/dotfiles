@@ -1,7 +1,7 @@
-import { describe, test, expect, beforeAll, afterAll } from "bun:test";
+import { describe, test, expect, beforeAll, afterAll, afterEach } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { parseHookClient, shouldEmitAllow } from "./hook-response.ts";
 import { createGitFixture, envWithoutGit, type GitFixture } from "./git-fixture.ts";
@@ -50,6 +50,7 @@ describe("shouldEmitAllow", () => {
 // HOME は一時ディレクトリにして個人の ~/.claude/settings.json の影響を排除し、
 // リポジトリ同梱の .claude/settings.json の permissions (+ extraAsk) をそこに置く。
 // cwd (hook 入力 JSON の cwd) は一時リポジトリ main。GIT_* は環境から除く。
+// CLAUDE_PROJECT_DIR (Claude Code が hook に渡すプロジェクトルート) は既定で main。
 function setupHookEnv(extraAsk: readonly string[] = []) {
   const home = mkdtempSync(join(tmpdir(), "hook-response-test-"));
   const settings = JSON.parse(readFileSync(resolve(repoRoot, ".claude", "settings.json"), "utf8")) as {
@@ -60,7 +61,12 @@ function setupHookEnv(extraAsk: readonly string[] = []) {
   writeFileSync(join(home, ".claude", "settings.json"), JSON.stringify({ permissions: settings.permissions }));
   const fx = createGitFixture();
 
-  function runHook(command: string, args: readonly string[], cwd: string = fx.main) {
+  function runHook(
+    command: string,
+    args: readonly string[],
+    cwd: string = fx.main,
+    extraEnv: Record<string, string> = { CLAUDE_PROJECT_DIR: fx.main },
+  ) {
     const input = JSON.stringify({
       hook_event_name: "PreToolUse",
       tool_name: "Bash",
@@ -70,14 +76,14 @@ function setupHookEnv(extraAsk: readonly string[] = []) {
     const r = spawnSync("bun", [analyzer, ...args], {
       input,
       encoding: "utf8",
-      env: envWithoutGit({ HOME: home }),
+      env: envWithoutGit({ HOME: home, ...extraEnv }),
     });
     return { status: r.status, stdout: r.stdout };
   }
 
   /** hook が出した permissionDecision。無出力 (pass-through) は null */
-  function decisionOf(command: string, cwd?: string): string | null {
-    const r = runHook(command, ["--client=claude-code"], cwd);
+  function decisionOf(command: string, cwd?: string, extraEnv?: Record<string, string>): string | null {
+    const r = runHook(command, ["--client=claude-code"], cwd, extraEnv);
     expect(r.status).toBe(0);
     return r.stdout === "" ? null : JSON.parse(r.stdout).hookSpecificOutput.permissionDecision;
   }
@@ -203,6 +209,49 @@ describe("pre-tool-use-bash-analyzer (プロセス): ~/.claude/settings.json の
 
   test("ask に一致しない git -C . status は allow のまま", () => {
     expect(env.decisionOf("git -C . status")).toBe("allow");
+  });
+});
+
+// hook allow の根拠になる allow ルールは Claude Code 本体が実際に読む設定
+// (~/.claude/settings.json と CLAUDE_PROJECT_DIR の .claude/settings*.json) 由来だけ。
+// リポジトリ内の .codex/* や cwd 基準の .claude/* の allow では hook allow しない。
+describe("pre-tool-use-bash-analyzer (プロセス): hook allow の根拠になる設定ファイル", () => {
+  let env: ReturnType<typeof setupHookEnv>;
+  beforeAll(() => { env = setupHookEnv(); });
+  afterAll(() => { env.cleanup(); });
+  afterEach(() => {
+    for (const dir of [join(env.fx.main, ".codex"), join(env.fx.main, ".claude"), join(env.fx.main, "sub", ".claude")]) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  function writeSettings(path: string, permissions: Record<string, string[]>) {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, JSON.stringify({ permissions }));
+  }
+
+  test("リポジトリの .codex/settings.json の allow では allow を返さない", () => {
+    writeSettings(join(env.fx.main, ".codex", "settings.json"), { allow: ["Bash(git submodule *)"] });
+    expect(env.decisionOf("git -C . submodule foreach touch pwned")).not.toBe("allow");
+  });
+
+  test("cwd (サブディレクトリ) の .claude/settings.json の allow では allow を返さない", () => {
+    writeSettings(join(env.fx.main, "sub", ".claude", "settings.json"), { allow: ["Bash(git submodule *)"] });
+    expect(env.decisionOf("git -C . submodule foreach touch pwned", join(env.fx.main, "sub"))).not.toBe("allow");
+  });
+
+  test("CLAUDE_PROJECT_DIR の .claude/settings.json の allow では allow を返す", () => {
+    writeSettings(join(env.fx.main, ".claude", "settings.json"), { allow: ["Bash(git submodule *)"] });
+    expect(env.decisionOf("git -C . submodule status", join(env.fx.main, "sub"))).toBe("allow");
+  });
+
+  test("CLAUDE_PROJECT_DIR が無ければ ~/.claude/settings.json の allow でも allow を返さない", () => {
+    expect(env.decisionOf("git -C . status", env.fx.main, {})).toBeNull();
+  });
+
+  test("リポジトリの .codex/settings.json の deny は効く", () => {
+    writeSettings(join(env.fx.main, ".codex", "settings.json"), { deny: ["Bash(git status *)"] });
+    expect(env.decisionOf("git -C . status")).toBe("deny");
   });
 });
 

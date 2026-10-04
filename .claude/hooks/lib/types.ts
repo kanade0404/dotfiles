@@ -25,6 +25,11 @@ export type Rule = {
   readonly category: RuleCategory;
   readonly pattern: string;
   readonly regex: RegExp;
+  /**
+   * Claude Code 本体が実際に読む設定ファイル (rules.ts の loadRules 参照) 由来。
+   * hook 自身の allow の根拠にできるのはこのルールだけ。
+   */
+  readonly readByClaudeCode?: true;
 };
 
 export type MatchResult = {
