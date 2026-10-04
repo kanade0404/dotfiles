@@ -515,8 +515,10 @@ describe("checkDangerousGitFlags", () => {
 
   // コマンド名側の迂回。matchCommand は checkDangerousGitFlags に正規化前の生コマンドを
   // 渡すため、入口の git 判定でもクォート除去とベース名抽出が要る。
-  // `-C` 無しの形は normalizeCommandName 経由の候補が deny ルールに当たるので塞がっているが、
-  // `Bash(git -C *)` の deny を外した本 PR では `-C` 付きがこのガード頼みになる。
+  // matchCommand 全体では、`-C` 無しの形は normalizeCommandName 経由の候補が、`-C` 付きの
+  // 形は analyzeGitC が `git <sub> ...` に正規化した候補が、それぞれ非 -C の deny ルールに
+  // 先に当たる。本ガードは deny ルールの形に無い危険フラグや、`-C` で付け替えた時だけ
+  // 危険な操作を拾う backstop で、ここではそれ単体がコマンド名の表記で迂回されないことを見る。
   describe("コマンド名がクォート / フルパスでも迂回できない", () => {
     for (const cmd of [
       '"git" -C /tmp/x reset --hard',
