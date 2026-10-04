@@ -1,10 +1,30 @@
 import { describe, test, expect } from "bun:test";
-import { resolve } from "node:path";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { evaluateCommand, isAssignmentOnly } from "./evaluator.ts";
 import { loadRules } from "./rules.ts";
 import { parseShellCommands } from "./shell-parser.ts";
 
 const worktreeRoot = resolve(import.meta.dir, "..", "..", "..");
+
+/**
+ * リポジトリ同梱の settings.json だけからルールを読む。loadRules は $HOME 配下の
+ * ~/.claude/settings.json 等もマージするので、HOME を空の一時ディレクトリに差し替えて
+ * 個人設定の影響 (ローカルの allow / deny の有無でテスト結果が変わること) を排除する。
+ */
+function loadRepoRules() {
+  const home = mkdtempSync(join(tmpdir(), "evaluator-test-"));
+  const original = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    return loadRules(worktreeRoot);
+  } finally {
+    if (original === undefined) delete process.env.HOME;
+    else process.env.HOME = original;
+    rmSync(home, { recursive: true, force: true });
+  }
+}
 
 describe("isAssignmentOnly", () => {
   test("単純な代入", () => {
@@ -91,7 +111,7 @@ describe("isAssignmentOnly", () => {
 });
 
 describe("evaluateCommand - 変数代入", () => {
-  const rules = loadRules(worktreeRoot);
+  const rules = loadRepoRules();
 
   test("VAR=$(allow されたコマンド) は allow になる", () => {
     const result = evaluateCommand(
@@ -167,7 +187,7 @@ describe("evaluateCommand - 変数代入", () => {
 // 全セグメントが「明示 allow かつ実行時の副作用 (ファイルへのリダイレクト / 展開 /
 // env 前置 / 代入文) が無い」ときに限り hookApproved を立てる。
 describe("evaluateCommand - git -C の hook allow (hookApproved)", () => {
-  const rules = loadRules(worktreeRoot);
+  const rules = loadRepoRules();
   const evaluate = (command: string) =>
     evaluateCommand(parseShellCommands(command), rules, command);
 
