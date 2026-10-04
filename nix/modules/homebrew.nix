@@ -29,8 +29,6 @@
     # All GUI applications (casks)
     casks = [
       "1password"
-      "chromedriver"
-      "chromium"
       "discord"
       "dropbox"
       "firefox"
