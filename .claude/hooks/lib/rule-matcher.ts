@@ -1062,6 +1062,17 @@ type GitCAnalysis =
  */
 const SHELL_EXPANSION_IN_WORD = /`|\$(?!')|[*?[{]/;
 
+/**
+ * analyzeGitC が値トークンを 1 つ読み飛ばす global option。findGitSubcommand と同じ
+ * GIT_TWO_TOKEN_GLOBAL_OPTS に加え、git が `--opt <value>` 形も受け付ける
+ * `--attr-source` / `--config-env` を含める。読み飛ばさないと値トークンをサブコマンドと
+ * 取り違え、後ろの `-C` を見落として ask すべき併用を pass-through にしてしまう。
+ * (findGitSubcommand 側に足すと backstop の判定が変わるため、ここでだけ扱う)
+ */
+const GIT_C_VALUE_GLOBAL_OPTS: ReadonlySet<string> = new Set([
+  ...GIT_TWO_TOKEN_GLOBAL_OPTS, "--attr-source", "--config-env",
+]);
+
 /** 空白区切りの生トークン (クォート / エスケープ / `$(...)` を跨ぐ) の範囲を返す */
 function rawTokenSpans(input: string): { start: number; end: number }[] {
   const spans: { start: number; end: number }[] = [];
@@ -1111,7 +1122,9 @@ function analyzeGitC(command: string, stripped: string): GitCAnalysis {
     if (SIDE_EFFECT_FREE_GIT_GLOBAL_OPTS.has(word)) { i++; continue; }
     if (!word.startsWith("-")) break;
     otherOption ??= word;
-    i++;
+    // `-c <k=v>` / `--namespace <ns>` 等の値トークンはサブコマンドではないので読み飛ばす
+    // (`--opt=value` 形は 1 トークンなので下の i++ だけで済む)
+    i += GIT_C_VALUE_GLOBAL_OPTS.has(word) && i + 1 < spans.length ? 2 : 1;
   }
   if (dirs.length === 0) return { kind: "none" };
 

@@ -1159,6 +1159,39 @@ describe("統合テスト: settings.json ルールでの判定", () => {
     ])("%s は ask", (command) => {
       expect(matchCommand(command, settingsRules)?.decision).toBe("ask");
     });
+
+    // 値を取る global option が -C より前にあっても、その値トークンをサブコマンドと
+    // 取り違えずに読み飛ばし、-C との併用として ask にする
+    test.each([
+      "git -c core.pager=x -C /r log",
+      "git -c color.ui=never -C /x status",
+      "git -c x=y -C /r push origin main",
+      "git -c core.worktree=/y -C /x status",
+      "git --no-pager -c x=y -C /r log",
+      "git --namespace ns -C /r status",
+      // git が次トークンを値に取る global option (findGitSubcommand の対象外)
+      "git --attr-source HEAD -C /x status",
+      "git --config-env core.pager=EVIL -C /x log",
+      // `--opt=value` 形式も併用として扱う
+      "git --namespace=ns -C /x status",
+      "git --git-dir=/y/.git -C /x status",
+      "git --attr-source=HEAD -C /x status",
+      // 値の読み飛ばし後の -C 引数にシェル展開がある
+      "git -c x=y -C $(echo /r) status",
+    ])("値を取る global option の後ろの -C: %s は ask", (command) => {
+      expect(matchCommand(command, settingsRules)?.decision).toBe("ask");
+    });
+
+    // 読み飛ばしで ask にする場合も deny / backstop が先に勝つ
+    test.each([
+      ["git -c core.fsmonitor=x -C /r status", "dangerous-git-flags"],
+      ["git -c x=y -C /r reset --hard", "dangerous-git-flags"],
+      ["git --namespace ns -C /r stash", "dangerous-git-flags"],
+      ["git --git-dir /y/.git -C /x status", "Bash(git --git-dir *)"],
+      ["git --work-tree /y -C /x status", "Bash(git --work-tree *)"],
+    ])("値を取る global option の後ろの -C: %s は %s で deny のまま", (command, pattern) => {
+      expect(matchCommand(command, settingsRules)).toEqual({ decision: "deny", command, pattern });
+    });
   });
 
   // 正規化はできたが非 -C allow ルールに一致しないものは hook では判定せず、Claude Code
@@ -1184,6 +1217,12 @@ describe("統合テスト: settings.json ルールでの判定", () => {
       // -C の引数 / サブコマンドが欠けている
       "git -C",
       "git -C /repo",
+      // -C が無い / サブコマンドより後ろの -C (log のコピー検出等) は global option ではない
+      "git -c x=y status",
+      "git --namespace ns status",
+      "git -c x=y log -C /r",
+      // 値を取る option の値として -C が消費される (git も -C を付け替えとして扱わない)
+      "git --namespace -C /r status",
     ])("%s は null", (command) => {
       expect(matchCommand(command, settingsRules)).toBeNull();
     });
