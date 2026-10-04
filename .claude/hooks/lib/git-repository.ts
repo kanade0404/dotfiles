@@ -18,6 +18,8 @@ const REPOSITORY_ENV_VARS = [
 ] as const;
 
 class UnresolvableRepository extends Error {}
+/** 祖先のどこにも `.git` / `HEAD` が無い (git 管理外) */
+class OutsideRepository extends UnresolvableRepository {}
 
 function lstatOrNull(path: string): Stats | null {
   try {
@@ -153,29 +155,41 @@ function commonDirOf(gitdir: string, dotGitFile: string | null): string {
   return common;
 }
 
+/** ファイルシステムから解決したリポジトリ (いずれも物理パス) */
+type Repository = {
+  /** `.git` が見つかった作業ツリーのルート */
+  readonly worktreeRoot: string;
+  readonly gitdir: string;
+  readonly common: string;
+};
+
 /**
- * 物理パスのディレクトリ `dir` が属するリポジトリの common dir を、git を実行せずに求める。
+ * 物理パスのディレクトリ `dir` が属するリポジトリ (作業ツリーのルート・gitdir・common dir) を、
+ * git を実行せずに求める。
  *
  * 祖先方向に `.git` を探す。`.git` がディレクトリならそれが gitdir、ファイルなら
  * `gitdir: <path>` (相対パスは .git ファイルのあるディレクトリ基準) の参照先が gitdir。
  * `.git` が無い階層に `HEAD` があれば、git はそこを bare リポジトリ / gitdir として扱いうる
  * (`.git` 配下や bare リポジトリの中) ので解決不能とする。
  */
-function resolveCommonDir(dir: string): string {
+function resolveRepository(dir: string): Repository {
   let current = dir;
   for (;;) {
     const dotGit = join(current, ".git");
     const st = lstatOrNull(dotGit);
     if (st !== null) {
-      if (st.isDirectory()) return commonDirOf(dotGit, null);
-      if (st.isFile()) return commonDirOf(physicalResolve(current, parseGitFile(readFileSync(dotGit, "utf8"))), dotGit);
+      if (st.isDirectory()) return { worktreeRoot: current, gitdir: dotGit, common: commonDirOf(dotGit, null) };
+      if (st.isFile()) {
+        const gitdir = physicalResolve(current, parseGitFile(readFileSync(dotGit, "utf8")));
+        return { worktreeRoot: current, gitdir, common: commonDirOf(gitdir, dotGit) };
+      }
       throw new UnresolvableRepository(".git がディレクトリでも通常ファイルでもない");
     }
     if (lstatOrNull(join(current, "HEAD")) !== null) {
       throw new UnresolvableRepository("bare リポジトリ / gitdir の中");
     }
     const parent = dirname(current);
-    if (parent === current) throw new UnresolvableRepository("リポジトリの外");
+    if (parent === current) throw new OutsideRepository("リポジトリの外");
     current = parent;
   }
 }
@@ -202,7 +216,7 @@ export function isSameGitRepository(cwd: string | undefined, dir: string, env: E
     const cwdPath = physicalResolve("/", cwd);
     const target = physicalResolve(cwdPath, dir);
     if (!statSync(cwdPath).isDirectory() || !statSync(target).isDirectory()) return false;
-    return resolveCommonDir(cwdPath) === resolveCommonDir(target);
+    return resolveRepository(cwdPath).common === resolveRepository(target).common;
   } catch {
     return false;
   }
