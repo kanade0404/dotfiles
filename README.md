@@ -135,6 +135,7 @@ TypeScript 製の PreToolUse hook で Bash コマンドの権限を統合管理�
 - Codex は `.codex/rules/default.rules` の `prefix_rule()` で sandbox 外実行の `allow/prompt/forbidden` を判定
 - シェルコマンドを構文解析（パイプ、`&&`、コマンド置換、ヒアドキュメント等）
 - dangerous-git-flags 検出（`--no-verify`, `--force` 等の位置非依存チェック）
+- `git -C <dir> <subcommand>` は `git <subcommand>` に正規化して通常の git ルールで判定する。`settings.json` には `git -C` 系ルールを置かない。Claude Code から起動されたとき (`--client=claude-code`) に限り、コマンド全体が単一の単純な `git [opt] -C <dir> [opt] <sub> [args]` の文法に一致し、`-C` の対象が hook 入力の cwd と同じ git common dir を持つリポジトリ (同一リポジトリか、`git worktree add` で作った正規の worktree) で、permission_mode が `default` / `acceptEdits` の場合だけ hook が allow を返す (複合コマンド・パイプ・リダイレクト・前置は本体の判定に委ねる)。Codex には allow を返さない。経緯は [ADR 0003](docs/adr/0003-normalize-git-c-in-hook.md)
 - deny 時に代替ツールを案内（`ls` → Glob ツール、`cat` → Read ツール等）
 
 ```bash

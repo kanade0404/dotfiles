@@ -4,6 +4,12 @@ export type HookInput = {
     readonly command: string;
   };
   readonly cwd?: string;
+  /**
+   * Claude Code の permission mode ("default" / "plan" / "acceptEdits" / "auto" / "dontAsk" /
+   * "bypassPermissions")。Codex や将来の値に備えて型は unknown で受け、hook-response.ts で検査する。
+   * ref: https://code.claude.com/docs/en/hooks
+   */
+  readonly permission_mode?: unknown;
 };
 
 /**
@@ -25,10 +31,23 @@ export type Rule = {
   readonly category: RuleCategory;
   readonly pattern: string;
   readonly regex: RegExp;
+  /**
+   * Claude Code 本体が通常適用する設定ファイル (ユーザ設定 ~/.claude/settings.json。
+   * rules.ts の loadRules 参照) 由来。例外は ADR 0003 の既知の制約 (`--setting-sources` /
+   * SDK の `settingSources` でユーザ設定を除いた構成)。
+   * hook 自身の allow の根拠にできるのはこのルールのうち、
+   * サブコマンドをリテラルで固定した git の allow だけ (evaluator.ts の rulesForHookAllow)。
+   */
+  readonly readByClaudeCode?: true;
 };
 
 export type MatchResult = {
   readonly decision: RuleCategory;
   readonly command: string;
   readonly pattern: string;
+  /**
+   * `git -C <dir> <sub> ...` を `git <sub> ...` に正規化して allow ルールに一致した。
+   * settings.json に `-C` 版ルールは無いため Claude Code 本体は自力で allow しない。
+   */
+  readonly gitCNormalized?: true;
 } | null;
