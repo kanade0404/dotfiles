@@ -61,11 +61,16 @@ function setupHookEnv(extraAsk: readonly string[] = []) {
   writeFileSync(join(home, ".claude", "settings.json"), JSON.stringify({ permissions: settings.permissions }));
   const fx = createGitFixture();
 
+  /**
+   * extraEnv の値が undefined のキーは環境から取り除く。テストを実行している環境の
+   * CLAUDE_CONFIG_DIR は引き継がない。hook プロセスの作業ディレクトリは一時の HOME
+   * (HOME を空にしたとき bun がキャッシュを作業ディレクトリに作るため、リポジトリを汚さない)。
+   */
   function runHook(
     command: string,
     args: readonly string[],
     cwd: string = fx.main,
-    extraEnv: Record<string, string> = { CLAUDE_PROJECT_DIR: fx.main },
+    extraEnv: Record<string, string | undefined> = { CLAUDE_PROJECT_DIR: fx.main },
   ) {
     const input = JSON.stringify({
       hook_event_name: "PreToolUse",
@@ -73,16 +78,18 @@ function setupHookEnv(extraAsk: readonly string[] = []) {
       tool_input: { command },
       cwd,
     });
-    const r = spawnSync("bun", [analyzer, ...args], {
-      input,
-      encoding: "utf8",
-      env: envWithoutGit({ HOME: home, ...extraEnv }),
-    });
+    const env: Record<string, string> = envWithoutGit({ HOME: home });
+    delete env.CLAUDE_CONFIG_DIR;
+    for (const [key, value] of Object.entries(extraEnv)) {
+      if (value === undefined) delete env[key];
+      else env[key] = value;
+    }
+    const r = spawnSync("bun", [analyzer, ...args], { input, encoding: "utf8", env, cwd: home });
     return { status: r.status, stdout: r.stdout };
   }
 
   /** hook が出した permissionDecision。無出力 (pass-through) は null */
-  function decisionOf(command: string, cwd?: string, extraEnv?: Record<string, string>): string | null {
+  function decisionOf(command: string, cwd?: string, extraEnv?: Record<string, string | undefined>): string | null {
     const r = runHook(command, ["--client=claude-code"], cwd, extraEnv);
     expect(r.status).toBe(0);
     return r.stdout === "" ? null : JSON.parse(r.stdout).hookSpecificOutput.permissionDecision;
@@ -259,6 +266,25 @@ describe("pre-tool-use-bash-analyzer (プロセス): hook allow の根拠にな�
 
   test("CLAUDE_PROJECT_DIR が無ければ ~/.claude/settings.json の allow でも allow を返さない", () => {
     expect(env.decisionOf("git -C . status", env.fx.main, {})).toBeNull();
+  });
+
+  test("前提: 既定の環境では git -C . status に allow を返す", () => {
+    expect(env.decisionOf("git -C . status")).toBe("allow");
+  });
+
+  test("CLAUDE_CONFIG_DIR が環境にあれば (プロジェクトの allow があっても) allow を返さない", () => {
+    writeSettings(join(env.fx.main, ".claude", "settings.json"), { allow: ["Bash(git status *)"] });
+    expect(
+      env.decisionOf("git -C . status", env.fx.main, { CLAUDE_PROJECT_DIR: env.fx.main, CLAUDE_CONFIG_DIR: "/nonexistent" }),
+    ).toBeNull();
+  });
+
+  test.each([
+    ["未設定", undefined],
+    ["空文字列", ""],
+  ] as const)("HOME が%sなら allow を返さない", (_, home) => {
+    writeSettings(join(env.fx.main, ".claude", "settings.json"), { allow: ["Bash(git status *)"] });
+    expect(env.decisionOf("git -C . status", env.fx.main, { CLAUDE_PROJECT_DIR: env.fx.main, HOME: home })).toBeNull();
   });
 
   test("リポジトリの .codex/settings.json の deny は効く", () => {

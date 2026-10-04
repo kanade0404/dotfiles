@@ -555,13 +555,32 @@ describe("evaluateCommand - hook allow の根拠になる設定ファイル", ()
     expect(evaluate("git -C . submodule status", { env: env(home) })).toEqual(passThrough);
   });
 
-  // CLAUDE_CONFIG_DIR があると本体はユーザ設定を ~/.claude ではなくそこから読む
-  test("CLAUDE_CONFIG_DIR があれば ~/.claude/settings.json の allow は hookApproved の根拠にしない", () => {
+  // CLAUDE_CONFIG_DIR があると本体はユーザ設定をそこから読むが、hook はその所在
+  // (deny / ask を含む) を確実には追えないので、値に関わらず hook allow しない
+  test.each([
+    ["~/.claude 以外の絶対パス", (h: string) => join(h, "elsewhere")],
+    ["~/.claude と同じパス", (h: string) => join(h, ".claude")],
+    ["空文字列", () => ""],
+  ] as const)("CLAUDE_CONFIG_DIR が環境にあれば (%s) hookApproved にしない", (_, configDir) => {
     writeSettings(join(home, ".claude", "settings.json"), submoduleAllow);
+    writeSettings(join(fx.main, ".claude", "settings.json"), submoduleAllow);
     expect(
       evaluate("git -C . submodule status", {
-        env: { HOME: home, CLAUDE_PROJECT_DIR: fx.main, CLAUDE_CONFIG_DIR: join(home, "elsewhere") },
+        env: { HOME: home, CLAUDE_PROJECT_DIR: fx.main, CLAUDE_CONFIG_DIR: configDir(home) },
       }),
+    ).toEqual(passThrough);
+  });
+
+  // HOME が使えないと本体のユーザ設定の所在が分からない。相対パスを hook プロセスの
+  // 作業ディレクトリ基準で解決して、本体が読まないファイルを根拠にすることもしない
+  test.each([
+    ["未設定", {}],
+    ["空文字列", { HOME: "" }],
+    ["相対パス", { HOME: "home" }],
+  ] as const)("HOME が%sなら hookApproved にしない", (_, homeEnv) => {
+    writeSettings(join(fx.main, ".claude", "settings.json"), submoduleAllow);
+    expect(
+      evaluate("git -C . submodule status", { env: { ...homeEnv, CLAUDE_PROJECT_DIR: fx.main } }),
     ).toEqual(passThrough);
   });
 

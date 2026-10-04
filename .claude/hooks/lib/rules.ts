@@ -65,6 +65,15 @@ function claudeProjectDir(env: Env): string | null {
 }
 
 /**
+ * HOME が空でない絶対パスならそのパス、それ以外は null。
+ * 空・相対パスを hook プロセスの作業ディレクトリ基準で解決しない。
+ */
+function homeDir(env: Env): string | null {
+  const home = env.HOME;
+  return home !== undefined && home !== "" && isAbsolute(home) ? home : null;
+}
+
+/**
  * ユーザー設定 + プロジェクト設定から Bash ルールを読み込んでマージする。
  *
  * 読み込み順（Codex / Claude Code 双方の設定をマージ）:
@@ -91,27 +100,30 @@ function claudeProjectDir(env: Env): string | null {
  * 出自を問わず全て使う。
  * - CLAUDE_PROJECT_DIR が無い / 相対 / 実在しない: 本体の読む設定を特定できないので、
  *   どのルールにも付けない (hook は allow を返さない)
- * - CLAUDE_CONFIG_DIR がある: 本体はユーザ設定を ~/.claude ではなくそこから読むので、
- *   ~/.claude/settings.json 由来には付けない
+ * - CLAUDE_CONFIG_DIR が環境にある (値は問わない): 本体はユーザ設定を ~/.claude ではなく
+ *   そこから読むが、hook はその所在を確実には追えない (deny / ask を取りこぼしうる) ので、
+ *   どのルールにも付けない
+ * - HOME が無い / 空 / 相対: 本体のユーザ設定の所在が分からないので、どのルールにも付けない。
+ *   ~/ 配下の設定も読まない (hook プロセスの作業ディレクトリ基準で解決しない)
  *
  * env は HOME / CLAUDE_PROJECT_DIR / CLAUDE_CONFIG_DIR を読む環境変数 (テスト用、既定は process.env)。
  * Codex は CLAUDE_PROJECT_DIR を渡さないので、Codex から起動された場合の読み込み対象は従来どおり。
  */
 export function loadRules(cwd?: string, env: Env = process.env): readonly Rule[] {
-  const home = env.HOME ?? "";
+  const home = homeDir(env);
   const projectDir = claudeProjectDir(env);
+  const hookAllowable = projectDir !== null && home !== null && env.CLAUDE_CONFIG_DIR === undefined;
   const readByClaudeCode = new Set(
-    projectDir === null
+    !hookAllowable
       ? []
       : [
-          ...(env.CLAUDE_CONFIG_DIR === undefined ? [resolve(home, ".claude", "settings.json")] : []),
+          resolve(home, ".claude", "settings.json"),
           resolve(projectDir, ".claude", "settings.json"),
           resolve(projectDir, ".claude", "settings.local.json"),
         ],
   );
   const paths = [
-    resolve(home, ".codex", "settings.json"),
-    resolve(home, ".claude", "settings.json"),
+    ...(home === null ? [] : [resolve(home, ".codex", "settings.json"), resolve(home, ".claude", "settings.json")]),
     ...(cwd
       ? [
           resolve(cwd, ".codex", "settings.json"),
