@@ -2,6 +2,7 @@ import { parseShellCommands } from "./lib/shell-parser.ts";
 import { matchCommand } from "./lib/rule-matcher.ts";
 import { loadRules } from "./lib/rules.ts";
 import { evaluateCommand } from "./lib/evaluator.ts";
+import { parseHookClient, shouldEmitAllow } from "./lib/hook-response.ts";
 import type { HookInput, HookOutput, RuleCategory } from "./lib/types.ts";
 
 /**
@@ -99,8 +100,14 @@ function main(): void {
           respond("ask", result.reason);
           break;
         case "allow":
-          // Codex は permissionDecision:"allow" を非対応。Claude Code も exit 0 +
-          // 無出力を pass-through として扱うため、allow は何も返さず終了する。
+          // Claude Code から起動され (--client=claude-code)、hook が正規化して allow と
+          // 判定した `git -C` コマンドだけ allow を返す (settings.json に -C 版ルールが
+          // 無く本体は自力で allow しないため)。Codex は bare な permissionDecision:"allow"
+          // を unsupported として hook 失敗扱いにするので、それ以外は従来どおり
+          // 何も返さず終了し (exit 0 + 無出力 = pass-through)、本体の判定に委ねる。
+          if (shouldEmitAllow(result, parseHookClient(process.argv))) {
+            respond("allow", "git -C <dir> を正規化し、settings.json の allow ルールに一致");
+          }
           process.exit(0);
       }
     } catch (e) {

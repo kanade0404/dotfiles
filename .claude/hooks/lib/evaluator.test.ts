@@ -2,6 +2,7 @@ import { describe, test, expect } from "bun:test";
 import { resolve } from "node:path";
 import { evaluateCommand, isAssignmentOnly } from "./evaluator.ts";
 import { loadRules } from "./rules.ts";
+import { parseShellCommands } from "./shell-parser.ts";
 
 const worktreeRoot = resolve(import.meta.dir, "..", "..", "..");
 
@@ -158,5 +159,68 @@ describe("evaluateCommand - 変数代入", () => {
       rules,
     );
     expect(result.decision).toBe("deny");
+  });
+});
+
+// git -C <dir> <sub> は settings.json にルールが無く Claude Code 本体は自力で allow しない。
+// hook が正規化して allow と判定したコマンドだけ hook 自身が allow を返せるよう、
+// 全セグメントが「明示 allow かつ実行時の副作用 (ファイルへのリダイレクト / 展開 /
+// env 前置 / 代入文) が無い」ときに限り hookApproved を立てる。
+describe("evaluateCommand - git -C の hook allow (hookApproved)", () => {
+  const rules = loadRules(worktreeRoot);
+  const evaluate = (command: string) => evaluateCommand(parseShellCommands(command), rules);
+
+  test.each([
+    "git -C /repo status",
+    "git -C /a status && git -C /b log --oneline",
+    "git -C /repo log --oneline | head -5",
+    "git -C /repo status 2>&1 | tail -5",
+    "git -C /repo status 2>/dev/null",
+    "(git -C /repo status)",
+    // シングルクォート内の $ は展開ではない
+    "git -C /repo log --format='%H $x'",
+    // クォート内の > はリダイレクトではない (ダブルクォート内の ' もクォート開始ではない)
+    'git -C /repo commit -m "a > b"',
+    "git -C /repo commit -m \"it's > fine\"",
+    // エスケープした $ は展開ではない
+    "git -C /repo log --grep \\$x",
+  ])("%s は hookApproved", (command) => {
+    expect(evaluate(command)).toEqual({ decision: "allow", hookApproved: true });
+  });
+
+  test.each([
+    // -C を含まないコマンドは従来どおり本体の判定に委ねる
+    "git status",
+    "git status && git diff",
+    // 未定義コマンドとの複合は全体を本体に委ねる
+    "git -C /repo status && python script.py",
+    // 正規化できても非 -C allow に無いサブコマンド
+    "git -C . submodule foreach rm -rf / status",
+    "git -C /x replace -d status",
+    // ファイルへのリダイレクト / heredoc
+    "git -C /repo status > /tmp/out",
+    "git -C /repo log >> ~/.bashrc",
+    "git -C /repo log <<EOF\nx\nEOF",
+    // クォートを閉じた後 / エスケープしたクォートの後のリダイレクト
+    "git -C /repo log --format='%H' > /tmp/out",
+    "git -C /repo log \\' > /tmp/out",
+    // env 前置 (GIT_EXEC_PATH 等で実行内容が変わりうる)
+    "FOO=1 git -C /repo status",
+    // -C 以外の引数の展開
+    "git -C /repo log $(echo HEAD)",
+    'git -C /repo commit -m "cost $X"',
+    "git -C /repo log `echo HEAD`",
+    // 代入文 (PATH 書き換え等で後続コマンドの実体が変わりうる)
+    "PATH=/tmp/evil; git -C /repo status",
+  ])("%s は allow だが hookApproved ではない", (command) => {
+    expect(evaluate(command)).toEqual({ decision: "allow", hookApproved: false });
+  });
+
+  test("git -C /a status && git -C /b reset --hard は deny", () => {
+    expect(evaluate("git -C /a status && git -C /b reset --hard").decision).toBe("deny");
+  });
+
+  test("git -C $(echo /x) status は ask", () => {
+    expect(evaluate("git -C $(echo /x) status").decision).toBe("ask");
   });
 });
