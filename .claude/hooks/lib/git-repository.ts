@@ -173,6 +173,10 @@ type Repository = {
  * `gitdir: <path>` (相対パスは .git ファイルのあるディレクトリ基準) の参照先が gitdir。
  * `.git` が無い階層に `HEAD` があれば、git はそこを bare リポジトリ / gitdir として扱いうる
  * (`.git` 配下や bare リポジトリの中) ので解決不能とする。
+ * git 自身は `HEAD` に加えて `objects/` と `refs/` が揃った階層だけを gitdir とみなすが、
+ * ここでは区別しない (安全側)。そのため作業ツリー内に `HEAD` という名前のファイル /
+ * ディレクトリを持つ階層 (git を模したテストフィクスチャなど) とその配下も解決不能になり、
+ * そこへの `git -C` は hook allow されない。
  */
 function resolveRepository(dir: string): Repository {
   let current = dir;

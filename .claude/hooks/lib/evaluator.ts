@@ -72,7 +72,8 @@ const SUBCOMMAND_ANCHORED_GIT_PATTERN = /^Bash\(git [A-Za-z0-9][A-Za-z0-9._-]*(?
 /**
  * hook allow の判定に使うルール。deny / ask は出自を問わず残す (判定を厳しくする方向のため)。
  * allow は次の両方を満たすものだけに絞る。
- * - 本体がどの構成でも適用するユーザ設定由来 (readByClaudeCode)
+ * - 本体が通常適用するユーザ設定由来 (readByClaudeCode。例外は ADR 0003 の既知の制約:
+ *   `--setting-sources` / SDK の `settingSources` でユーザ設定を除いた構成)
  * - サブコマンドをリテラルで固定した git の allow (SUBCOMMAND_ANCHORED_GIT_PATTERN)。
  *   本体は auto mode で `Bash(*)` などの広い allow を落として classifier に回すので、
  *   広い allow は hook allow の根拠にしない

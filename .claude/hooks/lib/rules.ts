@@ -252,9 +252,10 @@ function loadManagedRules(sources: ManagedSettingsSources | null): { rules: read
  * ただし `git -C <dir>` を正規化した候補は deny > ask > allow の順で評価する
  * (本体の ask ルールが -C 版に効かず、hook が唯一の適用点のため)。
  *
- * hook 自身の allow (Claude Code 本体の確認の省略) の根拠にしてよいのは、本体がどの構成でも
- * 適用する allow だけなので、ユーザ設定 ~/.claude/settings.json 由来の allow にだけ
- * readByClaudeCode を付ける。
+ * hook 自身の allow (Claude Code 本体の確認の省略) の根拠にしてよいのは、本体が通常適用する
+ * allow だけなので、ユーザ設定 ~/.claude/settings.json 由来の allow にだけ readByClaudeCode を
+ * 付ける (例外は ADR 0003 の既知の制約: `--setting-sources` / SDK の `settingSources` で
+ * ユーザ設定を除いた構成では本体が適用しないが、hook はそれを知る手段が無い)。
  * - CLAUDE_PROJECT_DIR (Claude Code が hook に渡す、セッションを開始したプロジェクトルート) の
  *   .claude/settings.json / settings.local.json の allow には付けない。本体は
  *   `--setting-sources user` / SDK の settingSources でプロジェクト設定を除いた場合や、
