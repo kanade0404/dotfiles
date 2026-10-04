@@ -1,5 +1,54 @@
-import { matchCommand } from "./rule-matcher.ts";
+import { matchCommand, SIDE_EFFECT_FREE_GIT_GLOBAL_OPTS } from "./rule-matcher.ts";
 import type { Rule, RuleCategory } from "./types.ts";
+
+/**
+ * zsh でも bash でも、クォートの外で何の意味も持たない (展開・区切り・リダイレクト・
+ * glob・コメント・関数定義にならない) 文字。`=` と `~` は word 先頭でのみ展開される
+ * (zsh の `=cmd` / `=(...)` 展開、チルダ展開) ので、PLAIN_WORD では位置を限って別に許す。
+ */
+const PLAIN_CHARS = "A-Za-z0-9_./:@,+%-";
+/**
+ * クォート無しの word。`=` は英数字 / `_` / `-` の直後、`~` は英数字 / `_` の直後に限る。
+ * - word 先頭の `=`・`~` は zsh で展開される (`=ls` → `/bin/ls`、`=(cmd)` はプロセス置換)
+ * - `==` や `=~` を許さないのは、zsh の MAGIC_EQUAL_SUBST が有効な環境で `--opt=` の後ろが
+ *   word 先頭と同じに展開されるため
+ * 例: `--format=%H` / `HEAD~1` は可、`=x` / `~/x` / `--x==ls` / `--x=~/y` は不可。
+ */
+const PLAIN_WORD = `[${PLAIN_CHARS}](?:[${PLAIN_CHARS}]|(?<=[A-Za-z0-9_-])=|(?<=[A-Za-z0-9_])~)*`;
+/** シングル / ダブルクォートの word。中身は PLAIN_CHARS と半角スペースだけ (連結は不可) */
+const QUOTED_WORD = `'[ ${PLAIN_CHARS}]*'|"[ ${PLAIN_CHARS}]*"`;
+const WORD = `(?:${PLAIN_WORD}|${QUOTED_WORD})`;
+/** サブコマンド: `-` で始まらないクォート無しの word */
+const SUBCOMMAND = `(?!-)[${PLAIN_CHARS}]+`;
+const GLOBAL_OPT = `(?:${[...SIDE_EFFECT_FREE_GIT_GLOBAL_OPTS]
+  .map((opt) => opt.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+  .join("|")})`;
+const GIT_C_GRAMMAR = new RegExp(
+  `^git(?: +${GLOBAL_OPT})* +-C +${WORD}(?: +${GLOBAL_OPT})* +${SUBCOMMAND}(?: +${WORD})*$`,
+);
+
+/**
+ * 生コマンド全体が、hook 自身が allow を返してよい厳密な正の文法に完全一致するか。
+ *
+ *   command := "git" (SP gopt)* SP "-C" SP word (SP gopt)* SP sub (SP word)*
+ *   gopt    := SIDE_EFFECT_FREE_GIT_GLOBAL_OPTS のいずれか (値を取らないもの)
+ *   word    := PLAIN_WORD | QUOTED_WORD
+ *   SP      := 半角スペース 1 個以上
+ *
+ * 先頭は素の `git` 固定 (`time` / `env` / `command` / 代入 / `(` 等の前置は不可)、
+ * `-C` は正確に 1 回、区切り・パイプ・リダイレクト・括弧・複数コマンドは不可。
+ *
+ * hook の allow は Claude Code 本体の確認を省略させる。実行シェルは zsh
+ * (Claude Code の Bash tool はユーザの $SHELL で `eval` する) で、bash 前提の
+ * パーサで危険な構文を除外する方式は、zsh 固有の構文 (関数定義 `name () cmd`、
+ * `=(...)`、`time VAR=...` 等) を拾いきれず漏れが続いた。そこでシェルの構文を
+ * モデル化せず、どのシェルでも単純コマンド 1 つとしか読めない字句だけを許す。
+ * shell-parser / rule-matcher のトークナイザは使わない (パーサの解釈とのずれが
+ * 許可判定に入り込まない構造にする)。
+ */
+export function isPlainGitCCommand(command: string): boolean {
+  return GIT_C_GRAMMAR.test(command);
+}
 
 export type EvaluationResult =
   | { decision: "deny"; denyReasons: readonly { command: string; pattern: string }[] }
@@ -191,12 +240,13 @@ export function isAssignmentOnly(command: string): boolean {
  * 例外は `git -C <dir> <sub>` で、settings.json に `-C` 版ルールを置かない
  * (rule-matcher の analyzeGitC 参照) ため本体は自力で allow しない。次を全て満たす
  * 場合に限り hookApproved を立て、hook 自身が allow を返せるようにする。
- * - 生コマンド (rawCommand) が isLexicallyPlain (パーサが完全に説明できる字句) である
- * - hook が正規化して allow と判定した `git -C` セグメントを含む
- * - 全セグメントが明示 allow で、コマンド名が素の名前 (bareCommandName)、
- *   実行時の副作用 (hasExecutionHazard) を持たない
- * 未定義コマンドや代入文が 1 つでも混ざれば全体を本体に委ねる。rawCommand を
- * 渡さない呼び出しは字句を検査できないので hookApproved にしない。
+ * - 生コマンド (rawCommand) 全体が isPlainGitCCommand の文法 (単一の単純な
+ *   `git ... -C <dir> ... <sub> ...`) に完全一致する
+ * - 生コマンドを matchCommand で照合した結果が、正規化した `git <sub> ...` の
+ *   非 -C allow への一致 (gitCNormalized) である (deny / 危険 git フラグ / 機密パスは
+ *   matchCommand が先に判定する)
+ * 複合コマンドは文法に一致しないので、全セグメントが allow でも hook allow しない。
+ * rawCommand を渡さない呼び出しは文法を検査できないので hookApproved にしない。
  */
 export function evaluateCommand(
   subCommands: readonly string[],
@@ -205,21 +255,12 @@ export function evaluateCommand(
 ): EvaluationResult {
   const denyReasons: { command: string; pattern: string }[] = [];
   const askReasons: string[] = [];
-  let hasGitCNormalized = false;
-  let allExplicitlyAllowed = true;
 
   for (const sub of subCommands) {
-    if (isAssignmentOnly(sub)) {
-      allExplicitlyAllowed = false;
-      continue;
-    }
+    if (isAssignmentOnly(sub)) continue;
 
     const result = matchCommand(sub, rules);
-
-    if (result === null) {
-      allExplicitlyAllowed = false;
-      continue;
-    }
+    if (result === null) continue;
 
     switch (result.decision) {
       case "deny":
@@ -228,13 +269,8 @@ export function evaluateCommand(
       case "ask":
         askReasons.push(sub);
         break;
-      case "allow":
-        if (result.gitCNormalized) hasGitCNormalized = true;
-        if (!result.bareCommandName || hasExecutionHazard(sub)) allExplicitlyAllowed = false;
-        break;
     }
   }
-  const lexicallyPlain = rawCommand !== undefined && isLexicallyPlain(rawCommand);
 
   if (denyReasons.length > 0) {
     return { decision: "deny", denyReasons };
@@ -247,8 +283,9 @@ export function evaluateCommand(
     };
   }
 
-  return {
-    decision: "allow",
-    hookApproved: lexicallyPlain && hasGitCNormalized && allExplicitlyAllowed,
-  };
+  const hookApproved =
+    rawCommand !== undefined &&
+    isPlainGitCCommand(rawCommand) &&
+    matchCommand(rawCommand, rules)?.gitCNormalized === true;
+  return { decision: "allow", hookApproved };
 }

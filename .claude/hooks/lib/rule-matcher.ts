@@ -783,7 +783,7 @@ function commandBaseName(token: string): string {
  * `-c` (core.pager 等で任意コマンドを起動しうる) / `-C` / `--git-dir` /
  * `--work-tree` / `--exec-path` / `-p` (pager 起動) / `--bare` は含めない。
  */
-const SIDE_EFFECT_FREE_GIT_GLOBAL_OPTS: ReadonlySet<string> = new Set([
+export const SIDE_EFFECT_FREE_GIT_GLOBAL_OPTS: ReadonlySet<string> = new Set([
   "--no-pager",
   "--no-optional-locks",
   "--literal-pathspecs",

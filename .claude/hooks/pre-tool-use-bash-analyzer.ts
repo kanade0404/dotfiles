@@ -100,9 +100,10 @@ function main(): void {
           respond("ask", result.reason);
           break;
         case "allow":
-          // Claude Code から起動され (--client=claude-code)、hook が正規化して allow と
-          // 判定した `git -C` コマンドだけ allow を返す (settings.json に -C 版ルールが
-          // 無く本体は自力で allow しないため)。Codex は bare な permissionDecision:"allow"
+          // Claude Code から起動され (--client=claude-code)、生コマンド全体が単一の単純な
+          // `git -C <dir> <sub> ...` の文法に一致し、hook が正規化して allow と判定した
+          // ときだけ allow を返す (settings.json に -C 版ルールが無く本体は自力で allow
+          // しないため。evaluator.ts の isPlainGitCCommand 参照)。Codex は bare な permissionDecision:"allow"
           // を unsupported として hook 失敗扱いにするので、それ以外は従来どおり
           // 何も返さず終了し (exit 0 + 無出力 = pass-through)、本体の判定に委ねる。
           if (shouldEmitAllow(result, parseHookClient(process.argv))) {

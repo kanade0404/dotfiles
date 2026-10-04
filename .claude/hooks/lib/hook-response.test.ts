@@ -96,20 +96,34 @@ describe("pre-tool-use-bash-analyzer (プロセス)", () => {
     return r.stdout === "" ? null : JSON.parse(r.stdout).hookSpecificOutput.permissionDecision;
   }
 
+  // hook が allow を返すのは、生コマンド全体が単一の単純な `git ... -C <dir> ... <sub> ...`
+  // の文法 (evaluator.ts の isPlainGitCCommand) に一致する場合だけ。
   test.each([
     "git -C /r status",
+    "git -C /r log --oneline -5",
     "git -C '/r x' log --oneline",
     "git --no-pager -C /r log",
-    'git -C /r commit -m "x"',
-    "git -C /r status && git -C /s diff",
+    'git -C /r commit -m "fix bug"',
+    "git -C /r diff --stat",
+    "git -C /r log --format=%H",
   ])("Claude Code: %j は allow を返す", (command) => {
     expect(decisionOf(command)).toBe("allow");
   });
 
-  // bash では改行・コメント・ANSI-C quoting の解釈で後続コマンドが別に実行される形、
-  // およびコマンド名がパス指定で allow ルールの想定と別の実行ファイルを起動する形。
-  // hook は allow を出さない (無出力で本体の判定に委ねる / ask / deny のいずれか)。
+  // 実行シェル (zsh) で git 以外のコマンドが実行される・git の実行内容が変わる・
+  // ファイルに書き込む形と、複合コマンド。hook は allow を出さない
+  // (無出力で本体の判定に委ねる / ask / deny のいずれか)。
   test.each([
+    "echo () (touch X); git -C R status; echo",
+    "git -C R status; sleep () (touch X); sleep 0",
+    "git -C R status; echo () touch X; echo",
+    "git -C R status =(touch X)",
+    "git -C R status; echo =(touch X)",
+    "time GIT_TRACE=X git -C R status",
+    "time PATH=/tmp/evil git -C R status",
+    "time env GIT_TRACE=X git -C R status",
+    "git -C R log -1 >&1mk",
+    "git -C R log -1 2>&1 >&2zz",
     "git -C /r status #'\ntouch /tmp/pwned",
     "git -C /r status #'\npython3 -c 'import os'\n#'",
     "git -C /r status #'\nrm -rf /tmp/x\n#'",
@@ -118,6 +132,12 @@ describe("pre-tool-use-bash-analyzer (プロセス)", () => {
     "./git -C . status",
     "/tmp/evil/git -C /r status",
     "git -C /r status; /tmp/evil/echo hi",
+    "git -C a status && git -C b diff",
+    "(git -C /r status)",
+    "git -C =x status",
+    "git -C ~/x status",
+    "time git -C /r status",
+    "command git -C /r status",
   ])("Claude Code: %j は allow を返さない", (command) => {
     expect(decisionOf(command)).not.toBe("allow");
   });
