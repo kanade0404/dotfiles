@@ -1038,16 +1038,6 @@ function normalizeCommandName(command: string): string {
 }
 
 /**
- * プレフィックス除去後のコマンドの先頭語が、パス区切り・クォート・エスケープを含まない
- * 素のコマンド名 (`git` / `echo` 等) か。
- */
-function isBareCommandName(stripped: string): boolean {
-  const spans = rawTokenSpans(stripped);
-  if (spans.length === 0) return false;
-  return /^[A-Za-z0-9_][A-Za-z0-9_.+-]*$/.test(stripped.slice(spans[0].start, spans[0].end));
-}
-
-/**
  * `git -C <dir> ...` の解析結果。
  * - `none`: `git -C` 形ではない (または -C の後にサブコマンドが無い) ので通常判定
  * - `ask`: `git -C` 形だが安全に正規化できない
@@ -1190,11 +1180,6 @@ export function matchCommand(
     return { decision: "ask", command, pattern: `git -C (${gitC.reason})` };
   }
 
-  // コマンド名が素の名前か。パス・クォート・エスケープ付きの名前は、ベース名で
-  // ルールに一致しても実際には別の実行ファイルを起動しうる (`/tmp/evil/git`)。
-  const bare = isBareCommandName(stripped);
-  const bareMark = bare ? { bareCommandName: true as const } : {};
-
   // 正規化した `git <sub> ...` が非 -C allow ルールにサブコマンド位置で一致した。
   // 呼び出し側 (evaluator / hook 本体) が hook 自身の allow を返すかを判断できるよう
   // gitCNormalized を付ける (settings.json に -C ルールは無く、本体は自力で allow しない)。
@@ -1202,19 +1187,16 @@ export function matchCommand(
     for (const rule of rules) {
       if (rule.category !== "allow") continue;
       if (rule.regex.test(gitC.normalized)) {
-        return { decision: "allow", command, pattern: rule.pattern, gitCNormalized: true, ...bareMark };
+        return { decision: "allow", command, pattern: rule.pattern, gitCNormalized: true };
       }
     }
   }
 
-  // allow チェック。bareCommandName は生コマンド / プレフィックス除去後の候補で一致した
-  // 場合だけ付ける (normalizeCommandName の候補でしか一致しないなら付けない)。
-  const literalCandidates = candidates.filter((cmd) => cmd === command || cmd === stripped);
+  // allow チェック
   for (const rule of rules) {
     if (rule.category !== "allow") continue;
     if (candidates.some((cmd) => rule.regex.test(cmd))) {
-      const literal = literalCandidates.some((cmd) => rule.regex.test(cmd));
-      return { decision: "allow", command, pattern: rule.pattern, ...(literal ? bareMark : {}) };
+      return { decision: "allow", command, pattern: rule.pattern };
     }
   }
 

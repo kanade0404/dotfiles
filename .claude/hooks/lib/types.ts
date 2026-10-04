@@ -36,11 +36,4 @@ export type MatchResult = {
    * settings.json に `-C` 版ルールは無いため Claude Code 本体は自力で allow しない。
    */
   readonly gitCNormalized?: true;
-  /**
-   * allow 一致が生コマンド / プレフィックス除去後の候補 (または正規化した `git -C`) で
-   * 得られ、かつコマンド名が `/`・クォート・エスケープを含まない素の名前だった。
-   * パス除去 (`/tmp/evil/git` → `git`) やクォート除去を経て初めて一致した場合は付かない
-   * — 実際に起動されるのは allow ルールが想定したコマンドとは別の実行ファイルになりうる。
-   */
-  readonly bareCommandName?: true;
 } | null;

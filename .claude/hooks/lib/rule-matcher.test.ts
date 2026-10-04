@@ -1072,49 +1072,21 @@ describe("統合テスト: settings.json ルールでの判定", () => {
         command,
         pattern,
         gitCNormalized: true,
-        bareCommandName: true,
       });
     });
 
-    // コマンド名のフルパスもベース名で正規化して判定するが、実際に起動されるのは
-    // ルールが想定した git とは限らないので bareCommandName は付けない。
+    // コマンド名のフルパス・クォートもベース名で正規化して判定する (hook 自身の allow は
+    // evaluator の isPlainGitCCommand が素の `git` 始まりに限るので、ここでは対象外)。
     test.each([
       "/usr/bin/git -C /repo status",
       "./git -C . status",
       "'git' -C /repo status",
-    ])("%s は allow だが bareCommandName ではない", (command) => {
+    ])("%s はコマンド名を正規化して allow", (command) => {
       expect(matchCommand(command, settingsRules)).toEqual({
         decision: "allow",
         command,
         pattern: "Bash(git status *)",
         gitCNormalized: true,
-      });
-    });
-  });
-
-  // hook 自身の allow (evaluator の hookApproved) は bareCommandName の付いた一致に限る。
-  // パス除去 / クォート除去した候補でしか allow に一致しないものには付けない。
-  describe("allow 一致の bareCommandName", () => {
-    test("echo hi は bareCommandName 付きで allow", () => {
-      expect(matchCommand("echo hi", settingsRules)).toEqual({
-        decision: "allow",
-        command: "echo hi",
-        pattern: "Bash(echo *)",
-        bareCommandName: true,
-      });
-    });
-
-    test.each([
-      "/tmp/evil/echo hi",
-      '"echo" hi',
-      // 先頭リダイレクトを剥がした残り (hi) は素の名前だが、allow に一致したのは
-      // 生コマンドのパスを除去した候補 (echo hi) なので付けない
-      ">/tmp/x/echo hi",
-    ])("%s は allow だが bareCommandName ではない", (command) => {
-      expect(matchCommand(command, settingsRules)).toEqual({
-        decision: "allow",
-        command,
-        pattern: "Bash(echo *)",
       });
     });
   });
