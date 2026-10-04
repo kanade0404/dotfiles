@@ -31,4 +31,9 @@ export type MatchResult = {
   readonly decision: RuleCategory;
   readonly command: string;
   readonly pattern: string;
+  /**
+   * `git -C <dir> <sub> ...` を `git <sub> ...` に正規化して allow ルールに一致した。
+   * settings.json に `-C` 版ルールは無いため Claude Code 本体は自力で allow しない。
+   */
+  readonly gitCNormalized?: true;
 } | null;
