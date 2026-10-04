@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeAll, afterAll, afterEach } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { evaluateCommand, isAssignmentOnly, isPlainGitCCommand } from "./evaluator.ts";
@@ -12,19 +12,25 @@ import { parseShellCommands } from "./shell-parser.ts";
 const worktreeRoot = resolve(import.meta.dir, "..", "..", "..");
 
 /**
- * リポジトリ同梱の settings.json だけからルールを読む。loadRules は $HOME 配下の
- * ~/.claude/settings.json 等もマージするので、HOME を空の一時ディレクトリに差し替えて
- * 個人設定の影響 (ローカルの allow / deny の有無でテスト結果が変わること) を排除する。
- * CLAUDE_PROJECT_DIR は worktree のルート (Claude Code がこのリポジトリで起動された状態)。
+ * リポジトリ同梱の settings.json だけからルールを読む。HOME を一時ディレクトリに差し替え、
+ * その ~/.claude/settings.json にリポジトリの .claude/settings.json をコピーする (hook allow の
+ * 根拠になるのはユーザ設定の allow だけ。install.sh が配る状態に相当)。個人の設定
+ * (実 HOME)・マシンの managed settings・main checkout の settings.local.json に結果を左右されない
+ * よう、cwd と CLAUDE_PROJECT_DIR も git 管理外の空の一時ディレクトリにする。
  */
 function loadRepoRules() {
-  const home = mkdtempSync(join(tmpdir(), "evaluator-test-"));
+  const base = mkdtempSync(join(tmpdir(), "evaluator-test-"));
   try {
+    const home = join(base, "home");
+    const project = join(base, "project");
+    mkdirSync(join(home, ".claude"), { recursive: true });
+    mkdirSync(project);
+    copyFileSync(join(worktreeRoot, ".claude", "settings.json"), join(home, ".claude", "settings.json"));
     // managed settings はマシンの設定に依存させない (存在しないパスを渡す)
-    const noManaged = { file: join(home, "managed-settings.json"), dropInDir: join(home, "managed-settings.d"), opaque: [] };
-    return loadRules(worktreeRoot, { HOME: home, CLAUDE_PROJECT_DIR: worktreeRoot }, noManaged);
+    const noManaged = { file: join(base, "managed-settings.json"), dropInDir: join(base, "managed-settings.d"), opaque: [] };
+    return loadRules(project, { HOME: home, CLAUDE_PROJECT_DIR: project }, noManaged);
   } finally {
-    rmSync(home, { recursive: true, force: true });
+    rmSync(base, { recursive: true, force: true });
   }
 }
 
@@ -478,10 +484,11 @@ describe("evaluateCommand - git -C と ask ルール", () => {
 });
 
 // hook の allow は Claude Code 本体の確認を省略させるので、その根拠になる allow ルールは
-// 本体が実際に読む設定 (~/.claude/settings.json と、CLAUDE_PROJECT_DIR = セッションを
-// 開始したプロジェクトルートの .claude/settings.json / settings.local.json) に限る。
+// 本体がどの構成でも適用するユーザ設定 (~/.claude/settings.json) に限る。
 // .codex/* や hook 入力の cwd 基準の .claude/* はリポジトリ内容 (エージェントが書ける /
 // clone 元が仕込める) で、本体は読まないので allow の根拠にしない (deny / ask には使う)。
+// プロジェクト (CLAUDE_PROJECT_DIR) の .claude/settings*.json の allow も、本体が適用しない
+// 構成 (--setting-sources user / SDK の settingSources、未信頼のワークスペース) があるので根拠にしない。
 describe("evaluateCommand - hook allow の根拠になる設定ファイル", () => {
   let fx: GitFixture;
   let home: string;
@@ -549,19 +556,53 @@ describe("evaluateCommand - hook allow の根拠になる設定ファイル", ()
   test.each([
     ["settings.json", "settings.json"],
     ["settings.local.json", "settings.local.json"],
-  ])("プロジェクトルート (CLAUDE_PROJECT_DIR) の .claude/%s の allow は hookApproved", (_, file) => {
+  ])("プロジェクトルート (CLAUDE_PROJECT_DIR) の .claude/%s の allow は hookApproved の根拠にしない", (_, file) => {
     writeSettings(join(fx.main, ".claude", file), submoduleAllow);
-    expect(evaluate("git -C . submodule status")).toEqual(hookApproved);
+    expect(evaluate("git -C . submodule foreach touch pwned")).toEqual(passThrough);
   });
 
-  test("cwd がサブディレクトリでもプロジェクトルートの .claude/settings.json の allow は hookApproved", () => {
+  test("cwd がサブディレクトリでもプロジェクトルートの .claude/settings.json の allow は hookApproved の根拠にしない", () => {
     writeSettings(join(fx.main, ".claude", "settings.json"), submoduleAllow);
-    expect(evaluate("git -C . submodule status", { cwd: join(fx.main, "sub") })).toEqual(hookApproved);
+    expect(evaluate("git -C . submodule status", { cwd: join(fx.main, "sub") })).toEqual(passThrough);
   });
 
   test("~/.claude/settings.json の allow は hookApproved", () => {
     writeSettings(join(home, ".claude", "settings.json"), submoduleAllow);
     expect(evaluate("git -C . submodule status")).toEqual(hookApproved);
+  });
+
+  test("プロジェクトの allow があっても、ユーザ設定の allow があれば hookApproved", () => {
+    writeSettings(join(fx.main, ".claude", "settings.json"), submoduleAllow);
+    writeSettings(join(home, ".claude", "settings.json"), submoduleAllow);
+    expect(evaluate("git -C . submodule status")).toEqual(hookApproved);
+  });
+
+  // 本体は auto mode で Bash(*) のような広い allow を落とす。hook allow の根拠は
+  // `git <リテラルのサブコマンド>` で始まる allow (サブコマンド位置に anchor されるもの) に限る
+  describe("サブコマンドをリテラルで固定しない allow は hookApproved の根拠にしない", () => {
+    test.each(["Bash(*)", "Bash", "Bash(git *)", "Bash(git:*)", "Bash(g*)", "Bash(git s*)", "Bash(git status*)"])(
+      "%s",
+      (pattern) => {
+        writeSettings(join(home, ".claude", "settings.json"), { allow: [pattern] });
+        expect(evaluate("git -C . status")).toEqual(passThrough);
+      },
+    );
+
+    test.each(["Bash(git status *)", "Bash(git status:*)", "Bash(git status)"])("%s は hookApproved", (pattern) => {
+      writeSettings(join(home, ".claude", "settings.json"), { allow: [pattern] });
+      expect(evaluate("git -C . status")).toEqual(hookApproved);
+    });
+
+    test("複数語のサブコマンド Bash(git stash list *) は hookApproved", () => {
+      writeSettings(join(home, ".claude", "settings.json"), { allow: ["Bash(git stash list *)"] });
+      expect(evaluate("git -C . stash list")).toEqual(hookApproved);
+    });
+
+    test("広い allow と狭い allow の両方があれば狭い allow を根拠に hookApproved", () => {
+      writeSettings(join(home, ".claude", "settings.json"), { allow: ["Bash(*)", "Bash(git status *)"] });
+      expect(evaluate("git -C . status")).toEqual(hookApproved);
+      expect(evaluate("git -C . submodule foreach touch pwned")).toEqual(passThrough);
+    });
   });
 
   // CLAUDE_PROJECT_DIR は Claude Code が hook に渡す。無い / 相対 / 存在しないなら
@@ -735,6 +776,24 @@ describe("evaluateCommand - hook allow の根拠になる設定ファイル", ()
     ] as const)("allowManagedPermissionRulesOnly が %s なら hookApproved にしない", (_, value) => {
       writeSettings(join(home, ".claude", "settings.json"), gitAllow);
       writeFileSync(managedSources.file, JSON.stringify({ allowManagedPermissionRulesOnly: value }));
+      expect(evaluate("git -C . log")).toEqual(passThrough);
+    });
+
+    // policyHelper (管理設定を生成するコマンド) と wslInheritsWindowsSettings (Windows 側の
+    // 管理設定の継承) は、hook が内容を読まない管理設定を本体に適用させうる。値に関わらず hook allow しない
+    test.each([
+      ["managed-settings.json の policyHelper", (s: ManagedSettingsSources) => s.file, { policyHelper: { path: "/x" } }],
+      ["managed-settings.json の wslInheritsWindowsSettings", (s: ManagedSettingsSources) => s.file, { wslInheritsWindowsSettings: true }],
+      ["managed-settings.json の wslInheritsWindowsSettings (false)", (s: ManagedSettingsSources) => s.file, { wslInheritsWindowsSettings: false }],
+      [
+        "managed-settings.d/*.json の policyHelper",
+        (s: ManagedSettingsSources) => join(s.dropInDir, "10-helper.json"),
+        { policyHelper: { path: "/x" } },
+      ],
+    ] as const)("%s があれば hookApproved にしない", (_, path, settings) => {
+      writeSettings(join(home, ".claude", "settings.json"), gitAllow);
+      mkdirSync(managedSources.dropInDir, { recursive: true });
+      writeFileSync(path(managedSources), JSON.stringify(settings));
       expect(evaluate("git -C . log")).toEqual(passThrough);
     });
 

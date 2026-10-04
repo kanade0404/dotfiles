@@ -204,6 +204,8 @@ function managedDropInFiles(dir: string): readonly string[] {
  * - 読めない / 解釈できないファイルがある (deny / ask を取りこぼしうる)
  * - allowManagedPermissionRulesOnly が false 以外 (本体は managed 以外の allow を使わず、
  *   不正な値は制限側に読む)
+ * - policyHelper / wslInheritsWindowsSettings がある (値は問わない)。本体はそこから hook が
+ *   内容を読まない管理設定 (ヘルパーが生成する設定、Windows 側の管理設定) を適用しうる
  */
 function loadManagedRules(sources: ManagedSettingsSources | null): { rules: readonly Rule[]; hookAllowable: boolean } {
   if (sources === null) return { rules: [], hookAllowable: false };
@@ -216,7 +218,13 @@ function loadManagedRules(sources: ManagedSettingsSources | null): { rules: read
       (settings) =>
         Object.hasOwn(settings, "allowManagedPermissionRulesOnly") && settings.allowManagedPermissionRulesOnly !== false,
     );
-    return { rules, hookAllowable: !managedRulesOnly && !sources.opaque.some(pathExists) };
+    const opaqueManagedSource = documents.some(
+      (settings) => Object.hasOwn(settings, "policyHelper") || Object.hasOwn(settings, "wslInheritsWindowsSettings"),
+    );
+    return {
+      rules,
+      hookAllowable: !managedRulesOnly && !opaqueManagedSource && !sources.opaque.some(pathExists),
+    };
   } catch (e) {
     if (e instanceof UninterpretableManagedSettings) return { rules: [], hookAllowable: false };
     throw e;
@@ -244,18 +252,23 @@ function loadManagedRules(sources: ManagedSettingsSources | null): { rules: read
  * ただし `git -C <dir>` を正規化した候補は deny > ask > allow の順で評価する
  * (本体の ask ルールが -C 版に効かず、hook が唯一の適用点のため)。
  *
- * hook 自身の allow (Claude Code 本体の確認の省略) の根拠にしてよいのは、本体が実際に読む
- * ファイル由来の allow だけなので、そのルールに readByClaudeCode を付ける。対象は
- * ~/.claude/settings.json と、CLAUDE_PROJECT_DIR (Claude Code が hook に渡す、セッションを
- * 開始したプロジェクトルート) の .claude/settings.json / settings.local.json。
- * .codex/* と hook 入力の cwd 基準の .claude/* はリポジトリの内容 (エージェントが書ける /
- * clone 元が仕込める) で本体は読まないので付けない。managed settings と、9. (リポジトリ /
- * main checkout のルート) の allow にも付けない。
+ * hook 自身の allow (Claude Code 本体の確認の省略) の根拠にしてよいのは、本体がどの構成でも
+ * 適用する allow だけなので、ユーザ設定 ~/.claude/settings.json 由来の allow にだけ
+ * readByClaudeCode を付ける。
+ * - CLAUDE_PROJECT_DIR (Claude Code が hook に渡す、セッションを開始したプロジェクトルート) の
+ *   .claude/settings.json / settings.local.json の allow には付けない。本体は
+ *   `--setting-sources user` / SDK の settingSources でプロジェクト設定を除いた場合や、
+ *   ワークスペースを信頼していない場合 (`-p` / SDK では信頼の確認自体が出ない) にプロジェクトの
+ *   allow を適用しないが、hook はそれを入力から知る手段が無い。
+ * - .codex/* と hook 入力の cwd 基準の .claude/* はリポジトリの内容 (エージェントが書ける /
+ *   clone 元が仕込める) で本体は読まないので付けない。managed settings と、9. (リポジトリ /
+ *   main checkout のルート) の allow にも付けない。
  * deny / ask は判定を厳しくする方向なので出自を問わず全て使う。
  *
  * hook が allow を返すと本体の deny / ask は -C 版に効かない (プレフィックス一致のため) ので、
  * 本体が読む deny / ask を hook が読み切れない構成では、どのルールにも付けない (hook は allow を返さない):
- * - CLAUDE_PROJECT_DIR が無い / 相対 / 実在しない: 本体の読む設定を特定できない
+ * - CLAUDE_PROJECT_DIR が無い / 相対 / 実在しない: 本体が読むプロジェクト設定 (の deny / ask) を
+ *   特定できない
  * - CLAUDE_CONFIG_DIR が環境にある (値は問わない): 本体はユーザ設定を ~/.claude ではなく
  *   そこから読むが、hook はその所在を確実には追えない
  * - HOME が無い / 空 / 相対: 本体のユーザ設定の所在が分からない。~/ 配下の設定も読まない
@@ -288,15 +301,7 @@ export function loadRules(
     managedRules.hookAllowable &&
     !pathExists(join(home, ".claude", "remote-settings.json")) &&
     localSettingsRoots.every((roots) => roots !== null);
-  const readByClaudeCode = new Set(
-    !hookAllowable
-      ? []
-      : [
-          resolve(home, ".claude", "settings.json"),
-          resolve(projectDir, ".claude", "settings.json"),
-          resolve(projectDir, ".claude", "settings.local.json"),
-        ],
-  );
+  const readByClaudeCode = new Set(!hookAllowable ? [] : [resolve(home, ".claude", "settings.json")]);
   const paths = [
     ...(home === null ? [] : [resolve(home, ".codex", "settings.json"), resolve(home, ".claude", "settings.json")]),
     ...(cwd

@@ -26,23 +26,46 @@ describe("parseHookClient", () => {
 });
 
 describe("shouldEmitAllow", () => {
-  test("claude-code かつ hookApproved なら true", () => {
-    expect(shouldEmitAllow({ decision: "allow", hookApproved: true }, "claude-code")).toBe(true);
+  const approved = { decision: "allow", hookApproved: true } as const;
+
+  test("claude-code かつ hookApproved かつ permission_mode が default なら true", () => {
+    expect(shouldEmitAllow(approved, "claude-code", "default")).toBe(true);
   });
 
   test("codex では hookApproved でも false", () => {
-    expect(shouldEmitAllow({ decision: "allow", hookApproved: true }, "codex")).toBe(false);
+    expect(shouldEmitAllow(approved, "codex", "default")).toBe(false);
   });
 
   test("hookApproved でない allow (pass-through) は false", () => {
-    expect(shouldEmitAllow({ decision: "allow", hookApproved: false }, "claude-code")).toBe(false);
+    expect(shouldEmitAllow({ decision: "allow", hookApproved: false }, "claude-code", "default")).toBe(false);
   });
 
   test("ask / deny は false", () => {
-    expect(shouldEmitAllow({ decision: "ask", reason: "x" }, "claude-code")).toBe(false);
+    expect(shouldEmitAllow({ decision: "ask", reason: "x" }, "claude-code", "default")).toBe(false);
     expect(
-      shouldEmitAllow({ decision: "deny", denyReasons: [{ command: "x", pattern: "y" }] }, "claude-code"),
+      shouldEmitAllow({ decision: "deny", denyReasons: [{ command: "x", pattern: "y" }] }, "claude-code", "default"),
     ).toBe(false);
+  });
+
+  // hook allow は本体の確認と auto mode の classifier をスキップさせる。本体が allow ルールで
+  // 自動許可し、それ以外を確認に回すモード (default / acceptEdits) に限る
+  test("permission_mode が acceptEdits なら true", () => {
+    expect(shouldEmitAllow(approved, "claude-code", "acceptEdits")).toBe(true);
+  });
+
+  test.each([
+    // plan は auto mode が使える環境では既定 (useAutoModeDuringPlan) で shell コマンドを classifier に回す
+    ["plan", "plan"],
+    ["auto", "auto"],
+    ["dontAsk", "dontAsk"],
+    ["bypassPermissions", "bypassPermissions"],
+    ["未知の値", "manual"],
+    ["大小文字違い", "Default"],
+    ["欠落", undefined],
+    ["null", null],
+    ["文字列でない", 1],
+  ] as const)("permission_mode が %s なら false", (_, mode) => {
+    expect(shouldEmitAllow(approved, "claude-code", mode)).toBe(false);
   });
 });
 
@@ -51,12 +74,15 @@ describe("shouldEmitAllow", () => {
 // リポジトリ同梱の .claude/settings.json の permissions (+ extraAsk) をそこに置く。
 // cwd (hook 入力 JSON の cwd) は一時リポジトリ main。GIT_* は環境から除く。
 // CLAUDE_PROJECT_DIR (Claude Code が hook に渡すプロジェクトルート) は既定で main。
-function setupHookEnv(extraAsk: readonly string[] = []) {
+// 入力 JSON の permission_mode は既定で "default"。
+// allow を渡すとユーザ設定の permissions.allow をそれで置き換える。
+function setupHookEnv(opts: { extraAsk?: readonly string[]; allow?: readonly string[] } = {}) {
   const home = mkdtempSync(join(tmpdir(), "hook-response-test-"));
   const settings = JSON.parse(readFileSync(resolve(repoRoot, ".claude", "settings.json"), "utf8")) as {
-    permissions: { ask?: string[] };
+    permissions: { allow?: readonly string[]; ask?: string[] };
   };
-  settings.permissions.ask = [...(settings.permissions.ask ?? []), ...extraAsk];
+  settings.permissions.ask = [...(settings.permissions.ask ?? []), ...(opts.extraAsk ?? [])];
+  if (opts.allow !== undefined) settings.permissions.allow = opts.allow;
   mkdirSync(join(home, ".claude"));
   writeFileSync(join(home, ".claude", "settings.json"), JSON.stringify({ permissions: settings.permissions }));
   const fx = createGitFixture();
@@ -65,18 +91,21 @@ function setupHookEnv(extraAsk: readonly string[] = []) {
    * extraEnv の値が undefined のキーは環境から取り除く。テストを実行している環境の
    * CLAUDE_CONFIG_DIR は引き継がない。hook プロセスの作業ディレクトリは一時の HOME
    * (HOME を空にしたとき bun がキャッシュを作業ディレクトリに作るため、リポジトリを汚さない)。
+   * inputFields は入力 JSON に足すフィールド (既定は permission_mode: "default")。
    */
   function runHook(
     command: string,
     args: readonly string[],
     cwd: string = fx.main,
     extraEnv: Record<string, string | undefined> = { CLAUDE_PROJECT_DIR: fx.main },
+    inputFields: Record<string, unknown> = { permission_mode: "default" },
   ) {
     const input = JSON.stringify({
       hook_event_name: "PreToolUse",
       tool_name: "Bash",
       tool_input: { command },
       cwd,
+      ...inputFields,
     });
     const env: Record<string, string> = envWithoutGit({ HOME: home });
     delete env.CLAUDE_CONFIG_DIR;
@@ -89,8 +118,13 @@ function setupHookEnv(extraAsk: readonly string[] = []) {
   }
 
   /** hook が出した permissionDecision。無出力 (pass-through) は null */
-  function decisionOf(command: string, cwd?: string, extraEnv?: Record<string, string | undefined>): string | null {
-    const r = runHook(command, ["--client=claude-code"], cwd, extraEnv);
+  function decisionOf(
+    command: string,
+    cwd?: string,
+    extraEnv?: Record<string, string | undefined>,
+    inputFields?: Record<string, unknown>,
+  ): string | null {
+    const r = runHook(command, ["--client=claude-code"], cwd, extraEnv, inputFields);
     expect(r.status).toBe(0);
     return r.stdout === "" ? null : JSON.parse(r.stdout).hookSpecificOutput.permissionDecision;
   }
@@ -216,7 +250,7 @@ describe("pre-tool-use-bash-analyzer (プロセス)", () => {
 // hook は正規化した `git <sub> ...` に ask を allow より先に当て、ask を返す。
 describe("pre-tool-use-bash-analyzer (プロセス): ~/.claude/settings.json の ask と git -C", () => {
   let env: ReturnType<typeof setupHookEnv>;
-  beforeAll(() => { env = setupHookEnv(["Bash(git push *)", "Bash(git commit *)"]); });
+  beforeAll(() => { env = setupHookEnv({ extraAsk: ["Bash(git push *)", "Bash(git commit *)"] }); });
   afterAll(() => { env.cleanup(); });
 
   test.each(['git -C . commit -m "fix bug"', "git -C . push origin main"])(
@@ -231,9 +265,9 @@ describe("pre-tool-use-bash-analyzer (プロセス): ~/.claude/settings.json の
   });
 });
 
-// hook allow の根拠になる allow ルールは Claude Code 本体が実際に読む設定
-// (~/.claude/settings.json と CLAUDE_PROJECT_DIR の .claude/settings*.json) 由来だけ。
-// リポジトリ内の .codex/* や cwd 基準の .claude/* の allow では hook allow しない。
+// hook allow の根拠になる allow ルールは、本体がどの構成でも適用するユーザ設定
+// (~/.claude/settings.json) 由来だけ。リポジトリ内の .codex/* や cwd 基準の .claude/*、
+// CLAUDE_PROJECT_DIR の .claude/settings*.json の allow では hook allow しない。
 describe("pre-tool-use-bash-analyzer (プロセス): hook allow の根拠になる設定ファイル", () => {
   let env: ReturnType<typeof setupHookEnv>;
   beforeAll(() => { env = setupHookEnv(); });
@@ -259,9 +293,10 @@ describe("pre-tool-use-bash-analyzer (プロセス): hook allow の根拠にな�
     expect(env.decisionOf("git -C . submodule foreach touch pwned", join(env.fx.main, "sub"))).not.toBe("allow");
   });
 
-  test("CLAUDE_PROJECT_DIR の .claude/settings.json の allow では allow を返す", () => {
-    writeSettings(join(env.fx.main, ".claude", "settings.json"), { allow: ["Bash(git submodule *)"] });
-    expect(env.decisionOf("git -C . submodule status", join(env.fx.main, "sub"))).toBe("allow");
+  // --setting-sources user や未信頼のワークスペースでは本体がプロジェクトの allow を適用しない
+  test.each(["settings.json", "settings.local.json"])("CLAUDE_PROJECT_DIR の .claude/%s の allow では allow を返さない", (file) => {
+    writeSettings(join(env.fx.main, ".claude", file), { allow: ["Bash(git submodule *)"] });
+    expect(env.decisionOf("git -C . submodule foreach touch pwned")).toBeNull();
   });
 
   test("CLAUDE_PROJECT_DIR が無ければ ~/.claude/settings.json の allow でも allow を返さない", () => {
@@ -297,6 +332,47 @@ describe("pre-tool-use-bash-analyzer (プロセス): hook allow の根拠にな�
   test("リポジトリの .codex/settings.json の deny は効く", () => {
     writeSettings(join(env.fx.main, ".codex", "settings.json"), { deny: ["Bash(git status *)"] });
     expect(env.decisionOf("git -C . status")).toBe("deny");
+  });
+});
+
+// hook allow は本体の確認と auto mode の classifier をスキップさせるので、入力 JSON の
+// permission_mode が default / acceptEdits のときだけ allow を返す
+describe("pre-tool-use-bash-analyzer (プロセス): permission_mode", () => {
+  let env: ReturnType<typeof setupHookEnv>;
+  beforeAll(() => { env = setupHookEnv(); });
+  afterAll(() => { env.cleanup(); });
+
+  test.each(["default", "acceptEdits"])("%s なら git -C . status に allow を返す", (mode) => {
+    expect(env.decisionOf("git -C . status", undefined, undefined, { permission_mode: mode })).toBe("allow");
+  });
+
+  test.each([
+    ["plan", { permission_mode: "plan" }],
+    ["auto", { permission_mode: "auto" }],
+    ["dontAsk", { permission_mode: "dontAsk" }],
+    ["bypassPermissions", { permission_mode: "bypassPermissions" }],
+    ["未知の値", { permission_mode: "manual" }],
+    ["欠落", {}],
+  ] as const)("%s なら git -C . status に何も出力しない", (_, inputFields) => {
+    expect(env.decisionOf("git -C . status", undefined, undefined, inputFields)).toBeNull();
+  });
+
+  test("auto でも deny は従来どおり返す", () => {
+    expect(env.decisionOf("git -C . reset --hard", undefined, undefined, { permission_mode: "auto" })).toBe("deny");
+  });
+});
+
+// 本体は auto mode で Bash(*) のような広い allow を落とす。hook allow の根拠は
+// `git <リテラルのサブコマンド>` で始まる allow に限る
+describe("pre-tool-use-bash-analyzer (プロセス): 広い allow", () => {
+  test.each([["Bash(*)"], ["Bash(git *)"]])("~/.claude/settings.json の allow が %s だけなら allow を返さない", (pattern) => {
+    const env = setupHookEnv({ allow: [pattern] });
+    try {
+      expect(env.decisionOf("git -C . submodule foreach touch pwned")).toBeNull();
+      expect(env.decisionOf("git -C . status")).toBeNull();
+    } finally {
+      env.cleanup();
+    }
   });
 });
 

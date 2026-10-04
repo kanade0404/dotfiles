@@ -22,6 +22,17 @@ export function parseHookClient(argv: readonly string[]): HookClient {
 }
 
 /**
+ * hook が allow を返してよい permission mode。それ以外 (未知の値・欠落を含む) では allow を返さない。
+ * - plan: auto mode が使える環境では既定 (useAutoModeDuringPlan) で shell コマンドを classifier に回す。
+ *   使えない環境でも組み込みの読み取り専用コマンド以外は確認を出す
+ * - auto: classifier が確認の代わりに判定する (hook allow は classifier をスキップさせる)
+ * - dontAsk: 確認になるはずの呼び出しを本体が拒否する (hook allow はそれを実行させる)
+ * - bypassPermissions: 本体が確認を出さないので hook が allow する意味が無い
+ * ref: https://code.claude.com/docs/en/permission-modes
+ */
+const HOOK_ALLOW_PERMISSION_MODES: ReadonlySet<string> = new Set(["default", "acceptEdits"]);
+
+/**
  * hook 自身が `permissionDecision: "allow"` を出力するか。
  *
  * Claude Code では hook の allow は許可プロンプトを省略させる。本体の deny / ask
@@ -31,7 +42,19 @@ export function parseHookClient(argv: readonly string[]): HookClient {
  * allow ではなく ask を返す。対象は evaluator が hookApproved を立てた `git -C`
  * 正規化済みコマンドだけで、それ以外の allow は従来どおり無出力 (pass-through) で
  * 本体の判定に委ねる。
+ *
+ * permissionMode は hook 入力 JSON の `permission_mode`
+ * (https://code.claude.com/docs/en/hooks の common input fields: "default" / "plan" /
+ * "acceptEdits" / "auto" / "dontAsk" / "bypassPermissions")。hook の allow は本体の確認だけでなく
+ * auto mode の classifier もスキップさせるので、本体が allow ルールで自動許可し、残りを確認に
+ * 回すモード (HOOK_ALLOW_PERMISSION_MODES) でだけ allow を出す。
  */
-export function shouldEmitAllow(result: EvaluationResult, client: HookClient): boolean {
-  return client === "claude-code" && result.decision === "allow" && result.hookApproved;
+export function shouldEmitAllow(result: EvaluationResult, client: HookClient, permissionMode: unknown): boolean {
+  return (
+    client === "claude-code" &&
+    result.decision === "allow" &&
+    result.hookApproved &&
+    typeof permissionMode === "string" &&
+    HOOK_ALLOW_PERMISSION_MODES.has(permissionMode)
+  );
 }

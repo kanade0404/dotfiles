@@ -4,6 +4,12 @@ export type HookInput = {
     readonly command: string;
   };
   readonly cwd?: string;
+  /**
+   * Claude Code の permission mode ("default" / "plan" / "acceptEdits" / "auto" / "dontAsk" /
+   * "bypassPermissions")。Codex や将来の値に備えて型は unknown で受け、hook-response.ts で検査する。
+   * ref: https://code.claude.com/docs/en/hooks
+   */
+  readonly permission_mode?: unknown;
 };
 
 /**
@@ -26,8 +32,9 @@ export type Rule = {
   readonly pattern: string;
   readonly regex: RegExp;
   /**
-   * Claude Code 本体が実際に読む設定ファイル (rules.ts の loadRules 参照) 由来。
-   * hook 自身の allow の根拠にできるのはこのルールだけ。
+   * Claude Code 本体がどの構成でも適用する設定ファイル (ユーザ設定 ~/.claude/settings.json。
+   * rules.ts の loadRules 参照) 由来。hook 自身の allow の根拠にできるのはこのルールのうち、
+   * サブコマンドをリテラルで固定した git の allow だけ (evaluator.ts の rulesForHookAllow)。
    */
   readonly readByClaudeCode?: true;
 };

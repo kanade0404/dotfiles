@@ -62,11 +62,27 @@ function plainGitCDirectory(command: string): string | null {
 }
 
 /**
- * hook allow の判定に使うルール。allow は Claude Code 本体が実際に読む設定由来
- * (readByClaudeCode) だけに絞り、deny / ask は出自を問わず残す (判定を厳しくする方向のため)。
+ * `Bash(...)` の中身が `git <リテラルのサブコマンド>` で始まり、サブコマンドの直後が
+ * 終端・空白・`:*` のいずれかである (サブコマンド位置に anchor される)。
+ * 例: `git status *` / `git status:*` / `git stash list *` は可、
+ * `*` / `git *` / `git:*` / `g*` / `git s*` / `git status*` / `git -C *` は不可。
+ */
+const SUBCOMMAND_ANCHORED_GIT_PATTERN = /^Bash\(git [A-Za-z0-9][A-Za-z0-9._-]*(?:\)$| |:\*\)$)/;
+
+/**
+ * hook allow の判定に使うルール。deny / ask は出自を問わず残す (判定を厳しくする方向のため)。
+ * allow は次の両方を満たすものだけに絞る。
+ * - 本体がどの構成でも適用するユーザ設定由来 (readByClaudeCode)
+ * - サブコマンドをリテラルで固定した git の allow (SUBCOMMAND_ANCHORED_GIT_PATTERN)。
+ *   本体は auto mode で `Bash(*)` などの広い allow を落として classifier に回すので、
+ *   広い allow は hook allow の根拠にしない
  */
 function rulesForHookAllow(rules: readonly Rule[]): readonly Rule[] {
-  return rules.filter((rule) => rule.category !== "allow" || rule.readByClaudeCode === true);
+  return rules.filter(
+    (rule) =>
+      rule.category !== "allow" ||
+      (rule.readByClaudeCode === true && SUBCOMMAND_ANCHORED_GIT_PATTERN.test(rule.pattern)),
+  );
 }
 
 export type EvaluationResult =
@@ -183,8 +199,9 @@ export function isAssignmentOnly(command: string): boolean {
  *   `git ... -C <dir> ... <sub> ...`) に完全一致する
  * - 生コマンドを matchCommand で照合した結果が、正規化した `git <sub> ...` の
  *   非 -C allow への一致 (gitCNormalized) である (deny / 危険 git フラグ / 機密パスは
- *   matchCommand が先に判定する)。照合に使う allow は Claude Code 本体が実際に読む設定
- *   由来 (readByClaudeCode) だけ。deny / ask は全ての設定由来を使う (rulesForHookAllow)
+ *   matchCommand が先に判定する)。照合に使う allow はユーザ設定由来 (readByClaudeCode) で
+ *   サブコマンドをリテラルで固定した git の allow だけ。deny / ask は全ての設定由来を使う
+ *   (rulesForHookAllow)
  * - `-C` の対象が hook 入力の cwd と同じ git common dir を持つ (isSameGitRepository)。
  *   別リポジトリの .git/config (core.fsmonitor 等) や .git/hooks 経由で確認無しに
  *   コマンドを実行させないため
