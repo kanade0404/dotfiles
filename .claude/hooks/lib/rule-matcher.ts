@@ -1054,6 +1054,11 @@ type GitCAnalysis =
  * ANSI-C quoting (`$'...'`) は展開ではなくリテラルなので `$` の直後が `'` の場合は除く。
  * シングルクォート内の `$` も実際にはリテラルだが、区別せず安全側 (ask) に倒す。
  * `~` (チルダ展開) は 1 語のまま展開されるので対象外。
+ * zsh の EXTENDED_GLOB の glob 演算子 (`^x` / `x#` / `x~y`) も対象外。Claude Code の Bash tool は
+ * `setopt NO_EXTENDED_GLOB` で実行するので展開されない。有効な環境で正規化と実行がずれても、
+ * hook が allow を返す文法 (evaluator.ts の isPlainGitCCommand) は `^` `#` を受け付けないので、
+ * auto-approve にはならず pass-through (本体の確認) に落ちる (文法が許す word 途中の `~` は
+ * ワイルドカードを伴わないので、EXTENDED_GLOB でも複数語には展開されない)。
  */
 const SHELL_EXPANSION_IN_WORD = /`|\$(?!')|[*?[{]/;
 
