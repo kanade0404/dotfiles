@@ -1,10 +1,11 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect, beforeAll, afterAll } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { evaluateCommand, isAssignmentOnly, isPlainGitCCommand } from "./evaluator.ts";
 import { patternToRegex } from "./rule-matcher.ts";
 import { loadRules } from "./rules.ts";
+import { createGitFixture, type GitFixture } from "./git-fixture.ts";
 import type { Rule } from "./types.ts";
 import { parseShellCommands } from "./shell-parser.ts";
 
@@ -234,28 +235,72 @@ describe("isPlainGitCCommand", () => {
 
 describe("evaluateCommand - git -C の hook allow (hookApproved)", () => {
   const rules = loadRepoRules();
-  const evaluate = (command: string) =>
-    evaluateCommand(parseShellCommands(command), rules, command);
+  // cwd は一時リポジトリ main (sub/dir・"r x" を持ち、../wt が worktree)。
+  // 文法外のケースでも -C の対象は存在する同一リポジトリ内のパスにして、
+  // hookApproved にならない理由が文法だけになるようにする。
+  let fx: GitFixture;
+  beforeAll(() => { fx = createGitFixture(); });
+  afterAll(() => { fx.cleanup(); });
+  const evaluate = (command: string, cwd: string = fx.main) =>
+    evaluateCommand(parseShellCommands(command), rules, command, cwd, {});
   const hookApproved = { decision: "allow", hookApproved: true } as const;
+  const passThrough = { decision: "allow", hookApproved: false } as const;
+
+  // -C の対象が cwd と別の git common dir を持つと、そのリポジトリの .git/config
+  // (core.fsmonitor 等) や .git/hooks 経由で確認無しにコマンドを実行できる。
+  // 文法と allow に一致しても hook allow せず pass-through にする。
+  describe("-C の対象が cwd と同じリポジトリでなければ hookApproved にしない", () => {
+    test.each([
+      ["無関係なリポジトリ", (f: GitFixture) => `git -C ${f.other} status`],
+      ["submodule 相当", () => "git -C sm status"],
+      ["存在しないパス", () => "git -C no-such-dir status"],
+      ["別リポジトリへのシンボリックリンク", () => "git -C link-other status"],
+      ["git 管理外", (f: GitFixture) => `git -C ${f.plain} status`],
+    ] as const)("%s", (_, command) => {
+      expect(evaluate(command(fx))).toEqual(passThrough);
+    });
+
+    test("cwd が無い場合", () => {
+      const command = `git -C ${fx.main} status`;
+      expect(evaluateCommand(parseShellCommands(command), rules, command, undefined, {})).toEqual(
+        passThrough,
+      );
+    });
+
+    test("cwd が git 管理外の場合", () => {
+      expect(evaluate(`git -C ${fx.main} status`, fx.plain)).toEqual(passThrough);
+    });
+
+    test("GIT_DIR が環境にある場合", () => {
+      const command = "git -C sub status";
+      expect(
+        evaluateCommand(parseShellCommands(command), rules, command, fx.main, { GIT_DIR: "/x" }),
+      ).toEqual(passThrough);
+    });
+
+    test("worktree からの main への -C は hookApproved", () => {
+      expect(evaluate(`git -C ${fx.main} status`, fx.worktree)).toEqual(hookApproved);
+    });
+  });
 
   test.each([
-    "git -C /repo status",
-    "git -C /r status",
-    "git -C /r log --oneline -5",
-    "git -C '/r x' log --oneline",
-    'git -C "/r x" status',
-    "git --no-pager -C /r log",
-    "git -C /r --no-pager log",
-    "git -P -C /r log",
-    'git -C /r commit -m "fix bug"',
-    "git -C /r commit -m 'fix: bug, see issue-12'",
-    "git -C /r diff --stat",
+    "git -C . status",
+    "git -C sub status",
+    "git -C sub log --oneline -5",
+    "git -C 'r x' log --oneline",
+    'git -C "r x" status',
+    "git --no-pager -C sub log",
+    "git -C sub --no-pager log",
+    "git -P -C sub log",
+    'git -C sub commit -m "fix bug"',
+    "git -C sub commit -m 'fix: bug, see issue-12'",
+    "git -C sub diff --stat",
     // `=` は word の途中 (英数字 / `-` の直後) なら zsh の `=cmd` 展開にならない
-    "git -C /r log --format=%H",
-    "git -C /r log --since=2.weeks --author=foo@example.com",
+    "git -C sub log --format=%H",
+    "git -C sub log --since=2.weeks --author=foo@example.com",
     // `~` は word の途中 (英数字の直後) なら zsh のチルダ展開にならない
-    "git -C /r diff HEAD~1 HEAD",
-    "git -C ../wt-1 status --short",
+    "git -C sub diff HEAD~1 HEAD",
+    "git -C ../wt status --short",
   ])("%j は hookApproved", (command) => {
     expect(evaluate(command)).toEqual(hookApproved);
   });
@@ -266,86 +311,86 @@ describe("evaluateCommand - git -C の hook allow (hookApproved)", () => {
   // しない (pass-through で本体の判定に委ねる)。
   test.each([
     // 関数定義で allow 済みコマンド名を再定義する (zsh の `name () cmd` 形)
-    "echo () (touch X); git -C R status; echo",
-    "git -C R status; sleep () (touch X); sleep 0",
-    "git -C R status; echo () touch X; echo",
+    "echo () (touch X); git -C sub status; echo",
+    "git -C sub status; sleep () (touch X); sleep 0",
+    "git -C sub status; echo () touch X; echo",
     // zsh の `=(...)` プロセス置換 / `=cmd` 展開
-    "git -C R status =(touch X)",
-    "git -C R status; echo =(touch X)",
-    "git -C /r status =(touch X)",
+    "git -C sub status =(touch X)",
+    "git -C sub status; echo =(touch X)",
+    "git -C sub status =(touch X)",
     "git -C =x status",
-    "git -C /r log =ls",
-    "git -C /r log --format==ls",
+    "git -C sub log =ls",
+    "git -C sub log --format==ls",
     // `time` / `env` / `command` 等の前置と env 代入
-    "time GIT_TRACE=X git -C R status",
-    "time PATH=/tmp/evil git -C R status",
-    "time env GIT_TRACE=X git -C R status",
-    "time git -C /r status",
-    "command git -C /r status",
-    "FOO=1 git -C /r status",
-    "env git -C /r status",
-    "exec git -C /r status",
-    "nice git -C /r status",
+    "time GIT_TRACE=X git -C sub status",
+    "time PATH=/tmp/evil git -C sub status",
+    "time env GIT_TRACE=X git -C sub status",
+    "time git -C sub status",
+    "command git -C sub status",
+    "FOO=1 git -C sub status",
+    "env git -C sub status",
+    "exec git -C sub status",
+    "nice git -C sub status",
     // fd 複製の後ろにファイル名が続く形 (`>&1mk` は 1mk への書き込み)
-    "git -C R log -1 >&1mk",
-    "git -C R log -1 2>&1 >&2zz",
-    "git -C /r log >&1mk",
-    "git -C /r status 2>/dev/null",
-    "git -C /r status > /tmp/out",
+    "git -C sub log -1 >&1mk",
+    "git -C sub log -1 2>&1 >&2zz",
+    "git -C sub log >&1mk",
+    "git -C sub status 2>/dev/null",
+    "git -C sub status > /tmp/out",
     // `#` コメント / 改行 / ANSI-C quoting
-    "git -C /r status #'\ntouch /tmp/pwned",
-    "git -C /r status #'\npython3 -c 'import os'\n#'",
-    "git -C /r log $'\\'' ; touch /tmp/pwned #'",
-    "git -C /r status\ntouch /tmp/pwned",
-    "git -C /r status\n",
-    "git -C /r status\rtouch /tmp/pwned",
-    "git -C /r status # comment",
-    'git -C /r commit -m "fix #12"',
+    "git -C sub status #'\ntouch /tmp/pwned",
+    "git -C sub status #'\npython3 -c 'import os'\n#'",
+    "git -C sub log $'\\'' ; touch /tmp/pwned #'",
+    "git -C sub status\ntouch /tmp/pwned",
+    "git -C sub status\n",
+    "git -C sub status\rtouch /tmp/pwned",
+    "git -C sub status # comment",
+    'git -C sub commit -m "fix #12"',
     // パス付き / クォート付きのコマンド名
     "./git -C . status",
-    "/tmp/evil/git -C /r status",
-    "/usr/bin/git -C /r status",
-    "'git' -C /r status",
-    "git -C /r status; /tmp/evil/echo hi",
+    "/tmp/evil/git -C sub status",
+    "/usr/bin/git -C sub status",
+    "'git' -C sub status",
+    "git -C sub status; /tmp/evil/echo hi",
     // 複合コマンド・サブシェル・パイプ
     "git -C a status && git -C b diff",
-    "git -C /r status && git -C /s diff",
-    "git -C /r status; git -C /s diff",
-    "git -C /r log --oneline | head -5",
-    "git -C /r status &",
-    "(git -C /r status)",
-    "{ git -C /r status; }",
+    "git -C sub status && git -C sub diff",
+    "git -C sub status; git -C sub diff",
+    "git -C sub log --oneline | head -5",
+    "git -C sub status &",
+    "(git -C sub status)",
+    "{ git -C sub status; }",
     // word 先頭の `~` (チルダ展開) / `=` の後の `~` (MAGIC_EQUAL_SUBST)
     "git -C ~/x status",
-    "git -C /r log ~",
-    "git -C /r log --x=~/y",
+    "git -C sub log ~",
+    "git -C sub log --x=~/y",
     // 展開・エスケープ・glob・brace・履歴展開・非 ASCII
-    "git -C /r log $(echo HEAD)",
-    "git -C /r log `echo HEAD`",
-    'git -C /r commit -m "cost $X"',
-    "git -C /r log --grep \\$x",
-    "git -C /r log *",
-    "git -C /r log {a,b}",
-    "git -C /r diff HEAD^",
-    'git -C /r commit -m "hi!"',
-    'git -C /r commit -m "日本語のメッセージ"',
-    'git -C /r commit -m "a > b"',
-    "git -C /r status x",
-    "git -C /r status　x",
+    "git -C sub log $(echo HEAD)",
+    "git -C sub log `echo HEAD`",
+    'git -C sub commit -m "cost $X"',
+    "git -C sub log --grep \\$x",
+    "git -C sub log *",
+    "git -C sub log {a,b}",
+    "git -C sub diff HEAD^",
+    'git -C sub commit -m "hi!"',
+    'git -C sub commit -m "日本語のメッセージ"',
+    'git -C sub commit -m "a > b"',
+    "git -C sub status x",
+    "git -C sub status　x",
     // クォートの連結 (zsh の RC_QUOTES では `''` が `'` になる) / 対応の取れないクォート
-    "git -C /r log 'a''b'",
-    'git -C /r log "a"b',
-    "git -C /r log 'abc",
+    "git -C sub log 'a''b'",
+    'git -C sub log "a"b',
+    "git -C sub log 'abc",
     // 空白類の区切り・前後の空白
-    "git\t-C /r status",
-    " git -C /r status",
-    "git -C /r status ",
+    "git\t-C sub status",
+    " git -C sub status",
+    "git -C sub status ",
     // -C の形
-    "git -C/r status",
-    "git -C /r -C /s status",
-    "git -c core.pager=x -C /r log",
+    "git -Csub status",
+    "git -C sub -C sub status",
+    "git -c core.pager=x -C sub log",
     // クォートしたサブコマンド
-    "git -C /r 'status'",
+    "git -C sub 'status'",
   ])("%j は hookApproved ではない", (command) => {
     expect(evaluate(command)).not.toEqual(hookApproved);
   });
@@ -356,19 +401,19 @@ describe("evaluateCommand - git -C の hook allow (hookApproved)", () => {
     const loose: Rule[] = [
       { category: "allow", pattern: "Bash(git -C *)", regex: patternToRegex("git -C *") },
     ];
-    const command = "git -C /r replace -d x";
-    expect(evaluateCommand(parseShellCommands(command), loose, command)).toEqual({
+    const command = "git -C sub replace -d x";
+    expect(evaluateCommand(parseShellCommands(command), loose, command, fx.main, {})).toEqual({
       decision: "allow",
       hookApproved: false,
     });
   });
 
   test("シングルクォート内の $ (リテラル) も文法外として扱う", () => {
-    expect(evaluate("git -C /r log '$x'")).not.toEqual(hookApproved);
+    expect(evaluate("git -C sub log '$x'")).not.toEqual(hookApproved);
   });
 
   test("生コマンドを渡さない呼び出しは hookApproved にしない", () => {
-    expect(evaluateCommand(parseShellCommands("git -C /r status"), rules)).toEqual({
+    expect(evaluateCommand(parseShellCommands("git -C sub status"), rules)).toEqual({
       decision: "allow",
       hookApproved: false,
     });
@@ -378,16 +423,16 @@ describe("evaluateCommand - git -C の hook allow (hookApproved)", () => {
   test.each([
     "git status",
     "git status && git diff",
-    "git -C /r status && git -C /s diff",
-    "git -C /repo status && python script.py",
-    "git -C /repo log --oneline | head -5",
+    "git -C sub status && git -C sub diff",
+    "git -C . status && python script.py",
+    "git -C . log --oneline | head -5",
     // 文法には一致しても正規化した `git <sub>` が非 -C allow に無いサブコマンド
     "git -C . submodule foreach rm -rf / status",
-    "git -C /x replace -d status",
-    "git -C /repo status > /tmp/out",
-    "FOO=1 git -C /repo status",
-    "git -C /repo log $(echo HEAD)",
-    "PATH=/tmp/evil; git -C /repo status",
+    "git -C . replace -d status",
+    "git -C . status > /tmp/out",
+    "FOO=1 git -C . status",
+    "git -C . log $(echo HEAD)",
+    "PATH=/tmp/evil; git -C . status",
   ])("%j は allow だが hookApproved ではない", (command) => {
     expect(evaluate(command)).toEqual({ decision: "allow", hookApproved: false });
   });

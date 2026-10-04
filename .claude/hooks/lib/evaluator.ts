@@ -1,3 +1,4 @@
+import { isSameGitRepository } from "./git-repository.ts";
 import { matchCommand, SIDE_EFFECT_FREE_GIT_GLOBAL_OPTS } from "./rule-matcher.ts";
 import type { Rule, RuleCategory } from "./types.ts";
 
@@ -24,7 +25,7 @@ const GLOBAL_OPT = `(?:${[...SIDE_EFFECT_FREE_GIT_GLOBAL_OPTS]
   .map((opt) => opt.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
   .join("|")})`;
 const GIT_C_GRAMMAR = new RegExp(
-  `^git(?: +${GLOBAL_OPT})* +-C +${WORD}(?: +${GLOBAL_OPT})* +${SUBCOMMAND}(?: +${WORD})*$`,
+  `^git(?: +${GLOBAL_OPT})* +-C +(${WORD})(?: +${GLOBAL_OPT})* +${SUBCOMMAND}(?: +${WORD})*$`,
 );
 
 /**
@@ -48,6 +49,16 @@ const GIT_C_GRAMMAR = new RegExp(
  */
 export function isPlainGitCCommand(command: string): boolean {
   return GIT_C_GRAMMAR.test(command);
+}
+
+/**
+ * isPlainGitCCommand の文法に一致する生コマンドから `-C` の引数をリテラルとして取り出す。
+ * 文法の word はエスケープ・展開を含まないので、クォートを外すだけで実際の値になる。
+ */
+function plainGitCDirectory(command: string): string | null {
+  const word = GIT_C_GRAMMAR.exec(command)?.[1];
+  if (word === undefined) return null;
+  return word.startsWith("'") || word.startsWith('"') ? word.slice(1, -1) : word;
 }
 
 export type EvaluationResult =
@@ -165,13 +176,19 @@ export function isAssignmentOnly(command: string): boolean {
  * - 生コマンドを matchCommand で照合した結果が、正規化した `git <sub> ...` の
  *   非 -C allow への一致 (gitCNormalized) である (deny / 危険 git フラグ / 機密パスは
  *   matchCommand が先に判定する)
+ * - `-C` の対象が hook 入力の cwd と同じ git common dir を持つ (isSameGitRepository)。
+ *   別リポジトリの .git/config (core.fsmonitor 等) や .git/hooks 経由で確認無しに
+ *   コマンドを実行させないため
  * 複合コマンドは文法に一致しないので、全セグメントが allow でも hook allow しない。
- * rawCommand を渡さない呼び出しは文法を検査できないので hookApproved にしない。
+ * rawCommand / cwd を渡さない呼び出しは検査できないので hookApproved にしない。
+ * env は isSameGitRepository に渡す環境変数 (テスト用、既定は process.env)。
  */
 export function evaluateCommand(
   subCommands: readonly string[],
   rules: readonly Rule[],
   rawCommand?: string,
+  cwd?: string,
+  env: Readonly<Record<string, string | undefined>> = process.env,
 ): EvaluationResult {
   const denyReasons: { command: string; pattern: string }[] = [];
   const askReasons: string[] = [];
@@ -203,9 +220,11 @@ export function evaluateCommand(
     };
   }
 
+  const dir = rawCommand === undefined ? null : plainGitCDirectory(rawCommand);
   const hookApproved =
     rawCommand !== undefined &&
-    isPlainGitCCommand(rawCommand) &&
-    matchCommand(rawCommand, rules)?.gitCNormalized === true;
+    dir !== null &&
+    matchCommand(rawCommand, rules)?.gitCNormalized === true &&
+    isSameGitRepository(cwd, dir, env);
   return { decision: "allow", hookApproved };
 }
