@@ -201,7 +201,7 @@ describe("evaluateCommand - 変数代入", () => {
 describe("isPlainGitCCommand", () => {
   test.each([
     "(", ")", "<", ">", "|", "&", ";", "^", "#", "$", "`", "\\", "*", "?", "[", "]",
-    "{", "}", "!", "'", '"', "\t", "\n", "\r", " ", "é",
+    "{", "}", "!", "'", '"', "\t", "\n", "\r", "\u00a0", "é",
   ])("クォート外の %j を含む word は文法外", (ch) => {
     expect(isPlainGitCCommand(`git -C /r log a${ch}b`)).toBe(false);
   });
@@ -379,8 +379,8 @@ describe("evaluateCommand - git -C の hook allow (hookApproved)", () => {
     'git -C sub commit -m "hi!"',
     'git -C sub commit -m "日本語のメッセージ"',
     'git -C sub commit -m "a > b"',
-    "git -C sub status x",
-    "git -C sub status　x",
+    "git -C sub status\u00a0x", // NBSP
+    "git -C sub status\u3000x", // 全角スペース
     // クォートの連結 (zsh の RC_QUOTES では `''` が `'` になる) / 対応の取れないクォート
     "git -C sub log 'a''b'",
     'git -C sub log "a"b',
@@ -484,7 +484,8 @@ describe("evaluateCommand - git -C と ask ルール", () => {
 });
 
 // hook の allow は Claude Code 本体の確認を省略させるので、その根拠になる allow ルールは
-// 本体がどの構成でも適用するユーザ設定 (~/.claude/settings.json) に限る。
+// 本体が通常適用するユーザ設定 (~/.claude/settings.json) に限る (例外は ADR 0003 の既知の制約:
+// --setting-sources / SDK の settingSources でユーザ設定を除いた構成)。
 // .codex/* や hook 入力の cwd 基準の .claude/* はリポジトリ内容 (エージェントが書ける /
 // clone 元が仕込める) で、本体は読まないので allow の根拠にしない (deny / ask には使う)。
 // プロジェクト (CLAUDE_PROJECT_DIR) の .claude/settings*.json の allow も、本体が適用しない
@@ -580,7 +581,7 @@ describe("evaluateCommand - hook allow の根拠になる設定ファイル", ()
   // 本体は auto mode で Bash(*) のような広い allow を落とす。hook allow の根拠は
   // `git <リテラルのサブコマンド>` で始まる allow (サブコマンド位置に anchor されるもの) に限る
   describe("サブコマンドをリテラルで固定しない allow は hookApproved の根拠にしない", () => {
-    test.each(["Bash(*)", "Bash", "Bash(git *)", "Bash(git:*)", "Bash(g*)", "Bash(git s*)", "Bash(git status*)"])(
+    test.each(["Bash(*)", "Bash", "Bash(git *)", "Bash(git:*)", "Bash(g*)", "Bash(git s*)", "Bash(git status*)", "Bash(git -C *)"])(
       "%s",
       (pattern) => {
         writeSettings(join(home, ".claude", "settings.json"), { allow: [pattern] });

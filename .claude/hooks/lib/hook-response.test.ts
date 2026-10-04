@@ -265,8 +265,9 @@ describe("pre-tool-use-bash-analyzer (プロセス): ~/.claude/settings.json の
   });
 });
 
-// hook allow の根拠になる allow ルールは、本体がどの構成でも適用するユーザ設定
-// (~/.claude/settings.json) 由来だけ。リポジトリ内の .codex/* や cwd 基準の .claude/*、
+// hook allow の根拠になる allow ルールは、本体が通常適用するユーザ設定
+// (~/.claude/settings.json) 由来だけ (例外は ADR 0003 の既知の制約: --setting-sources /
+// SDK の settingSources でユーザ設定を除いた構成)。リポジトリ内の .codex/* や cwd 基準の .claude/*、
 // CLAUDE_PROJECT_DIR の .claude/settings*.json の allow では hook allow しない。
 describe("pre-tool-use-bash-analyzer (プロセス): hook allow の根拠になる設定ファイル", () => {
   let env: ReturnType<typeof setupHookEnv>;
@@ -352,6 +353,11 @@ describe("pre-tool-use-bash-analyzer (プロセス): permission_mode", () => {
     ["dontAsk", { permission_mode: "dontAsk" }],
     ["bypassPermissions", { permission_mode: "bypassPermissions" }],
     ["未知の値", { permission_mode: "manual" }],
+    ["大小文字違いの Default", { permission_mode: "Default" }],
+    ["大小文字違いの AcceptEdits", { permission_mode: "AcceptEdits" }],
+    ["null", { permission_mode: null }],
+    ["数値", { permission_mode: 0 }],
+    ["配列", { permission_mode: ["default"] }],
     ["欠落", {}],
   ] as const)("%s なら git -C . status に何も出力しない", (_, inputFields) => {
     expect(env.decisionOf("git -C . status", undefined, undefined, inputFields)).toBeNull();
