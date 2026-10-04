@@ -27,6 +27,16 @@ Accepted
 - hook が allow を返すと本体の deny / ask はプレフィックス一致のため `-C` 版に効かない。hook が読まない設定の deny / ask は、hook allow で黙って迂回される。PR #272 のレビューで、`CLAUDE_CONFIG_DIR=$S/cfg` の `$S/cfg/settings.json` に `ask: ["Bash(git push *)"]`・`deny: ["Bash(git log *)"]` を置いても `git -C . push` / `git -C . log` を hook allow することを再現した (従来は `~/.claude/settings.json` 由来の allow の印を外すだけで、`$CLAUDE_CONFIG_DIR` の deny / ask を読んでいなかった)。managed settings と main checkout の `settings.local.json` も同じく読んでいなかった。
 - Claude Code は hook の環境に `CLAUDE_PROJECT_DIR` (セッションを開始したプロジェクトルート) を渡す。worktree に入った後も `CLAUDE_PROJECT_DIR` は開始時のまま、入力 JSON の `cwd` は Claude の作業ディレクトリ (worktree や `cd` 先) に追従する (<https://code.claude.com/docs/en/hooks>)。
 - `extensions.worktreeConfig` が有効なリポジトリ (`git sparse-checkout init` / `set` で自動的に有効になる) では、git は common dir の `config` に加えて gitdir の `config.worktree` も読む。`commondir` を cwd の `.git` に向けた gitdir を作業ツリー内に手で作ると common dir の比較だけでは同一リポジトリに見え、その `config.worktree` の `core.fsmonitor` が `git -C <dir> status` で実行される (PR #272 のレビュー r4176525230 で再現)。
+- 本体が設定ファイルの allow を適用しない構成がある (2026-10 時点のドキュメント)。hook がそれらの allow を根拠に allow を返すと、本体なら確認を出す (または classifier に回す) コマンドを確認無しに実行させる。
+  - `--setting-sources user` や Agent SDK の `settingSources` でプロジェクト設定を除くと、本体はプロジェクトの `.claude/settings*.json` を読まない (<https://code.claude.com/docs/en/permissions#project-allow-rules-and-workspace-trust>)。PR #272 のレビューで、`$CLAUDE_PROJECT_DIR/.claude/settings.json` に `allow: ["Bash(git submodule *)"]` を置くと `git -C . submodule foreach touch pwned` を hook allow することを再現した。
+  - プロジェクトの `.claude/settings.json` の `permissions.allow` は、ワークスペースの信頼ダイアログを受け入れるまで適用されない。`claude -p` や SDK ではダイアログ自体が出ず、適用されない。deny / ask は制限する方向なので信頼に関係なく適用される (同上)。追跡されている `.claude/settings.local.json` も同じ扱い。
+  - auto mode に入ると、本体は `Bash(*)`・`Bash(python*)` のようなインタプリタのワイルドカード・パッケージマネージャの run コマンドなど、任意コード実行を与える広い allow を落とす。`Bash(npm test)` のような狭い allow は残る (<https://code.claude.com/docs/en/permission-modes#how-the-classifier-evaluates-actions>)。PR #272 のレビューで、`~/.claude/settings.json` に `allow: ["Bash(*)"]` を置くと `git -C . submodule foreach touch pwned` を hook allow することを再現した。
+- hook 入力 JSON の `permission_mode` は `"default"`・`"plan"`・`"acceptEdits"`・`"auto"`・`"dontAsk"`・`"bypassPermissions"` のいずれか。Manual モードは `"default"` で届く。全てのイベントが受け取るわけではないが、PreToolUse の入力例には含まれる (<https://code.claude.com/docs/en/hooks> の Common input fields)。各モードの本体の挙動は次のとおり (<https://code.claude.com/docs/en/permission-modes>)。
+  - `default` / `acceptEdits`: allow ルールに一致するコマンドを自動許可し、それ以外の shell コマンドは確認を出す。
+  - `plan`: auto mode が使える環境では既定 (`useAutoModeDuringPlan`) で shell コマンドを classifier に回す。使えない環境では組み込みの読み取り専用コマンド以外は確認を出す。
+  - `auto`: 確認の代わりに classifier が判定する。
+  - `dontAsk`: 確認になるはずの呼び出しを拒否する。allow ルールと PreToolUse hook が承認した呼び出しは実行する。
+  - `bypassPermissions`: 確認を出さない (deny は効く)。
 - Codex は PreToolUse の `permissionDecision: "allow"` を `updatedInput` (入力の書き換え) と組み合わせた場合にしか受け付けない。bare な allow は `PreToolUse hook returned unsupported permissionDecision:allow` として hook 失敗扱いになる (openai/codex `codex-rs/hooks/src/engine/output_parser.rs`)。
 
 ## Decision
@@ -49,15 +59,17 @@ Accepted
     ```
 
   - 生コマンドの照合結果が、正規化した `git <sub> ...` の非 -C allow への一致 (`gitCNormalized`) である。deny・危険 git フラグ・機密パス・ask の判定はこれより先に効く。
-    - この照合に使う allow は Claude Code 本体が実際に読む設定由来 (`Rule.readByClaudeCode`) だけ: `~/.claude/settings.json` と `$CLAUDE_PROJECT_DIR/.claude/settings.json` / `settings.local.json`。`.codex/*` と `cwd` 基準の `.claude/*`、managed settings、リポジトリ / main checkout のルートの `settings.local.json` 由来の allow は hook allow の根拠にしない (Codex 向けの読み込みと pass-through 時の判定は従来どおり)。deny / ask は判定を厳しくする方向なので出自を問わず全て使う。
+    - この照合に使う allow は、次の両方を満たすものだけ (`evaluator.ts` の `rulesForHookAllow`)。deny / ask は判定を厳しくする方向なので出自を問わず全て使う。
+      - ユーザ設定 `~/.claude/settings.json` 由来 (`Rule.readByClaudeCode`)。プロジェクトの設定 (`$CLAUDE_PROJECT_DIR/.claude/settings.json` / `settings.local.json`、リポジトリ / main checkout のルートの `settings.local.json`、`cwd` 基準の `.claude/*`)、`.codex/*`、managed settings 由来の allow は根拠にしない (Codex 向けの読み込みと pass-through 時の判定は従来どおり)。プロジェクトの allow は、`--setting-sources user` / SDK の `settingSources` でプロジェクト設定を除いた場合と、ワークスペースを信頼していない場合に本体が適用しない。hook はどちらも入力から知る手段が無いので、出自で一律に外す。
+      - `Bash(git <リテラルのサブコマンド>` で始まり、サブコマンドの直後が `)`・空白・`:*)` のいずれか (`Bash(git status *)`、`Bash(git status:*)`、`Bash(git stash list *)`)。`Bash(*)`・`Bash`・`Bash(git *)`・`Bash(git:*)`・`Bash(g*)`・`Bash(git status*)` のようにサブコマンドをリテラルで固定しない allow は根拠にしない。本体は auto mode で広い allow を落とすが、どれを落とすかの基準は列挙 (「`Bash(*)`、インタプリタのワイルドカードなど」) で、hook が同じ判定を再現する根拠が無い。hook は `git <sub>` に正規化したコマンドしか allow しないので、サブコマンド位置に anchor された allow だけを使えば足りる。
     - hook allow は本体の deny / ask を迂回させるので、hook は本体が読む deny / ask を全て自分で評価する。次を deny / ask の判定用に読む (`rules.ts` の `loadRules`)。
       - managed settings の `managed-settings.json` と `managed-settings.d/*.json` (OS ごとの既定の所在。テストでは `loadRules` の引数で注入する。環境変数による差し替えは hook の判定を外から変えられる口になるので設けない)。
       - `cwd` と `CLAUDE_PROJECT_DIR` それぞれの git リポジトリのルートと、worktree なら main checkout のルート (common dir の名前が `.git` ならその親) の `.claude/settings.local.json`。ルートは `isSameGitRepository` と同じファイルシステムだけの解決 (`git-repository.ts` の `localSettingsRootsOf`) で求める。ドキュメント上、本体は共有の `.claude/settings.json` を main checkout からは読まないので、そちらは読まない。
     - 本体が読む deny / ask を hook が読み切れない構成では hook allow しない (pass-through で本体のデフォルトプロンプトに委ねる)。
-      - `CLAUDE_PROJECT_DIR` が無い・相対パス・実在しない (本体の読む設定を特定できない)。
+      - `CLAUDE_PROJECT_DIR` が無い・相対パス・実在しない。プロジェクトの allow は根拠にしなくなったが、本体はプロジェクトの deny / ask を (ワークスペースの信頼に関係なく) 適用するので、hook はその所在を知る必要がある。
       - `CLAUDE_CONFIG_DIR` が環境にある (値は問わない)。本体のユーザ設定はそこにあるが、hook はその所在を確実には追えない。`~/.claude` と同じ値でも、パス表記の比較で同一性を判断する分岐を持たない。
       - `HOME` が無い・空・相対パス。ユーザ設定の所在が分からない。相対パスを hook プロセスの作業ディレクトリ基準で解決していた (本体が読まないファイルに allow の印が付いていた) のをやめ、`~/` 配下の設定自体を読まない。
-      - managed settings の所在が分からない OS (Windows など。レジストリは読まない)、managed settings のファイル / ドロップインディレクトリが読めない・JSON オブジェクトでない・`permissions` の `allow` / `deny` / `ask` が文字列の配列でない、macOS の MDM 構成プロファイル (`/Library/Managed Preferences/com.anthropic.claudecode.plist` とユーザごとの同名ファイル) がある、`allowManagedPermissionRulesOnly` が `false` 以外 (本体は不正な値を制限側に読む)。本体は壊れた managed settings では起動しないが、hook は例外にせず「allow しない」に倒す。
+      - managed settings の所在が分からない OS (Windows など。レジストリは読まない)、managed settings のファイル / ドロップインディレクトリが読めない・JSON オブジェクトでない・`permissions` の `allow` / `deny` / `ask` が文字列の配列でない、macOS の MDM 構成プロファイル (`/Library/Managed Preferences/com.anthropic.claudecode.plist` とユーザごとの同名ファイル) がある、`allowManagedPermissionRulesOnly` が `false` 以外 (本体は不正な値を制限側に読む)、`policyHelper` または `wslInheritsWindowsSettings` のキーがある (値は問わない。本体はヘルパーが生成する managed settings や Windows 側の管理設定を適用しうるが、hook はその内容を読まない)。本体は壊れた managed settings では起動しないが、hook は例外にせず「allow しない」に倒す。
       - サーバー管理設定のキャッシュ `~/.claude/remote-settings.json` がある。形式がドキュメントに無く、適用中のポリシー (起動後の取得や 1 時間ごとの更新) と一致する保証も無いので、内容は評価しない。
       - `cwd` / `CLAUDE_PROJECT_DIR` が git リポジトリの中だが、本体が `settings.local.json` を読むルートを特定できない (`core.worktree`、手で作った gitdir、common dir の名前が `.git` でない linked worktree、`GIT_DIR` などの環境変数)。git 管理外なら本体も開始ディレクトリのファイルを読むので従来どおり。
   - `-C` の対象ディレクトリが、hook 入力の `cwd` のリポジトリと同じ git common dir を持つ (`git-repository.ts` の `isSameGitRepository`)。つまり同一リポジトリ内のサブディレクトリか、同一リポジトリの worktree に限る。
@@ -65,6 +77,11 @@ Accepted
     - git が作った形の gitdir だけを認める。gitdir は (i) common dir 自身 (`commondir` が無い) か、(ii) `git worktree add` で作った linked worktree の gitdir、つまり `.git` ファイルの参照先が `<common>/worktrees/<name>` の直下で、git が書く逆リンク `<common>/worktrees/<name>/gitdir` が対象の `.git` ファイルを物理パスで指し返す (相対パスは `worktree.useRelativePaths` の形式で `<common>/worktrees/<name>` 基準) こと。`.git` ディレクトリに `commondir` がある形や、作業ツリー内に手で作った gitdir は common dir が一致しても認めない。
     - gitdir の `config.worktree` は、無いか、`git sparse-checkout` が書く `[core] sparseCheckout` / `sparseCheckoutCone` と `[index] sparse` の真偽値だけの場合に限る (allowlist)。`core.fsmonitor`・`core.hooksPath`・`core.sshCommand`・`core.pager`・`alias.*`・`diff.external` など実行やファイル参照につながるキーは数が多く denylist では網羅できないため。common config の `extensions.worktreeConfig` が有効かどうかは判定に使わない (キー名の大小文字・真偽値の表記揺れを解析する必要があり、無効なら git は読まないので余分に拒否するだけで安全側)。
     - 次はすべて allow しない (pass-through): cwd が無い・相対パス、`GIT_DIR` / `GIT_WORK_TREE` / `GIT_COMMON_DIR` / `GIT_CEILING_DIRECTORIES` などの環境変数が hook の環境にある、対象が存在しない・ディレクトリでない、`.git` ファイルの内容が不正、`.git` がシンボリックリンク、`.git` の無い階層に `HEAD` がある (bare リポジトリや `.git` 配下)、上記の形でない gitdir、common dir の `config` に `worktree` / `bare` (false 以外) / `[include` の行がある、`config.worktree` に sparse-checkout 以外の設定がある、読み取りエラー。submodule や入れ子のリポジトリは別の common dir に解決されるので一致しない。例外は hook 全体を落とさず「allow しない」に倒す。
+  - hook 入力 JSON の `permission_mode` が `"default"` か `"acceptEdits"` (`hook-response.ts` の `shouldEmitAllow`)。`"plan"`・`"auto"`・`"dontAsk"`・`"bypassPermissions"`、未知の値、欠落 (文字列でない値を含む) では allow を返さない (pass-through。deny / ask は従来どおり返す)。
+    - hook の allow は本体の確認だけでなく auto mode の classifier もスキップさせる。allow を返してよいのは、本体が allow ルールで自動許可し、それ以外を確認に回すモード (hook allow が「ユーザ設定の allow を `-C` 版にも効かせる」以上の意味を持たないモード) に限る。
+    - `auto` は classifier を、`dontAsk` は確認になるはずの呼び出しの拒否を、hook allow が迂回させる。`bypassPermissions` は本体が確認を出さないので hook が allow する意味が無い。
+    - `plan` も外す。auto mode が使える環境では既定で shell コマンドを classifier に回し、使えない環境でも組み込みの読み取り専用コマンド以外は確認を出す。hook allow は `git -C . commit` のような書き込みを計画中に確認無しで実行させる。
+    - 未知の値と欠落を外すのは、将来追加されるモードが classifier や自動拒否を使う可能性があり、許すモードを列挙 (allowlist) する側が安全なため。
 - hook の allow は「どのシェルでも単一の単純コマンドとしか読めない字句」に限るという原則を置く。シェルの構文をモデル化して危険な形を除外する (denylist) のではなく、許す形を正の文法で列挙し (allowlist)、文法はトークナイザを通さず生文字列に直接当てる。パーサの解釈がシェルとずれても許可判定に入り込まない構造にする。
 - `=` と `~` は zsh で word 先頭 (および `MAGIC_EQUAL_SUBST` 下の `=` の直後) にあるときだけ展開される (`=ls` → `/bin/ls`、`=(cmd)` はプロセス置換、`~/x` はチルダ展開)。`--format=%H` や `HEAD~1` を自動許可するため、展開されない位置に限って許す。
 - Codex から起動されたとき、または起動引数が無い・不明なときは allow を返さない。
@@ -95,15 +112,19 @@ Accepted
 - hook の allow は `-C` の対象が cwd と同じ git common dir のリポジトリに限る。別リポジトリへの `git -C` (隣の clone、`~/work/other` など) は、読み取り系でも hook の自動許可を受けず本体の確認が出る。エージェントが書き込める任意のリポジトリの `.git/config` (`core.fsmonitor`・`core.sshCommand`・`diff.external`・`protocol.ext.allow` と `ext::` remote など) や `.git/hooks` を経由した、確認無しの任意コマンド実行を防ぐためのトレードオフとして受け入れる。
 - 同一リポジトリに限っても、cwd のリポジトリ自体の設定を経由した実行面は残る。これは非 -C の `git status` を本体が settings.json の allow で自動許可するのと同じ面で、`-C` 固有の問題ではない (cwd がエージェントの作ったリポジトリになっている場合も同じ)。
 - 訂正: 同一 common dir 限定を導入した時点では「手で作った gitdir でも、git は gitdir の `config` ではなく common dir の `config` を読むので安全」としていた。`extensions.worktreeConfig` が有効なら git は gitdir の `config.worktree` も読むため、この前提は誤りだった。git が作った worktree だけを認め、`config.worktree` を sparse-checkout の設定だけに限ることで塞いだ。
-- hook allow の根拠を本体が読む設定に限ったので、次は hook の自動許可を受けない。
+- hook allow の根拠をユーザ設定のサブコマンドを固定した git の allow に限り、permission mode も限ったので、次は hook の自動許可を受けない。
   - `.codex/settings*.json` や `cwd` 基準の `.claude/settings*.json` だけにある allow (Codex 用の allow を Claude Code の `-C` 版に効かせることはしない)
+  - プロジェクトの設定 (`$CLAUDE_PROJECT_DIR/.claude/settings.json` / `settings.local.json`、main checkout / リポジトリルートの `.claude/settings.local.json`) にだけある allow。本体の「次回から確認しない」はリポジトリルートの `settings.local.json` に保存されるので、そこで許可した `git <sub>` の `-C` 版は自動許可されない。`-C` 版も自動許可したいサブコマンドは `~/.claude/settings.json` に置く (このリポジトリは `.claude/settings.json` を `install.sh` でユーザ設定として配る)。これにより、未信頼のワークスペースや `--setting-sources user` / SDK の `settingSources` でプロジェクトの allow が適用されない構成で hook が allow する問題は解消する。
+  - `Bash(*)`・`Bash(git *)` のような広い allow だけで許可しているサブコマンド
+  - permission mode が `default` / `acceptEdits` 以外のセッション (`plan`・`auto`・`dontAsk`・`bypassPermissions`)。`auto` では `git -C` も classifier の判定になる
   - `CLAUDE_PROJECT_DIR` を渡さない起動 (手動実行や他ツールからの起動)
-  - `CLAUDE_CONFIG_DIR` を使う環境、`HOME` が使えない環境、managed settings を配布している環境のうち上記の hook allow しない条件に当たるもの (MDM 構成プロファイル、`allowManagedPermissionRulesOnly`、サーバー管理設定のキャッシュがある環境、Windows など)。これらの環境では `git -C` は常に本体のデフォルトプロンプトになる。`$CLAUDE_CONFIG_DIR/settings.json` の deny も hook は評価しないので、`-C` 版は deny ではなくプロンプトになる (確認無しには実行されない)。
-  - main checkout / リポジトリルートの `.claude/settings.local.json` にだけある allow (本体の「次回から確認しない」はここに保存されるが、hook allow の根拠にはしない。本体が実際に読むかを hook が特定する前提を増やさないため)。逆に `$CLAUDE_PROJECT_DIR/.claude/settings.local.json` を本体が読まない構成 (v2.1.211 以降のサブディレクトリ / worktree での開始。以前のバージョンが残したファイルは本体も読む) では、そのファイルの allow を hook が根拠にしうる。ただし同じディレクトリの `.claude/settings.json` は本体が読むので、そこに allow を置ける主体に対して新しい権限は与えない。
+  - `CLAUDE_CONFIG_DIR` を使う環境、`HOME` が使えない環境、managed settings を配布している環境のうち上記の hook allow しない条件に当たるもの (MDM 構成プロファイル、`allowManagedPermissionRulesOnly`、`policyHelper`、`wslInheritsWindowsSettings`、サーバー管理設定のキャッシュがある環境、Windows など)。これらの環境では `git -C` は常に本体のデフォルトプロンプトになる。`$CLAUDE_CONFIG_DIR/settings.json` の deny も hook は評価しないので、`-C` 版は deny ではなくプロンプトになる (確認無しには実行されない)。
 - hook が読めない設定の deny / ask は hook allow で迂回されうる (既知の制約)。
   - サーバー管理設定 (claude.ai の組織ポリシーや Claude apps gateway が配る managed settings): キャッシュが無い状態 (初回起動、`-p` や SDK など approval を記録しない非対話の実行) では、hook はサーバー管理設定の存在を検知できない。
-  - 埋め込みホスト (Claude Desktop、IDE 拡張、Agent SDK アプリ) が SDK の `managedSettings` で渡す parent settings、`policyHelper` が生成する managed settings、コマンドラインの `--settings`、WSL の `wslInheritsWindowsSettings` で継承する Windows 側の設定。
-  - `/cd` で移動した後のセッション: 本体は移動先の設定を読むが `CLAUDE_PROJECT_DIR` は開始時のまま。hook 入力の `cwd` が移動先に追従していれば、その `.claude/*` とリポジトリルートの `settings.local.json` の deny / ask は読む。allow の根拠は `CLAUDE_PROJECT_DIR` 側の設定のまま。
+  - 埋め込みホスト (Claude Desktop、IDE 拡張、Agent SDK アプリ) が SDK の `managedSettings` で渡す parent settings、MDM 構成プロファイル以外 (Windows のレジストリなど) で配布された `policyHelper` / `wslInheritsWindowsSettings`、コマンドラインの `--settings`。
+  - コマンドラインの `--disallowedTools` / SDK の `disallowedTools` で渡す deny。hook には渡らず、本体ではプレフィックス一致なので `-C` 版に効かない。例えば `claude -p --disallowedTools "Bash(git push *)"` の下でも `git -C . push` を hook allow する (PR #272 のレビューで再現)。`-C` 版を確実に止めたいサブコマンドは settings の deny に置く。
+  - `--setting-sources` / SDK の `settingSources` でユーザ設定を除き、hook をプロジェクト設定から登録している構成: 本体はユーザ設定の allow を適用しないが、hook はそれを知る手段が無く `~/.claude/settings.json` の allow を根拠にする。このリポジトリではプロジェクトの `.claude/settings.json` とユーザ設定が同じ内容なので差は出ない。
+  - `/cd` で移動した後のセッション: 本体は移動先の設定を読むが `CLAUDE_PROJECT_DIR` は開始時のまま。hook 入力の `cwd` が移動先に追従していれば、その `.claude/*` とリポジトリルートの `settings.local.json` の deny / ask は読む。
   - 所在の解決はドキュメントの記述に基づく。本体の実装 (所有者の確認、リポジトリルートがホームディレクトリの場合の扱いなど) と完全には一致しない。hook は本体より多くのファイルの deny / ask を読む側 (厳しい側) に倒している。
 - 手で作った gitdir (`.git` ディレクトリに `commondir`、作業ツリー内の gitdir を指す `.git` ファイル) や、`config.worktree` に sparse-checkout 以外の設定 (`core.bare` など) がある worktree への `git -C` は hook の自動許可を受けない。
 - 判定はファイルシステムから git の探索を再現したもので、git 本体の挙動 (`safe.directory`、`GIT_DISCOVERY_ACROSS_FILESYSTEM` が無いときのファイルシステム境界、`[include]` 経由の設定など) を完全には再現しない。再現しきれないと分かっている形は allow しない側に倒している。
