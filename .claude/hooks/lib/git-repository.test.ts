@@ -180,7 +180,7 @@ describe("isSameGitRepository: config.worktree の allowlist の境界", () => {
     ["[core] sparseCheckoutCone と [index] sparse", "[core]\n\tsparseCheckoutCone = false\n[index]\n\tsparse = yes\n"],
     ["セクション名の大文字 ([CORE])", "[CORE]\n\tsparseCheckout = true\n"],
     ["キー名の大小文字", "[core]\n\tSPARSECHECKOUT = On\n"],
-    ["先頭の BOM", "﻿[core]\n\tsparseCheckout = true\n"],
+    ["先頭の BOM", "\uFEFF[core]\n\tsparseCheckout = true\n"],
     ["CRLF", "[core]\r\n\tsparseCheckout = true\r\n"],
     ["重複したセクション", "[core]\n\tsparseCheckout = true\n[index]\n\tsparse = true\n[core]\n\tsparseCheckoutCone = true\n"],
     ["; コメント", "; c\n[index]\n\tsparse = 1\n"],
@@ -192,7 +192,7 @@ describe("isSameGitRepository: config.worktree の allowlist の境界", () => {
   test.each([
     ["[CORE] の fsmonitor", '[CORE]\n\tfsmonitor = "touch X; false"\n'],
     ["サブセクション [core \"x\"]", '[core]\n\tsparseCheckout = true\n[core "x"]\n\tfsmonitor = x\n'],
-    ["BOM の後の fsmonitor", '﻿[core]\n\tfsmonitor = "touch X; false"\n'],
+    ["BOM の後の fsmonitor", '\uFEFF[core]\n\tfsmonitor = "touch X; false"\n'],
     ["単独の CR で区切った fsmonitor", '[core]\r\tfsmonitor = "touch X; false"\n'],
     ["真偽値の後に CR と fsmonitor", '[core]\n\tsparseCheckout = true\rfsmonitor = "touch X; false"\n'],
     ["ヘッダと同じ行の fsmonitor", '[core]fsmonitor = "touch X; false"\n'],
@@ -201,7 +201,7 @@ describe("isSameGitRepository: config.worktree の allowlist の境界", () => {
     ["プロトタイプのプロパティ名のセクション [constructor]", "[constructor]\n\tsparse = true\n"],
     ["プロトタイプのプロパティ名のセクション [toString]", "[toString]\n\tsparse = true\n"],
     ["NUL の後の fsmonitor", "[core]\n\tsparseCheckout = true\0fsmonitor = x\n"],
-    ["U+2028 の後の fsmonitor", "[core]\n\tsparseCheckout = true fsmonitor = x\n"],
+    ["U+2028 の後の fsmonitor", "[core]\n\tsparseCheckout = true\u2028fsmonitor = x\n"],
     ["キーにドット", "[core]\n\tsparseCheckout.x = true\n"],
     ["値の無いキー (暗黙の true)", "[core]\n\tsparseCheckout\n"],
     ["値の後のコメント", "[core]\n\tsparseCheckout = true # c\n"],

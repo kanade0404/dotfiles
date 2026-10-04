@@ -1,6 +1,7 @@
 import { describe, test, expect } from "bun:test";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import {
   matchCommand,
   stripShellPrefixes,
@@ -992,8 +993,20 @@ describe("checkDangerousGitFlags", () => {
 describe("統合テスト: settings.json ルールでの判定", () => {
   // CI には個人の ~/.claude/settings.json が存在しないため、リポジトリ同梱の
   // .claude/settings.json を明示的に読む (import.meta.dir = .claude/hooks/lib)。
+  // 実 HOME・マシンの managed settings・main checkout / worktree の settings.local.json に結果を
+  // 左右されないよう、settings.json だけを git 管理外の一時ディレクトリにコピーして読む
+  // (env は空 = ~/ 配下を読まない、managed settings は無し)。
   const repoRoot = resolve(import.meta.dir, "..", "..", "..");
-  const settingsRules = loadRules(repoRoot);
+  const settingsRules = (() => {
+    const dir = mkdtempSync(join(tmpdir(), "rule-matcher-test-"));
+    try {
+      mkdirSync(join(dir, ".claude"));
+      copyFileSync(resolve(repoRoot, ".claude", "settings.json"), join(dir, ".claude", "settings.json"));
+      return loadRules(dir, {}, null);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  })();
 
   /** 複合コマンドの全サブコマンドを判定し、最終結果を返す */
   function judgeCommand(command: string): "allow" | "deny" | "ask" {
