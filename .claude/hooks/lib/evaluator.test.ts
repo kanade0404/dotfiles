@@ -1,10 +1,10 @@
 import { describe, test, expect, beforeAll, afterAll, afterEach } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { evaluateCommand, isAssignmentOnly, isPlainGitCCommand } from "./evaluator.ts";
 import { patternToRegex } from "./rule-matcher.ts";
-import { loadRules } from "./rules.ts";
+import { defaultManagedSettingsSources, loadRules, type ManagedSettingsSources } from "./rules.ts";
 import { createGitFixture, type GitFixture } from "./git-fixture.ts";
 import type { Rule } from "./types.ts";
 import { parseShellCommands } from "./shell-parser.ts";
@@ -20,7 +20,9 @@ const worktreeRoot = resolve(import.meta.dir, "..", "..", "..");
 function loadRepoRules() {
   const home = mkdtempSync(join(tmpdir(), "evaluator-test-"));
   try {
-    return loadRules(worktreeRoot, { HOME: home, CLAUDE_PROJECT_DIR: worktreeRoot });
+    // managed settings はマシンの設定に依存させない (存在しないパスを渡す)
+    const noManaged = { file: join(home, "managed-settings.json"), dropInDir: join(home, "managed-settings.d"), opaque: [] };
+    return loadRules(worktreeRoot, { HOME: home, CLAUDE_PROJECT_DIR: worktreeRoot }, noManaged);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
@@ -483,17 +485,32 @@ describe("evaluateCommand - git -C と ask ルール", () => {
 describe("evaluateCommand - hook allow の根拠になる設定ファイル", () => {
   let fx: GitFixture;
   let home: string;
+  /** managed settings の置き場所 (テストごとに中身を消す) */
+  let managedDir: string;
+  let managedSources: ManagedSettingsSources;
   beforeAll(() => {
     fx = createGitFixture();
     home = mkdtempSync(join(tmpdir(), "evaluator-sources-"));
+    managedDir = mkdtempSync(join(tmpdir(), "evaluator-managed-"));
+    managedSources = {
+      file: join(managedDir, "managed-settings.json"),
+      dropInDir: join(managedDir, "managed-settings.d"),
+      opaque: [join(managedDir, "com.anthropic.claudecode.plist")],
+    };
   });
   afterAll(() => {
     fx.cleanup();
     rmSync(home, { recursive: true, force: true });
+    rmSync(managedDir, { recursive: true, force: true });
   });
   afterEach(() => {
     for (const dir of [join(home, ".claude"), join(fx.main, ".codex"), join(fx.main, ".claude"), join(fx.main, "sub", ".claude")]) {
       rmSync(dir, { recursive: true, force: true });
+    }
+    for (const name of readdirSync(managedDir)) {
+      const path = join(managedDir, name);
+      chmodSync(path, 0o700);
+      rmSync(path, { recursive: true, force: true });
     }
   });
 
@@ -502,10 +519,14 @@ describe("evaluateCommand - hook allow の根拠になる設定ファイル", ()
     writeFileSync(path, JSON.stringify({ permissions }));
   }
 
-  function evaluate(command: string, opts: { cwd?: string; env?: Record<string, string> } = {}) {
+  function evaluate(
+    command: string,
+    opts: { cwd?: string; env?: Record<string, string>; managed?: ManagedSettingsSources | null } = {},
+  ) {
     const cwd = opts.cwd ?? fx.main;
     const env = opts.env ?? { HOME: home, CLAUDE_PROJECT_DIR: fx.main };
-    return evaluateCommand(parseShellCommands(command), loadRules(cwd, env), command, cwd, {});
+    const managed = opts.managed === undefined ? managedSources : opts.managed;
+    return evaluateCommand(parseShellCommands(command), loadRules(cwd, env, managed), command, cwd, {});
   }
 
   const hookApproved = { decision: "allow", hookApproved: true } as const;
@@ -595,5 +616,153 @@ describe("evaluateCommand - hook allow の根拠になる設定ファイル", ()
     writeSettings(join(home, ".claude", "settings.json"), submoduleAllow);
     writeSettings(join(fx.main, "sub", ".claude", "settings.json"), { ask: ["Bash(git submodule *)"] });
     expect(evaluate("git -C . submodule status", { cwd: join(fx.main, "sub") }).decision).toBe("ask");
+  });
+
+  // managed settings (組織が配布する管理設定) の deny / ask は本体では -C 版に効かないので、
+  // hook が読んで評価する。hook が読めない / 解釈できない管理設定があれば hook allow しない。
+  describe("managed settings", () => {
+    const gitAllow = { allow: ["Bash(git log *)", "Bash(git push *)", "Bash(git status *)"] };
+
+    test("前提: managed settings が無ければ hookApproved", () => {
+      writeSettings(join(home, ".claude", "settings.json"), gitAllow);
+      expect(evaluate("git -C . log")).toEqual(hookApproved);
+    });
+
+    test("managed-settings.json の deny は git -C の正規化候補に効く", () => {
+      writeSettings(join(home, ".claude", "settings.json"), gitAllow);
+      writeSettings(managedSources.file, { deny: ["Bash(git log *)"] });
+      expect(evaluate("git -C . log").decision).toBe("deny");
+    });
+
+    test("managed-settings.json の ask は git -C の正規化候補に効く", () => {
+      writeSettings(join(home, ".claude", "settings.json"), gitAllow);
+      writeSettings(managedSources.file, { ask: ["Bash(git push *)"] });
+      expect(evaluate("git -C . push origin main").decision).toBe("ask");
+    });
+
+    test("managed-settings.d/*.json の deny は git -C の正規化候補に効く", () => {
+      writeSettings(join(home, ".claude", "settings.json"), gitAllow);
+      writeSettings(join(managedSources.dropInDir, "20-security.json"), { deny: ["Bash(git log *)"] });
+      expect(evaluate("git -C . log").decision).toBe("deny");
+    });
+
+    test("managed-settings.d の隠しファイルと .json 以外は本体と同じく読まない", () => {
+      writeSettings(join(home, ".claude", "settings.json"), gitAllow);
+      writeSettings(join(managedSources.dropInDir, ".hidden.json"), { deny: ["Bash(git log *)"] });
+      writeFileSync(join(managedSources.dropInDir, "notes.txt"), "not json");
+      expect(evaluate("git -C . log")).toEqual(hookApproved);
+    });
+
+    test("managed settings の allow は hookApproved の根拠にしない", () => {
+      writeSettings(managedSources.file, submoduleAllow);
+      expect(evaluate("git -C . submodule status")).toEqual(passThrough);
+    });
+
+    test("空の managed-settings.json は {} として扱う", () => {
+      writeSettings(join(home, ".claude", "settings.json"), gitAllow);
+      writeFileSync(managedSources.file, "");
+      expect(evaluate("git -C . log")).toEqual(hookApproved);
+    });
+
+    // 本体は allowManagedPermissionRulesOnly で managed 以外の allow を捨てる。不正な値は
+    // 制限側に読むので、false 以外なら hook allow しない
+    test.each([
+      ["true", true],
+      ["不正な値", "yes"],
+    ] as const)("allowManagedPermissionRulesOnly が %s なら hookApproved にしない", (_, value) => {
+      writeSettings(join(home, ".claude", "settings.json"), gitAllow);
+      writeFileSync(managedSources.file, JSON.stringify({ allowManagedPermissionRulesOnly: value }));
+      expect(evaluate("git -C . log")).toEqual(passThrough);
+    });
+
+    test("allowManagedPermissionRulesOnly が false なら hookApproved", () => {
+      writeSettings(join(home, ".claude", "settings.json"), gitAllow);
+      writeFileSync(managedSources.file, JSON.stringify({ allowManagedPermissionRulesOnly: false }));
+      expect(evaluate("git -C . log")).toEqual(hookApproved);
+    });
+
+    // 解釈できない managed settings は deny / ask を取りこぼしうるので hook allow しない (例外にもしない)
+    test.each([
+      ["managed-settings.json が JSON でない", (s: ManagedSettingsSources) => writeFileSync(s.file, "{")],
+      ["managed-settings.json のトップレベルが配列", (s: ManagedSettingsSources) => writeFileSync(s.file, "[]")],
+      [
+        "managed-settings.json の permissions.deny が配列でない",
+        (s: ManagedSettingsSources) => writeFileSync(s.file, JSON.stringify({ permissions: { deny: "Bash(git log *)" } })),
+      ],
+      [
+        "managed-settings.json の permissions.ask に文字列以外",
+        (s: ManagedSettingsSources) => writeFileSync(s.file, JSON.stringify({ permissions: { ask: [1] } })),
+      ],
+      ["managed-settings.json がディレクトリ", (s: ManagedSettingsSources) => mkdirSync(s.file)],
+      [
+        "managed-settings.json が読めない",
+        (s: ManagedSettingsSources) => {
+          writeFileSync(s.file, "{}");
+          chmodSync(s.file, 0o000);
+        },
+      ],
+      [
+        "managed-settings.d の *.json が JSON でない",
+        (s: ManagedSettingsSources) => {
+          mkdirSync(s.dropInDir);
+          writeFileSync(join(s.dropInDir, "10-x.json"), "{");
+        },
+      ],
+      ["managed-settings.d がディレクトリでない", (s: ManagedSettingsSources) => writeFileSync(s.dropInDir, "{}")],
+      [
+        "managed-settings.d が読めない",
+        (s: ManagedSettingsSources) => {
+          mkdirSync(s.dropInDir);
+          chmodSync(s.dropInDir, 0o000);
+        },
+      ],
+      // macOS の MDM プロファイル等、hook が内容を読まない管理ソース
+      ["内容を読めない管理ソース (MDM プロファイル) が存在する", (s: ManagedSettingsSources) => writeFileSync(s.opaque[0], "")],
+    ] as const)("%s なら hookApproved にしない", (_, setup) => {
+      writeSettings(join(home, ".claude", "settings.json"), gitAllow);
+      setup(managedSources);
+      expect(evaluate("git -C . log")).toEqual(passThrough);
+    });
+
+    test("managed settings の所在が分からない (未対応の OS) なら hookApproved にしない", () => {
+      writeSettings(join(home, ".claude", "settings.json"), gitAllow);
+      expect(evaluate("git -C . log", { managed: null })).toEqual(passThrough);
+    });
+
+    // サーバー管理設定 (claude.ai の組織ポリシー) は hook から内容を確実には読めない。
+    // 本体のキャッシュ (~/.claude/remote-settings.json) があればサーバー管理設定がありうるので hook allow しない
+    test("サーバー管理設定のキャッシュ ~/.claude/remote-settings.json があれば hookApproved にしない", () => {
+      writeSettings(join(home, ".claude", "settings.json"), gitAllow);
+      writeFileSync(join(home, ".claude", "remote-settings.json"), "{}");
+      expect(evaluate("git -C . log")).toEqual(passThrough);
+    });
+  });
+});
+
+// managed settings の所在 (https://code.claude.com/docs/en/managed-settings)
+describe("defaultManagedSettingsSources", () => {
+  test("macOS は /Library/Application Support/ClaudeCode と MDM の管理プロファイル", () => {
+    const sources = defaultManagedSettingsSources("darwin", "alice");
+    expect(sources).toEqual({
+      file: "/Library/Application Support/ClaudeCode/managed-settings.json",
+      dropInDir: "/Library/Application Support/ClaudeCode/managed-settings.d",
+      opaque: [
+        "/Library/Managed Preferences/com.anthropic.claudecode.plist",
+        "/Library/Managed Preferences/alice/com.anthropic.claudecode.plist",
+      ],
+    });
+  });
+
+  test("Linux / WSL は /etc/claude-code", () => {
+    expect(defaultManagedSettingsSources("linux", "alice")).toEqual({
+      file: "/etc/claude-code/managed-settings.json",
+      dropInDir: "/etc/claude-code/managed-settings.d",
+      opaque: [],
+    });
+  });
+
+  // Windows はレジストリ (HKLM / HKCU) を hook から読まないので所在不明として扱う
+  test.each(["win32", "freebsd"] as const)("%s は null (所在不明)", (platform) => {
+    expect(defaultManagedSettingsSources(platform, "alice")).toBeNull();
   });
 });
