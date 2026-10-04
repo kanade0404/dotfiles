@@ -184,8 +184,20 @@ describe("pre-tool-use-bash-analyzer (プロセス)", () => {
     ["main 内の別リポジトリ", () => "git -C nested status"],
     ["存在しないパス", () => "git -C no-such-dir status"],
     ["別リポジトリへのシンボリックリンク", () => "git -C link-other status"],
+    // git worktree add で作られていない gitdir (common dir が同じでも)
+    ["手で作った gitdir", () => "git -C crafted status"],
+    ["gitdir が worktrees/<name> 配下でない", () => "git -C notwt status"],
+    ["逆リンクが一致しない gitdir", () => "git -C hijack status"],
   ] as const)("Claude Code: -C の対象が %s なら何も出力しない", (_, command) => {
     expect(env.decisionOf(command(env.fx))).toBeNull();
+  });
+
+  test("Claude Code: worktreeConfig 有効なリポジトリの正規の worktree への git -C は allow を返す", () => {
+    expect(env.decisionOf(`git -C ${join(env.fx.base, "wtc-sparse")} status`, env.fx.worktreeConfig, { CLAUDE_PROJECT_DIR: env.fx.worktreeConfig })).toBe("allow");
+  });
+
+  test("Claude Code: worktreeConfig 有効なリポジトリで手で作った gitdir (config.worktree に fsmonitor) への git -C は何も出力しない", () => {
+    expect(env.decisionOf("git -C crafted status", env.fx.worktreeConfig, { CLAUDE_PROJECT_DIR: env.fx.worktreeConfig })).toBeNull();
   });
 
   test("Claude Code: cwd が git 管理外なら何も出力しない", () => {

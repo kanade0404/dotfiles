@@ -29,9 +29,12 @@ describe("isSameGitRepository", () => {
       ["相対パスの .git ファイル", (f: GitFixture) => [f.main, "rel"]],
       // 相対パスは対象ディレクトリではなく .git ファイルのあるディレクトリ基準で解決する
       ["相対パスの .git ファイルがある階層の下", (f: GitFixture) => [f.main, "rel/inner"]],
-      // 手で作った gitdir でも commondir が main を指せば同一リポジトリ扱い。安全性は
-      // 「git は config / hooks を common dir から読む」ことに依存する (下の前提テスト)
-      ["手で作った gitdir (commondir → main)", (f: GitFixture) => [f.main, "crafted"]],
+      // extensions.worktreeConfig=true のリポジトリでも、git worktree add で作った worktree は同一
+      ["worktreeConfig 有効: main 自身 (sparse-checkout cone の config.worktree)", (f: GitFixture) => [f.worktreeConfig, "."]],
+      ["worktreeConfig 有効: main から worktree", (f: GitFixture) => [f.worktreeConfig, "../wtc-wt"]],
+      ["worktreeConfig 有効: worktree から main", (f: GitFixture) => [join(f.base, "wtc-wt"), f.worktreeConfig]],
+      ["worktreeConfig 有効: sparse-checkout cone の worktree", (f: GitFixture) => [f.worktreeConfig, "../wtc-sparse"]],
+      ["相対パスでリンクした worktree (worktree.useRelativePaths)", (f: GitFixture) => [f.worktreeConfig, "../wtc-rel"]],
     ] as const)("%s", (_, args) => {
       const [cwd, dir] = args(fx);
       expect(same(cwd, dir)).toBe(true);
@@ -59,6 +62,14 @@ describe("isSameGitRepository", () => {
       ["cwd も対象も git 管理外", (f: GitFixture) => [f.plain, "."]],
       ["core.worktree を設定したリポジトリ", (f: GitFixture) => [f.coreWorktree, "."]],
       ["手で作った gitdir の config.worktree に core.worktree", (f: GitFixture) => [f.main, "crafted-wtconfig"]],
+      // git が作った worktree だけを認める: gitdir は common dir 自身か <common>/worktrees/<name>
+      // で、<common>/worktrees/<name>/gitdir が対象の .git ファイルを指し返していること
+      ["手で作った gitdir (.git ディレクトリに commondir → main)", (f: GitFixture) => [f.main, "crafted"]],
+      ["commondir は main だが gitdir が worktrees/<name> 配下でない", (f: GitFixture) => [f.main, "notwt"]],
+      ["正規の worktree の gitdir を指すが逆リンクが一致しない", (f: GitFixture) => [f.main, "hijack"]],
+      ["worktreeConfig 有効 + 手で作った gitdir の config.worktree に core.fsmonitor", (f: GitFixture) => [f.worktreeConfig, "crafted"]],
+      // 防御として、正規の worktree でも config.worktree に sparse-checkout 以外の設定があれば false
+      ["正規の worktree の config.worktree に core.fsmonitor", (f: GitFixture) => [f.worktreeConfig, "../wtc-evil"]],
     ] as const)("%s", (_, args) => {
       const [cwd, dir] = args(fx);
       expect(same(cwd, dir)).toBe(false);
@@ -78,20 +89,22 @@ describe("isSameGitRepository", () => {
     expect(same(fx.main, "")).toBe(false);
   });
 
-  // 「手で作った gitdir (commondir → main)」を true にしてよい前提: git はその gitdir の
-  // config ではなく common dir (main/.git) の config を読む。git の挙動が変わったら検知する。
-  test("前提: git は手で作った gitdir の config を読まず、common dir の config を読む", () => {
+  // 手で作った gitdir を拒否する理由: common dir が同じでも、extensions.worktreeConfig が
+  // 有効なら git はその gitdir の config.worktree を読む (core.fsmonitor 等で任意コマンド実行)。
+  test("前提: worktreeConfig 有効時、git は手で作った gitdir の config.worktree を読む", () => {
     const run = (...args: string[]) =>
-      spawnSync("git", ["-C", join(fx.main, "crafted"), ...args], {
+      spawnSync("git", ["-C", join(fx.worktreeConfig, "crafted"), ...args], {
         encoding: "utf8",
         env: envWithoutGit({ GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" }),
       });
     const common = run("rev-parse", "--path-format=absolute", "--git-common-dir");
     expect(common.status).toBe(0);
-    expect(common.stdout.trim()).toBe(join(fx.main, ".git"));
+    expect(common.stdout.trim()).toBe(join(fx.worktreeConfig, ".git"));
     const fsmonitor = run("config", "--get", "core.fsmonitor");
-    expect(fsmonitor.stdout).toBe("");
-    expect(fsmonitor.status).toBe(1);
+    expect({ status: fsmonitor.status, stdout: fsmonitor.stdout.trim() }).toEqual({
+      status: 0,
+      stdout: "touch MARKER; false",
+    });
   });
 
   test.each([

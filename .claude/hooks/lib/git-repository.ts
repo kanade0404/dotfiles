@@ -64,8 +64,79 @@ function assertPlainConfig(path: string): void {
   }
 }
 
-/** gitdir から common dir を求める (`commondir` ファイルがあればその参照先、無ければ gitdir 自身) */
-function commonDirOf(gitdir: string): string {
+/**
+ * config.worktree に置いてよい設定 (セクション → キー、小文字)。`git sparse-checkout`
+ * (init / set、cone / non-cone、--sparse-index) が書くものだけ。
+ */
+const ALLOWED_WORKTREE_CONFIG: Readonly<Record<string, ReadonlySet<string>>> = {
+  core: new Set(["sparsecheckout", "sparsecheckoutcone"]),
+  index: new Set(["sparse"]),
+};
+
+/**
+ * gitdir の config.worktree が無いか、sparse-checkout の真偽値設定だけか。
+ *
+ * extensions.worktreeConfig が有効だと git は gitdir の config.worktree も読むので、
+ * core.fsmonitor / core.hooksPath / core.sshCommand / core.pager / alias.* / diff.external /
+ * include 等、実行やファイル参照につながるキーを書かれうる。キーの denylist は網羅できないので、
+ * sparse-checkout が書く `[core] sparseCheckout*` / `[index] sparse` の真偽値だけを許す
+ * allowlist にし、それ以外 (サブセクション、同じ行の複数要素、継続行、コメント付きの値等) は
+ * 解決不能として扱う。common config の extensions.worktreeConfig の有無は判定に使わない
+ * (キー名の大小文字・真偽値の表記揺れを解析する必要があり、無効なら git は読まないので
+ * 余分に拒否するだけで安全側)。
+ */
+function assertSparseOnlyWorktreeConfig(path: string): void {
+  const st = lstatOrNull(path);
+  if (st === null) return;
+  if (!st.isFile()) throw new UnresolvableRepository("config.worktree が通常ファイルではない");
+  let section: string | null = null;
+  for (const raw of readFileSync(path, "utf8").split("\n")) {
+    const line = raw.trim();
+    if (line === "" || line.startsWith("#") || line.startsWith(";")) continue;
+    const header = /^\[([A-Za-z0-9-]+)\]$/.exec(line);
+    if (header) {
+      section = header[1].toLowerCase();
+      continue;
+    }
+    const entry = /^([A-Za-z][A-Za-z0-9-]*)\s*=\s*(?:true|false|yes|no|on|off|1|0)$/i.exec(line);
+    const allowed = section === null ? undefined : ALLOWED_WORKTREE_CONFIG[section];
+    if (entry === null || allowed === undefined || !allowed.has(entry[1].toLowerCase())) {
+      throw new UnresolvableRepository(`${path} に sparse-checkout 以外の設定がある`);
+    }
+  }
+}
+
+/**
+ * gitdir が `git worktree add` で作られた linked worktree のものか。
+ * - gitdir が `<common>/worktrees/<name>` の直下である
+ * - `<common>/worktrees/<name>/gitdir` (git が書く逆リンク) が対象の `.git` ファイルを指す
+ *   (相対パスは worktree.useRelativePaths の形式で、`<common>/worktrees/<name>` 基準)
+ * 手で作った gitdir は common dir が同じでも、worktreeConfig 有効時に gitdir 側の
+ * config.worktree を git に読ませられる。
+ */
+function assertLinkedWorktree(common: string, gitdir: string, dotGitFile: string | null): void {
+  if (dotGitFile === null) throw new UnresolvableRepository(".git ディレクトリに commondir がある");
+  if (dirname(gitdir) !== join(common, "worktrees")) {
+    throw new UnresolvableRepository("gitdir が <common>/worktrees/<name> ではない");
+  }
+  const backlinkFile = join(gitdir, "gitdir");
+  if (!lstatSync(backlinkFile).isFile()) throw new UnresolvableRepository("gitdir の逆リンクがファイルではない");
+  const value = readFileSync(backlinkFile, "utf8").replace(/[\r\n]+$/, "");
+  if (value === "" || /[\r\n]/.test(value)) throw new UnresolvableRepository("不正な gitdir の逆リンク");
+  if (physicalResolve(gitdir, value) !== dotGitFile) {
+    throw new UnresolvableRepository("gitdir の逆リンクが対象の .git ファイルを指さない");
+  }
+}
+
+/**
+ * gitdir から common dir を求める (`commondir` ファイルがあればその参照先、無ければ gitdir 自身)。
+ *
+ * 認めるのは git が作ったリポジトリの形だけ: gitdir が common dir 自身 (通常のリポジトリ /
+ * `.git` ファイルで指した common dir) か、`git worktree add` で作った linked worktree の gitdir
+ * (assertLinkedWorktree)。dotGitFile は探索で見つけた `.git` ファイルの物理パス
+ * (`.git` がディレクトリなら null)。
+ */
+function commonDirOf(gitdir: string, dotGitFile: string | null): string {
   if (!statSync(join(gitdir, "HEAD")).isFile()) throw new UnresolvableRepository("gitdir に HEAD が無い");
   const commondirFile = join(gitdir, "commondir");
   const st = lstatOrNull(commondirFile);
@@ -75,9 +146,10 @@ function commonDirOf(gitdir: string): string {
     const value = readFileSync(commondirFile, "utf8").replace(/[\r\n]+$/, "");
     if (value === "" || /[\r\n]/.test(value)) throw new UnresolvableRepository("不正な commondir");
     common = physicalResolve(gitdir, value);
+    assertLinkedWorktree(common, gitdir, dotGitFile);
   }
   assertPlainConfig(join(common, "config"));
-  if (lstatOrNull(join(gitdir, "config.worktree")) !== null) assertPlainConfig(join(gitdir, "config.worktree"));
+  assertSparseOnlyWorktreeConfig(join(gitdir, "config.worktree"));
   return common;
 }
 
@@ -95,8 +167,8 @@ function resolveCommonDir(dir: string): string {
     const dotGit = join(current, ".git");
     const st = lstatOrNull(dotGit);
     if (st !== null) {
-      if (st.isDirectory()) return commonDirOf(dotGit);
-      if (st.isFile()) return commonDirOf(physicalResolve(current, parseGitFile(readFileSync(dotGit, "utf8"))));
+      if (st.isDirectory()) return commonDirOf(dotGit, null);
+      if (st.isFile()) return commonDirOf(physicalResolve(current, parseGitFile(readFileSync(dotGit, "utf8"))), dotGit);
       throw new UnresolvableRepository(".git がディレクトリでも通常ファイルでもない");
     }
     if (lstatOrNull(join(current, "HEAD")) !== null) {
@@ -119,7 +191,9 @@ function resolveCommonDir(dir: string): string {
  *
  * git は実行せず、ファイルシステムだけで解決する。cwd が無い / 相対パス、環境変数による
  * 付け替え、存在しない・ディレクトリでないパス、`.git` ファイルの不正な内容、bare
- * リポジトリ、core.worktree、読み取りエラー等はすべて false (allow しない) にする。
+ * リポジトリ、core.worktree、`git worktree add` で作られていない gitdir (commondir を持つが
+ * `<common>/worktrees/<name>` でない・逆リンクが一致しない)、sparse-checkout 以外の設定を
+ * 含む config.worktree、読み取りエラー等はすべて false (allow しない) にする。
  */
 export function isSameGitRepository(cwd: string | undefined, dir: string, env: Env = process.env): boolean {
   try {

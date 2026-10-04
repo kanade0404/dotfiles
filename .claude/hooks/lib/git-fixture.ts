@@ -41,6 +41,8 @@ export type GitFixture = {
   readonly plain: string;
   /** core.worktree を設定したリポジトリ */
   readonly coreWorktree: string;
+  /** extensions.worktreeConfig=true のリポジトリ (base/wtc)。worktree は base/wtc-* */
+  readonly worktreeConfig: string;
   readonly cleanup: () => void;
 };
 
@@ -59,12 +61,23 @@ export type GitFixture = {
  *   - link-other          → other (別リポジトリへのシンボリックリンク)
  *   - link-inner          → other/inner (`link-inner/..` は物理的に other)
  *   - crafted/            git を使わず手で作った gitdir (.git/{HEAD,commondir → main/.git})。
- *                         .git/config に core.fsmonitor を書いてある (git は common dir の config だけを読む)
+ *                         .git/config に core.fsmonitor を書いてある
  *   - crafted-wtconfig/   crafted/ と同じ構成で、.git/config.worktree に core.worktree がある
+ *   - notwt/              .git ファイル → main/fakegit/n (HEAD, commondir → main/.git, gitdir → notwt/.git)。
+ *                         common dir と逆リンクは正しいが gitdir が main/.git/worktrees/<name> ではない
+ *   - hijack/             .git ファイル → main/.git/worktrees/wt (wt の正規の gitdir)。
+ *                         gitdir 側の逆リンク (worktrees/wt/gitdir) は wt/.git を指す
  * - wt/                   main の worktree
  * - other/inner/          無関係なリポジトリ
  * - plain/                git 管理外
  * - core-worktree/        core.worktree を設定したリポジトリ
+ * - wtc/                  extensions.worktreeConfig=true のリポジトリ。main 自身に sparse-checkout (cone)
+ *   - crafted/            手で作った gitdir (.git/{HEAD,commondir → wtc/.git}) の config.worktree に
+ *                         core.fsmonitor (worktreeConfig 有効時、git はこれを読む)
+ * - wtc-wt/               wtc の worktree
+ * - wtc-sparse/           wtc の worktree + sparse-checkout (cone)
+ * - wtc-rel/              wtc の worktree (worktree.useRelativePaths で相対パスのリンク)
+ * - wtc-evil/             wtc の worktree。gitdir (wtc/.git/worktrees/wtc-evil) の config.worktree に core.fsmonitor
  */
 export function createGitFixture(): GitFixture {
   const base = realpathSync(mkdtempSync(join(tmpdir(), "git-fixture-")));
@@ -100,6 +113,33 @@ export function createGitFixture(): GitFixture {
     writeFileSync(join(gitdir, "config"), "[core]\n\tfsmonitor = false-crafted-fsmonitor\n");
   }
   writeFileSync(join(main, "crafted-wtconfig", ".git", "config.worktree"), `[core]\n\tworktree = ${plain}\n`);
+  mkdirSync(join(main, "fakegit", "n"), { recursive: true });
+  writeFileSync(join(main, "fakegit", "n", "HEAD"), "ref: refs/heads/main\n");
+  writeFileSync(join(main, "fakegit", "n", "commondir"), "../../.git\n");
+  writeFileSync(join(main, "fakegit", "n", "gitdir"), `${join(main, "notwt", ".git")}\n`);
+  mkdirSync(join(main, "notwt"));
+  writeFileSync(join(main, "notwt", ".git"), "gitdir: ../fakegit/n\n");
+  mkdirSync(join(main, "hijack"));
+  writeFileSync(join(main, "hijack", ".git"), `gitdir: ${join(main, ".git", "worktrees", "wt")}\n`);
+
+  const wtc = join(base, "wtc");
+  mkdirSync(wtc);
+  git(wtc, "init", "-q");
+  git(wtc, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "--allow-empty", "-m", "init");
+  git(wtc, "config", "extensions.worktreeConfig", "true");
+  for (const name of ["wtc-wt", "wtc-sparse", "wtc-evil"]) git(wtc, "worktree", "add", "-q", "--detach", join(base, name));
+  git(wtc, "-c", "worktree.useRelativePaths=true", "worktree", "add", "-q", "--detach", join(base, "wtc-rel"));
+  git(join(base, "wtc-sparse"), "sparse-checkout", "set", "--cone", "a");
+  git(wtc, "sparse-checkout", "set", "--cone", "a");
+  writeFileSync(
+    join(wtc, ".git", "worktrees", "wtc-evil", "config.worktree"),
+    "[core]\n\tfsmonitor = \"touch MARKER; false\"\n",
+  );
+  const wtcCrafted = join(wtc, "crafted", ".git");
+  mkdirSync(wtcCrafted, { recursive: true });
+  writeFileSync(join(wtcCrafted, "HEAD"), "ref: refs/heads/main\n");
+  writeFileSync(join(wtcCrafted, "commondir"), "../../.git\n");
+  writeFileSync(join(wtcCrafted, "config.worktree"), "[core]\n\tfsmonitor = \"touch MARKER; false\"\n");
 
   mkdirSync(join(other, "inner"), { recursive: true });
   git(other, "init", "-q");
@@ -119,6 +159,7 @@ export function createGitFixture(): GitFixture {
     other,
     plain,
     coreWorktree,
+    worktreeConfig: wtc,
     cleanup: () => rmSync(base, { recursive: true, force: true }),
   };
 }
