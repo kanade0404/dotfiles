@@ -80,6 +80,8 @@ export type GitFixture = {
  * - wtc-sparse/           wtc の worktree + sparse-checkout (cone)
  * - wtc-rel/              wtc の worktree (worktree.useRelativePaths で相対パスのリンク)
  * - wtc-evil/             wtc の worktree。gitdir (wtc/.git/worktrees/wtc-evil) の config.worktree に core.fsmonitor
+ * - sepgit/               `git init --separate-git-dir` のリポジトリ (common dir は sepgit.git)
+ * - sepgit-wt/            sepgit の worktree
  */
 export function createGitFixture(): GitFixture {
   const base = realpathSync(mkdtempSync(join(tmpdir(), "git-fixture-")));
@@ -150,6 +152,11 @@ export function createGitFixture(): GitFixture {
   writeFileSync(join(wtcCrafted, "HEAD"), "ref: refs/heads/main\n");
   writeFileSync(join(wtcCrafted, "commondir"), "../../.git\n");
   writeFileSync(join(wtcCrafted, "config.worktree"), "[core]\n\tfsmonitor = \"touch MARKER; false\"\n");
+
+  // common dir の名前が .git でないリポジトリ (main checkout の位置を common dir から決められない)
+  git(base, "init", "-q", "--separate-git-dir", join(base, "sepgit.git"), join(base, "sepgit"));
+  git(join(base, "sepgit"), "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "--allow-empty", "-m", "init");
+  git(join(base, "sepgit"), "worktree", "add", "-q", "--detach", join(base, "sepgit-wt"));
 
   mkdirSync(join(other, "inner"), { recursive: true });
   git(other, "init", "-q");

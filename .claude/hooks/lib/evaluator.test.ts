@@ -618,6 +618,69 @@ describe("evaluateCommand - hook allow の根拠になる設定ファイル", ()
     expect(evaluate("git -C . submodule status", { cwd: join(fx.main, "sub") }).decision).toBe("ask");
   });
 
+  // 本体は .claude/settings.local.json を git リポジトリのルート (worktree では main checkout の
+  // ルート) から読む (https://code.claude.com/docs/en/settings#where-claude-code-keeps-the-local-file-in-a-git-repository)。
+  // その deny / ask は本体では -C 版に効かないので hook が読んで評価する。
+  describe("リポジトリルート / main checkout の .claude/settings.local.json", () => {
+    const gitAllow = { allow: ["Bash(git log *)", "Bash(git push *)", "Bash(git status *)"] };
+    const mainLocal = () => join(fx.main, ".claude", "settings.local.json");
+
+    test("前提: worktree のセッションで git -C . log は hookApproved", () => {
+      writeSettings(join(home, ".claude", "settings.json"), gitAllow);
+      expect(evaluate("git -C . log", { cwd: fx.worktree, env: { HOME: home, CLAUDE_PROJECT_DIR: fx.worktree } })).toEqual(
+        hookApproved,
+      );
+    });
+
+    test("worktree のセッションで main checkout の settings.local.json の deny が効く", () => {
+      writeSettings(join(home, ".claude", "settings.json"), gitAllow);
+      writeSettings(mainLocal(), { deny: ["Bash(git log *)"] });
+      expect(
+        evaluate("git -C . log", { cwd: fx.worktree, env: { HOME: home, CLAUDE_PROJECT_DIR: fx.worktree } }).decision,
+      ).toBe("deny");
+    });
+
+    test("worktree のセッションで main checkout の settings.local.json の ask が効く", () => {
+      writeSettings(join(home, ".claude", "settings.json"), gitAllow);
+      writeSettings(mainLocal(), { ask: ["Bash(git push *)"] });
+      expect(
+        evaluate("git -C . push origin main", { cwd: fx.worktree, env: { HOME: home, CLAUDE_PROJECT_DIR: fx.worktree } })
+          .decision,
+      ).toBe("ask");
+    });
+
+    test("サブディレクトリで開始したセッションでリポジトリルートの settings.local.json の ask が効く", () => {
+      const sub = join(fx.main, "sub");
+      writeSettings(join(home, ".claude", "settings.json"), gitAllow);
+      writeSettings(mainLocal(), { ask: ["Bash(git push *)"] });
+      expect(evaluate("git -C . push origin main", { cwd: sub, env: { HOME: home, CLAUDE_PROJECT_DIR: sub } }).decision).toBe(
+        "ask",
+      );
+    });
+
+    test("main checkout の settings.local.json の allow は hookApproved の根拠にしない", () => {
+      writeSettings(mainLocal(), submoduleAllow);
+      expect(
+        evaluate("git -C . submodule status", { cwd: fx.worktree, env: { HOME: home, CLAUDE_PROJECT_DIR: fx.worktree } }),
+      ).toEqual(passThrough);
+    });
+
+    // 本体は git 管理外ではルートを探さず開始ディレクトリの .claude/settings.local.json を読む (hook も読む)
+    test("CLAUDE_PROJECT_DIR が git 管理外でも hookApproved", () => {
+      writeSettings(join(home, ".claude", "settings.json"), gitAllow);
+      expect(evaluate("git -C . log", { env: { HOME: home, CLAUDE_PROJECT_DIR: fx.plain } })).toEqual(hookApproved);
+    });
+
+    // リポジトリだが hook が解決できない (本体が読む settings.local.json の位置を特定できない) 形
+    test.each([
+      ["core.worktree を設定したリポジトリ", (f: GitFixture) => f.coreWorktree],
+      ["common dir の名前が .git でないリポジトリの worktree", (f: GitFixture) => join(f.base, "sepgit-wt")],
+    ] as const)("CLAUDE_PROJECT_DIR が%sなら hookApproved にしない", (_, projectDir) => {
+      writeSettings(join(home, ".claude", "settings.json"), gitAllow);
+      expect(evaluate("git -C . log", { env: { HOME: home, CLAUDE_PROJECT_DIR: projectDir(fx) } })).toEqual(passThrough);
+    });
+  });
+
   // managed settings (組織が配布する管理設定) の deny / ask は本体では -C 版に効かないので、
   // hook が読んで評価する。hook が読めない / 解釈できない管理設定があれば hook allow しない。
   describe("managed settings", () => {

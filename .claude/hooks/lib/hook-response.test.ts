@@ -287,6 +287,13 @@ describe("pre-tool-use-bash-analyzer (プロセス): hook allow の根拠にな�
     expect(env.decisionOf("git -C . status", env.fx.main, { CLAUDE_PROJECT_DIR: env.fx.main, HOME: home })).toBeNull();
   });
 
+  test("worktree のセッションで main checkout の .claude/settings.local.json の deny は効く", () => {
+    const worktreeSession = { CLAUDE_PROJECT_DIR: env.fx.worktree };
+    expect(env.decisionOf("git -C . status", env.fx.worktree, worktreeSession)).toBe("allow");
+    writeSettings(join(env.fx.main, ".claude", "settings.local.json"), { deny: ["Bash(git status *)"] });
+    expect(env.decisionOf("git -C . status", env.fx.worktree, worktreeSession)).toBe("deny");
+  });
+
   test("リポジトリの .codex/settings.json の deny は効く", () => {
     writeSettings(join(env.fx.main, ".codex", "settings.json"), { deny: ["Bash(git status *)"] });
     expect(env.decisionOf("git -C . status")).toBe("deny");

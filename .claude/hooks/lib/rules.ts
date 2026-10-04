@@ -1,6 +1,7 @@
 import { lstatSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { userInfo } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
+import { localSettingsRootsOf } from "./git-repository.ts";
 import { extractBashPattern, patternToRegex } from "./rule-matcher.ts";
 import type { Rule, RuleCategory } from "./types.ts";
 
@@ -235,6 +236,8 @@ function loadManagedRules(sources: ManagedSettingsSources | null): { rules: read
  * 6. {cwd}/.claude/settings.local.json
  * 7. {CLAUDE_PROJECT_DIR}/.claude/settings.json
  * 8. {CLAUDE_PROJECT_DIR}/.claude/settings.local.json
+ * 9. cwd と CLAUDE_PROJECT_DIR それぞれの git リポジトリのルートと、worktree なら main checkout
+ *    のルートの .claude/settings.local.json (本体は local をそこから読む。localSettingsRootsOf)
  * (同じパスは 1 回だけ読む)
  *
  * ルールは全てマージされ、deny > allow > ask の順で評価される（matchCommand 側の責務）。
@@ -246,7 +249,8 @@ function loadManagedRules(sources: ManagedSettingsSources | null): { rules: read
  * ~/.claude/settings.json と、CLAUDE_PROJECT_DIR (Claude Code が hook に渡す、セッションを
  * 開始したプロジェクトルート) の .claude/settings.json / settings.local.json。
  * .codex/* と hook 入力の cwd 基準の .claude/* はリポジトリの内容 (エージェントが書ける /
- * clone 元が仕込める) で本体は読まないので付けない。managed settings の allow にも付けない。
+ * clone 元が仕込める) で本体は読まないので付けない。managed settings と、9. (リポジトリ /
+ * main checkout のルート) の allow にも付けない。
  * deny / ask は判定を厳しくする方向なので出自を問わず全て使う。
  *
  * hook が allow を返すと本体の deny / ask は -C 版に効かない (プレフィックス一致のため) ので、
@@ -260,6 +264,8 @@ function loadManagedRules(sources: ManagedSettingsSources | null): { rules: read
  *   allowManagedPermissionRulesOnly が false 以外 (loadManagedRules)
  * - サーバー管理設定のキャッシュ (~/.claude/remote-settings.json) がある: サーバー管理設定は
  *   キャッシュと実際に適用中のポリシーが一致する保証が無く、hook は内容を評価しない
+ * - cwd / CLAUDE_PROJECT_DIR が git リポジトリの中だが、本体が settings.local.json を読む
+ *   ルートを特定できない (localSettingsRootsOf が null)
  *
  * env は HOME / CLAUDE_PROJECT_DIR / CLAUDE_CONFIG_DIR を読む環境変数、managed は managed
  * settings の所在 (いずれもテスト用、既定は実行中のプロセスと OS のもの)。
@@ -273,12 +279,15 @@ export function loadRules(
   const home = homeDir(env);
   const projectDir = claudeProjectDir(env);
   const managedRules = loadManagedRules(managed);
+  const sessionDirs = [...(cwd !== undefined && isAbsolute(cwd) ? [cwd] : []), ...(projectDir === null ? [] : [projectDir])];
+  const localSettingsRoots = sessionDirs.map((dir) => localSettingsRootsOf(dir, env));
   const hookAllowable =
     projectDir !== null &&
     home !== null &&
     env.CLAUDE_CONFIG_DIR === undefined &&
     managedRules.hookAllowable &&
-    !pathExists(join(home, ".claude", "remote-settings.json"));
+    !pathExists(join(home, ".claude", "remote-settings.json")) &&
+    localSettingsRoots.every((roots) => roots !== null);
   const readByClaudeCode = new Set(
     !hookAllowable
       ? []
@@ -301,6 +310,7 @@ export function loadRules(
     ...(projectDir === null
       ? []
       : [resolve(projectDir, ".claude", "settings.json"), resolve(projectDir, ".claude", "settings.local.json")]),
+    ...localSettingsRoots.flatMap((roots) => (roots ?? []).map((root) => join(root, ".claude", "settings.local.json"))),
   ];
 
   const rules: Rule[] = [...managedRules.rules];

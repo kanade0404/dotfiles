@@ -1,5 +1,5 @@
 import { lstatSync, readFileSync, realpathSync, statSync, type Stats } from "node:fs";
-import { dirname, isAbsolute, join } from "node:path";
+import { basename, dirname, isAbsolute, join } from "node:path";
 
 type Env = Readonly<Record<string, string | undefined>>;
 
@@ -193,6 +193,30 @@ function resolveRepository(dir: string): Repository {
     const parent = dirname(current);
     if (parent === current) throw new OutsideRepository("リポジトリの外");
     current = parent;
+  }
+}
+
+/**
+ * Claude Code 本体が `dir` で開始したセッションの `.claude/settings.local.json` を読みうる
+ * ディレクトリ (git リポジトリのルートと、worktree なら main checkout のルート) を返す。
+ * ref: https://code.claude.com/docs/en/settings#where-claude-code-keeps-the-local-file-in-a-git-repository
+ *
+ * - git 管理外: 空配列 (本体は開始ディレクトリの settings.local.json を読む)
+ * - 作業ツリーのルート (`.git` のある階層) と、common dir の名前が `.git` ならその親
+ *   (main checkout のルート) を返す
+ * - linked worktree で common dir の名前が `.git` でない、または isSameGitRepository と同じ条件で
+ *   解決できない (環境変数による付け替え・core.worktree・手で作った gitdir 等): null
+ *   (本体が読むファイルを特定できない)
+ */
+export function localSettingsRootsOf(dir: string, env: Env = process.env): readonly string[] | null {
+  try {
+    if (!isAbsolute(dir)) return null;
+    if (REPOSITORY_ENV_VARS.some((name) => env[name] !== undefined)) return null;
+    const { worktreeRoot, gitdir, common } = resolveRepository(physicalResolve("/", dir));
+    if (basename(common) === ".git") return [...new Set([worktreeRoot, dirname(common)])];
+    return gitdir === common ? [worktreeRoot] : null;
+  } catch (e) {
+    return e instanceof OutsideRepository ? [] : null;
   }
 }
 

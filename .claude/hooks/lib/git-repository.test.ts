@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createGitFixture, envWithoutGit, type GitFixture } from "./git-fixture.ts";
-import { isSameGitRepository } from "./git-repository.ts";
+import { isSameGitRepository, localSettingsRootsOf } from "./git-repository.ts";
 
 // `git -C <dir>` は <dir> のリポジトリの .git/config (core.fsmonitor 等) や .git/hooks を
 // 読み込んで実行する。hook が allow してよいのは、<dir> が hook 入力の cwd と同じ
@@ -121,6 +121,38 @@ describe("isSameGitRepository", () => {
     "GIT_DISCOVERY_ACROSS_FILESYSTEM",
   ])("環境変数 %s があれば false", (name) => {
     expect(same(fx.main, ".", { [name]: "/x" })).toBe(false);
+  });
+});
+
+// 本体が .claude/settings.local.json を読むリポジトリのルート (worktree では main checkout のルート)
+describe("localSettingsRootsOf", () => {
+  let fx: GitFixture;
+  beforeAll(() => { fx = createGitFixture(); });
+  afterAll(() => { fx.cleanup(); });
+
+  test.each([
+    ["リポジトリのルート", (f: GitFixture) => f.main, (f: GitFixture) => [f.main]],
+    ["サブディレクトリ", (f: GitFixture) => join(f.main, "sub", "dir"), (f: GitFixture) => [f.main]],
+    ["worktree (作業ツリーのルートと main checkout のルート)", (f: GitFixture) => f.worktree, (f: GitFixture) => [f.worktree, f.main]],
+    ["worktreeConfig 有効なリポジトリの worktree",(f: GitFixture) => join(f.base, "wtc-wt"), (f: GitFixture) => [join(f.base, "wtc-wt"), f.worktreeConfig]],
+    ["common dir の名前が .git でない main checkout", (f: GitFixture) => join(f.base, "sepgit"), (f: GitFixture) => [join(f.base, "sepgit")]],
+    ["git 管理外", (f: GitFixture) => f.plain, () => []],
+  ] as const)("%s", (_, dir, expected) => {
+    expect(localSettingsRootsOf(dir(fx), {})).toEqual(expected(fx));
+  });
+
+  test.each([
+    ["core.worktree を設定したリポジトリ", (f: GitFixture) => f.coreWorktree],
+    ["common dir の名前が .git でないリポジトリの worktree", (f: GitFixture) => join(f.base, "sepgit-wt")],
+    ["手で作った gitdir", (f: GitFixture) => join(f.main, "crafted")],
+    ["存在しないパス", (f: GitFixture) => join(f.main, "no-such-dir")],
+    ["相対パス", (f: GitFixture) => f.main.slice(1)],
+  ] as const)("%s は null (特定できない)", (_, dir) => {
+    expect(localSettingsRootsOf(dir(fx), {})).toBeNull();
+  });
+
+  test("GIT_DIR が環境にあれば null", () => {
+    expect(localSettingsRootsOf(fx.main, { GIT_DIR: "/x" })).toBeNull();
   });
 });
 
