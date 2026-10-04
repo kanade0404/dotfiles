@@ -387,14 +387,16 @@ type DangerousGitFlagRule = {
 };
 
 // `git -C <dir> <sub> ...` の判定は次の順で成り立っている (matchCommand の評価順):
-// 1. analyzeGitC で `git <sub> ...` に正規化した候補を、settings.json の非 -C deny
-//    ルール (`Bash(git reset *)` 等、プレフィックス一致でサブコマンド位置に anchor
-//    される) で照合する。
+// 1. deny — analyzeGitC で `git <sub> ...` に正規化した候補も含めて、settings.json の
+//    非 -C deny ルール (`Bash(git reset *)` 等、プレフィックス一致でサブコマンド位置に
+//    anchor される) で照合する。
 // 2. 本テーブル (checkDangerousGitFlags) — 実サブコマンドを tokenize して判定し、
 //    deny ルールの形に無い破壊的サブコマンド/フラグや、`-C` で付け替えた時だけ危険な
 //    操作 (dangerousWhenRedirected) を deny に昇格させる。
-// 3. 正規化できない形 (展開を含む dir / 複数 -C / 他の付け替え手段との併用等) は ask。
-// 4. 正規化した候補が非 -C allow ルールに一致すれば allow (gitCNormalized)。
+// 3. 機密ファイルパス (checkSensitiveFilePaths) を deny に昇格させる。
+// 4. 正規化できない形 (展開を含む dir / 複数 -C / -C 以外の global option との併用等) は ask。
+// 5. ask — 正規化した候補も含めて非 -C ask ルールに一致すれば ask (allow より先)。
+// 6. allow — 正規化した候補が非 -C allow ルールに一致すれば allow (gitCNormalized)。
 // settings.json には `-C` 版ルールを置かない (中間ワイルドカードは hook でも本体でも
 // anchor されず、hook 不在時に本体が緩いマッチで auto-approve するため)。
 // 本テーブルは自己申告の denylist であり網羅を保証しない — 新しい破壊的な
