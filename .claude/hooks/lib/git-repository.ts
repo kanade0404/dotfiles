@@ -101,7 +101,9 @@ function assertSparseOnlyWorktreeConfig(path: string): void {
       continue;
     }
     const entry = /^([A-Za-z][A-Za-z0-9-]*)\s*=\s*(?:true|false|yes|no|on|off|1|0)$/i.exec(line);
-    const allowed = section === null ? undefined : ALLOWED_WORKTREE_CONFIG[section];
+    // `[constructor]` 等がプロトタイプのプロパティを引かないよう自身のキーだけを見る
+    const allowed =
+      section !== null && Object.hasOwn(ALLOWED_WORKTREE_CONFIG, section) ? ALLOWED_WORKTREE_CONFIG[section] : undefined;
     if (entry === null || allowed === undefined || !allowed.has(entry[1].toLowerCase())) {
       throw new UnresolvableRepository(`${path} に sparse-checkout 以外の設定がある`);
     }
