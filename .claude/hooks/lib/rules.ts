@@ -58,6 +58,8 @@ function loadRulesFromFile(path: string): readonly Rule[] {
  * 6. {cwd}/.claude/settings.local.json
  *
  * ルールは全てマージされ、deny > allow > ask の順で評価される（matchCommand 側の責務）。
+ * ただし `git -C <dir>` を正規化した候補は deny > ask > allow の順で評価する
+ * (本体の ask ルールが -C 版に効かず、hook が唯一の適用点のため)。
  */
 export function loadRules(cwd?: string): readonly Rule[] {
   const home = process.env.HOME ?? "";

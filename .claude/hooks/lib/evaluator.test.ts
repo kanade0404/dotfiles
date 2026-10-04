@@ -407,3 +407,29 @@ describe("evaluateCommand - git -C の hook allow (hookApproved)", () => {
     expect(evaluate("git -C $(echo /x) status").decision).toBe("ask");
   });
 });
+
+// ユーザ設定 (~/.claude/settings.json 等) の ask ルールは Claude Code 本体ではプレフィックス
+// 一致なので `git -C <dir> commit ...` には効かない。-C 版で ask を適用できるのは hook だけ
+// なので、正規化した `git <sub> ...` に対しても deny > ask > allow の順で判定する。
+describe("evaluateCommand - git -C と ask ルール", () => {
+  const askRule = (p: string): Rule => ({ category: "ask", pattern: `Bash(${p})`, regex: patternToRegex(p) });
+  const rules = [...loadRepoRules(), askRule("git push *"), askRule("git commit *")];
+  const evaluate = (command: string) =>
+    evaluateCommand(parseShellCommands(command), rules, command);
+
+  test.each([
+    'git -C /r commit -m "fix bug"',
+    "git -C /r push origin main",
+    "git --no-pager -C /r commit -m x",
+  ])("非 -C allow と ask の両方に一致する %j は ask", (command) => {
+    expect(evaluate(command).decision).toBe("ask");
+  });
+
+  test("ask に一致しない git -C /r status は ask にならない", () => {
+    expect(evaluate("git -C /r status").decision).toBe("allow");
+  });
+
+  test("deny は ask より優先: git -C /r push --force は deny", () => {
+    expect(evaluate("git -C /r push --force").decision).toBe("deny");
+  });
+});

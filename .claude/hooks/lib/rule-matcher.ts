@@ -1183,7 +1183,18 @@ export function matchCommand(
   // 正規化した `git <sub> ...` が非 -C allow ルールにサブコマンド位置で一致した。
   // 呼び出し側 (evaluator / hook 本体) が hook 自身の allow を返すかを判断できるよう
   // gitCNormalized を付ける (settings.json に -C ルールは無く、本体は自力で allow しない)。
+  //
+  // ask は allow より先に照合する (deny > ask > allow)。本体の ask ルール (`Bash(git push *)`
+  // 等) はプレフィックス一致で `git -C <dir> push ...` に効かず、-C 版で ask を適用できるのは
+  // hook だけ。非 -C 版は hook が pass-through し本体が ask するのと同じく確認を出させる。
   if (gitC.kind === "normalized") {
+    const askCandidates = [...candidates, gitC.normalized];
+    for (const rule of rules) {
+      if (rule.category !== "ask") continue;
+      if (askCandidates.some((cmd) => rule.regex.test(cmd))) {
+        return { decision: "ask", command, pattern: rule.pattern };
+      }
+    }
     for (const rule of rules) {
       if (rule.category !== "allow") continue;
       if (rule.regex.test(gitC.normalized)) {
@@ -1200,11 +1211,10 @@ export function matchCommand(
     }
   }
 
-  // ask チェック
-  const askCandidates = gitC.kind === "normalized" ? [...candidates, gitC.normalized] : candidates;
+  // ask チェック (git -C 正規化済みの候補は上で照合済み)
   for (const rule of rules) {
     if (rule.category !== "ask") continue;
-    if (askCandidates.some((cmd) => rule.regex.test(cmd))) {
+    if (candidates.some((cmd) => rule.regex.test(cmd))) {
       return { decision: "ask", command, pattern: rule.pattern };
     }
   }

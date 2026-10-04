@@ -24,10 +24,13 @@ export function parseHookClient(argv: readonly string[]): HookClient {
 /**
  * hook 自身が `permissionDecision: "allow"` を出力するか。
  *
- * Claude Code では hook の allow は許可プロンプトを省略させる (settings.json の
- * deny / ask ルールは引き続き適用される)。対象は evaluator が hookApproved を立てた
- * `git -C` 正規化済みコマンドだけで、それ以外の allow は従来どおり無出力
- * (pass-through) で本体の判定に委ねる。
+ * Claude Code では hook の allow は許可プロンプトを省略させる。本体の deny / ask
+ * ルールは hook の allow 後も評価されるが、プレフィックス一致なので `git -C <dir> ...`
+ * には一致しない。そのため -C 版の deny / ask は hook (rule-matcher の matchCommand) が
+ * 正規化した `git <sub> ...` に deny > ask > allow の順で当て、ask に一致すれば
+ * allow ではなく ask を返す。対象は evaluator が hookApproved を立てた `git -C`
+ * 正規化済みコマンドだけで、それ以外の allow は従来どおり無出力 (pass-through) で
+ * 本体の判定に委ねる。
  */
 export function shouldEmitAllow(result: EvaluationResult, client: HookClient): boolean {
   return client === "claude-code" && result.decision === "allow" && result.hookApproved;

@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -140,6 +140,47 @@ describe("pre-tool-use-bash-analyzer (プロセス)", () => {
     "command git -C /r status",
   ])("Claude Code: %j は allow を返さない", (command) => {
     expect(decisionOf(command)).not.toBe("allow");
+  });
+});
+
+// ~/.claude/settings.json の ask ルールは本体ではプレフィックス一致なので -C 版に効かない。
+// hook は正規化した `git <sub> ...` に ask を allow より先に当て、ask を返す。
+describe("pre-tool-use-bash-analyzer (プロセス): ~/.claude/settings.json の ask と git -C", () => {
+  let home: string;
+  beforeAll(() => {
+    home = mkdtempSync(join(tmpdir(), "hook-response-ask-test-"));
+    mkdirSync(join(home, ".claude"));
+    writeFileSync(
+      join(home, ".claude", "settings.json"),
+      JSON.stringify({ permissions: { ask: ["Bash(git push *)", "Bash(git commit *)"] } }),
+    );
+  });
+  afterAll(() => { rmSync(home, { recursive: true, force: true }); });
+
+  function decisionOf(command: string): string | null {
+    const r = spawnSync("bun", [analyzer, "--client=claude-code"], {
+      input: JSON.stringify({
+        hook_event_name: "PreToolUse",
+        tool_name: "Bash",
+        tool_input: { command },
+        cwd: repoRoot,
+      }),
+      encoding: "utf8",
+      env: { ...process.env, HOME: home },
+    });
+    expect(r.status).toBe(0);
+    return r.stdout === "" ? null : JSON.parse(r.stdout).hookSpecificOutput.permissionDecision;
+  }
+
+  test.each(['git -C . commit -m "fix bug"', "git -C . push origin main"])(
+    "%j は ask を返す",
+    (command) => {
+      expect(decisionOf(command)).toBe("ask");
+    },
+  );
+
+  test("ask に一致しない git -C . status は allow のまま", () => {
+    expect(decisionOf("git -C . status")).toBe("allow");
   });
 });
 
