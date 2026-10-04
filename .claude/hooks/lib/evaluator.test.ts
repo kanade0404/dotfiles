@@ -317,7 +317,6 @@ describe("evaluateCommand - git -C の hook allow (hookApproved)", () => {
     // zsh の `=(...)` プロセス置換 / `=cmd` 展開
     "git -C sub status =(touch X)",
     "git -C sub status; echo =(touch X)",
-    "git -C sub status =(touch X)",
     "git -C =x status",
     "git -C sub log =ls",
     "git -C sub log --format==ls",

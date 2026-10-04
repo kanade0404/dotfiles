@@ -58,6 +58,9 @@ export type GitFixture = {
  *   - link-sub            → main/sub (同一リポジトリへのシンボリックリンク)
  *   - link-other          → other (別リポジトリへのシンボリックリンク)
  *   - link-inner          → other/inner (`link-inner/..` は物理的に other)
+ *   - crafted/            git を使わず手で作った gitdir (.git/{HEAD,commondir → main/.git})。
+ *                         .git/config に core.fsmonitor を書いてある (git は common dir の config だけを読む)
+ *   - crafted-wtconfig/   crafted/ と同じ構成で、.git/config.worktree に core.worktree がある
  * - wt/                   main の worktree
  * - other/inner/          無関係なリポジトリ
  * - plain/                git 管理外
@@ -88,6 +91,15 @@ export function createGitFixture(): GitFixture {
   writeFileSync(join(main, "sub", "file.txt"), "");
   mkdirSync(join(main, "symgit"));
   symlinkSync(join(main, ".git"), join(main, "symgit", ".git"));
+  // エージェントが git を使わずに作れる「main と同じ common dir を指す gitdir」
+  for (const name of ["crafted", "crafted-wtconfig"]) {
+    const gitdir = join(main, name, ".git");
+    mkdirSync(gitdir, { recursive: true });
+    writeFileSync(join(gitdir, "HEAD"), "ref: refs/heads/main\n");
+    writeFileSync(join(gitdir, "commondir"), "../../.git\n");
+    writeFileSync(join(gitdir, "config"), "[core]\n\tfsmonitor = false-crafted-fsmonitor\n");
+  }
+  writeFileSync(join(main, "crafted-wtconfig", ".git", "config.worktree"), `[core]\n\tworktree = ${plain}\n`);
 
   mkdirSync(join(other, "inner"), { recursive: true });
   git(other, "init", "-q");

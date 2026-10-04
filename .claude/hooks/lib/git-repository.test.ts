@@ -1,6 +1,7 @@
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { join } from "node:path";
-import { createGitFixture, type GitFixture } from "./git-fixture.ts";
+import { createGitFixture, envWithoutGit, type GitFixture } from "./git-fixture.ts";
 import { isSameGitRepository } from "./git-repository.ts";
 
 // `git -C <dir>` は <dir> のリポジトリの .git/config (core.fsmonitor 等) や .git/hooks を
@@ -28,6 +29,9 @@ describe("isSameGitRepository", () => {
       ["相対パスの .git ファイル", (f: GitFixture) => [f.main, "rel"]],
       // 相対パスは対象ディレクトリではなく .git ファイルのあるディレクトリ基準で解決する
       ["相対パスの .git ファイルがある階層の下", (f: GitFixture) => [f.main, "rel/inner"]],
+      // 手で作った gitdir でも commondir が main を指せば同一リポジトリ扱い。安全性は
+      // 「git は config / hooks を common dir から読む」ことに依存する (下の前提テスト)
+      ["手で作った gitdir (commondir → main)", (f: GitFixture) => [f.main, "crafted"]],
     ] as const)("%s", (_, args) => {
       const [cwd, dir] = args(fx);
       expect(same(cwd, dir)).toBe(true);
@@ -54,6 +58,7 @@ describe("isSameGitRepository", () => {
       ["cwd が git 管理外", (f: GitFixture) => [f.plain, f.main]],
       ["cwd も対象も git 管理外", (f: GitFixture) => [f.plain, "."]],
       ["core.worktree を設定したリポジトリ", (f: GitFixture) => [f.coreWorktree, "."]],
+      ["手で作った gitdir の config.worktree に core.worktree", (f: GitFixture) => [f.main, "crafted-wtconfig"]],
     ] as const)("%s", (_, args) => {
       const [cwd, dir] = args(fx);
       expect(same(cwd, dir)).toBe(false);
@@ -71,6 +76,22 @@ describe("isSameGitRepository", () => {
 
   test("空の dir は false", () => {
     expect(same(fx.main, "")).toBe(false);
+  });
+
+  // 「手で作った gitdir (commondir → main)」を true にしてよい前提: git はその gitdir の
+  // config ではなく common dir (main/.git) の config を読む。git の挙動が変わったら検知する。
+  test("前提: git は手で作った gitdir の config を読まず、common dir の config を読む", () => {
+    const run = (...args: string[]) =>
+      spawnSync("git", ["-C", join(fx.main, "crafted"), ...args], {
+        encoding: "utf8",
+        env: envWithoutGit({ GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" }),
+      });
+    const common = run("rev-parse", "--path-format=absolute", "--git-common-dir");
+    expect(common.status).toBe(0);
+    expect(common.stdout.trim()).toBe(join(fx.main, ".git"));
+    const fsmonitor = run("config", "--get", "core.fsmonitor");
+    expect(fsmonitor.stdout).toBe("");
+    expect(fsmonitor.status).toBe(1);
   });
 
   test.each([
