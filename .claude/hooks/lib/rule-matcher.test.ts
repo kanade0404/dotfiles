@@ -1057,9 +1057,8 @@ describe("統合テスト: settings.json ルールでの判定", () => {
       ["git -C /repo --no-pager log --oneline", "Bash(git log *)"],
       ["git --no-pager -C /repo log", "Bash(git log *)"],
       ["git -C /repo -P log", "Bash(git log *)"],
-      // コマンド前置 / コマンド名のフルパスも正規化する
+      // コマンド前置も剥がして正規化する
       ["command git -C /repo status", "Bash(git status *)"],
-      ["/usr/bin/git -C /repo status", "Bash(git status *)"],
       // 旧 `Bash(git -C * reset *)` 等の anchor 無し deny で過剰 deny していた読み取り系
       ["git -C /repo log -S reset", "Bash(git log *)"],
       ["git -C /repo log --grep rebase", "Bash(git log *)"],
@@ -1071,6 +1070,49 @@ describe("統合テスト: settings.json ルールでの判定", () => {
         command,
         pattern,
         gitCNormalized: true,
+        bareCommandName: true,
+      });
+    });
+
+    // コマンド名のフルパスもベース名で正規化して判定するが、実際に起動されるのは
+    // ルールが想定した git とは限らないので bareCommandName は付けない。
+    test.each([
+      "/usr/bin/git -C /repo status",
+      "./git -C . status",
+      "'git' -C /repo status",
+    ])("%s は allow だが bareCommandName ではない", (command) => {
+      expect(matchCommand(command, settingsRules)).toEqual({
+        decision: "allow",
+        command,
+        pattern: "Bash(git status *)",
+        gitCNormalized: true,
+      });
+    });
+  });
+
+  // hook 自身の allow (evaluator の hookApproved) は bareCommandName の付いた一致に限る。
+  // パス除去 / クォート除去した候補でしか allow に一致しないものには付けない。
+  describe("allow 一致の bareCommandName", () => {
+    test("echo hi は bareCommandName 付きで allow", () => {
+      expect(matchCommand("echo hi", settingsRules)).toEqual({
+        decision: "allow",
+        command: "echo hi",
+        pattern: "Bash(echo *)",
+        bareCommandName: true,
+      });
+    });
+
+    test.each([
+      "/tmp/evil/echo hi",
+      '"echo" hi',
+      // 先頭リダイレクトを剥がした残り (hi) は素の名前だが、allow に一致したのは
+      // 生コマンドのパスを除去した候補 (echo hi) なので付けない
+      ">/tmp/x/echo hi",
+    ])("%s は allow だが bareCommandName ではない", (command) => {
+      expect(matchCommand(command, settingsRules)).toEqual({
+        decision: "allow",
+        command,
+        pattern: "Bash(echo *)",
       });
     });
   });

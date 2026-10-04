@@ -88,6 +88,39 @@ describe("pre-tool-use-bash-analyzer (プロセス)", () => {
     const r = runHook("git -C /repo reset --hard", ["--client=claude-code"]);
     expect(JSON.parse(r.stdout).hookSpecificOutput.permissionDecision).toBe("deny");
   });
+
+  /** hook が出した permissionDecision。無出力 (pass-through) は null */
+  function decisionOf(command: string): string | null {
+    const r = runHook(command, ["--client=claude-code"]);
+    expect(r.status).toBe(0);
+    return r.stdout === "" ? null : JSON.parse(r.stdout).hookSpecificOutput.permissionDecision;
+  }
+
+  test.each([
+    "git -C /r status",
+    "git -C '/r x' log --oneline",
+    "git --no-pager -C /r log",
+    'git -C /r commit -m "x"',
+    "git -C /r status && git -C /s diff",
+  ])("Claude Code: %j は allow を返す", (command) => {
+    expect(decisionOf(command)).toBe("allow");
+  });
+
+  // bash では改行・コメント・ANSI-C quoting の解釈で後続コマンドが別に実行される形、
+  // およびコマンド名がパス指定で allow ルールの想定と別の実行ファイルを起動する形。
+  // hook は allow を出さない (無出力で本体の判定に委ねる / ask / deny のいずれか)。
+  test.each([
+    "git -C /r status #'\ntouch /tmp/pwned",
+    "git -C /r status #'\npython3 -c 'import os'\n#'",
+    "git -C /r status #'\nrm -rf /tmp/x\n#'",
+    "git -C /r log $'\\'' ; touch /tmp/pwned #'",
+    'git -C /r commit -m "fix #12"',
+    "./git -C . status",
+    "/tmp/evil/git -C /r status",
+    "git -C /r status; /tmp/evil/echo hi",
+  ])("Claude Code: %j は allow を返さない", (command) => {
+    expect(decisionOf(command)).not.toBe("allow");
+  });
 });
 
 describe("hook の登録: Claude Code だけが --client=claude-code を渡す", () => {

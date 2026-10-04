@@ -52,6 +52,44 @@ export function hasExecutionHazard(segment: string): boolean {
   return false;
 }
 
+/** クォート外で許す文字: 英数字・空白・記号 `-_./:=@,+%^~` と制御演算子 `|&;()<>` */
+const PLAIN_UNQUOTED_CHAR = /^[A-Za-z0-9 _\-./:=@,+%^~|&;()<>]$/;
+/** クォート内でも許さない文字: 展開・エスケープ (`$` `` ` `` `\`)、コメント (`#`)、制御文字・空白類 (半角スペースを除く) */
+const FORBIDDEN_QUOTED_CHAR = /[$`\\#\p{C}\s]/u;
+
+/**
+ * コマンド全体が、hook のパーサ (shell-parser / rule-matcher) が bash と同じに解釈すると
+ * 言い切れる字句だけで書かれているか (保守的ホワイトリスト)。
+ *
+ * パーサは bash の字句規則を全て再現してはいない — `#` コメント、改行による
+ * コマンド区切り、ANSI-C quoting (`$'...'`) 内の `\'`、エスケープ等の解釈がずれると、
+ * bash では別コマンドとして実行される部分が 1 セグメントに吸収され、allow ルールの
+ * ワイルドカードに飲み込まれる。hook の allow は本体の確認を省略させるので、
+ * ずれうる字句を 1 つでも含む入力は allow の対象外にする。
+ *
+ * - クォート外: PLAIN_UNQUOTED_CHAR のみ (glob `*?[`、brace `{}`、`!`、`#`、`$`、
+ *   バッククォート、`\`、改行・タブ・非 ASCII を含まない)
+ * - シングル / ダブルクォート内: FORBIDDEN_QUOTED_CHAR 以外 (非 ASCII の文字は可)。
+ *   ダブルクォート内は加えて `!` (履歴展開) も不可
+ * - クォートの対応が取れていること
+ *
+ * リダイレクト・env 前置などの意味的な危険は hasExecutionHazard が別途判定する。
+ */
+export function isLexicallyPlain(command: string): boolean {
+  let quote: "'" | '"' | null = null;
+  for (const ch of command) {
+    if (quote === null) {
+      if (ch === "'" || ch === '"') quote = ch;
+      else if (!PLAIN_UNQUOTED_CHAR.test(ch)) return false;
+      continue;
+    }
+    if (ch === quote) { quote = null; continue; }
+    if (ch !== " " && FORBIDDEN_QUOTED_CHAR.test(ch)) return false;
+    if (quote === '"' && ch === "!") return false;
+  }
+  return quote === null;
+}
+
 /**
  * サブコマンドが「変数代入のみ」(例: `foo=$(git status)` や `A=1 B=2`) かを判定する。
  *
@@ -151,14 +189,19 @@ export function isAssignmentOnly(command: string): boolean {
  * ので、pass-through 経路でも安全性は維持される。
  *
  * 例外は `git -C <dir> <sub>` で、settings.json に `-C` 版ルールを置かない
- * (rule-matcher の analyzeGitC 参照) ため本体は自力で allow しない。hook が正規化して
- * allow と判定したセグメントを含み、かつ全セグメントが明示 allow で実行時の副作用
- * (hasExecutionHazard) を持たない場合に限り hookApproved を立て、hook 自身が allow を
- * 返せるようにする。未定義コマンドや代入文が 1 つでも混ざれば全体を本体に委ねる。
+ * (rule-matcher の analyzeGitC 参照) ため本体は自力で allow しない。次を全て満たす
+ * 場合に限り hookApproved を立て、hook 自身が allow を返せるようにする。
+ * - 生コマンド (rawCommand) が isLexicallyPlain (パーサが完全に説明できる字句) である
+ * - hook が正規化して allow と判定した `git -C` セグメントを含む
+ * - 全セグメントが明示 allow で、コマンド名が素の名前 (bareCommandName)、
+ *   実行時の副作用 (hasExecutionHazard) を持たない
+ * 未定義コマンドや代入文が 1 つでも混ざれば全体を本体に委ねる。rawCommand を
+ * 渡さない呼び出しは字句を検査できないので hookApproved にしない。
  */
 export function evaluateCommand(
   subCommands: readonly string[],
   rules: readonly Rule[],
+  rawCommand?: string,
 ): EvaluationResult {
   const denyReasons: { command: string; pattern: string }[] = [];
   const askReasons: string[] = [];
@@ -187,10 +230,11 @@ export function evaluateCommand(
         break;
       case "allow":
         if (result.gitCNormalized) hasGitCNormalized = true;
-        if (hasExecutionHazard(sub)) allExplicitlyAllowed = false;
+        if (!result.bareCommandName || hasExecutionHazard(sub)) allExplicitlyAllowed = false;
         break;
     }
   }
+  const lexicallyPlain = rawCommand !== undefined && isLexicallyPlain(rawCommand);
 
   if (denyReasons.length > 0) {
     return { decision: "deny", denyReasons };
@@ -203,5 +247,8 @@ export function evaluateCommand(
     };
   }
 
-  return { decision: "allow", hookApproved: hasGitCNormalized && allExplicitlyAllowed };
+  return {
+    decision: "allow",
+    hookApproved: lexicallyPlain && hasGitCNormalized && allExplicitlyAllowed,
+  };
 }

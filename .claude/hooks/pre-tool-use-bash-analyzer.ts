@@ -86,7 +86,7 @@ function main(): void {
         return;
       }
 
-      const result = evaluateCommand(subCommands, rules);
+      const result = evaluateCommand(subCommands, rules, command);
 
       switch (result.decision) {
         case "deny": {

@@ -168,24 +168,83 @@ describe("evaluateCommand - 変数代入", () => {
 // env 前置 / 代入文) が無い」ときに限り hookApproved を立てる。
 describe("evaluateCommand - git -C の hook allow (hookApproved)", () => {
   const rules = loadRules(worktreeRoot);
-  const evaluate = (command: string) => evaluateCommand(parseShellCommands(command), rules);
+  const evaluate = (command: string) =>
+    evaluateCommand(parseShellCommands(command), rules, command);
 
   test.each([
     "git -C /repo status",
+    "git -C /r status",
+    "git -C '/r x' log --oneline",
+    "git --no-pager -C /r log",
+    'git -C /r commit -m "x"',
+    "git -C /r status && git -C /s diff",
     "git -C /a status && git -C /b log --oneline",
     "git -C /repo log --oneline | head -5",
     "git -C /repo status 2>&1 | tail -5",
     "git -C /repo status 2>/dev/null",
     "(git -C /repo status)",
-    // シングルクォート内の $ は展開ではない
-    "git -C /repo log --format='%H $x'",
+    "git -C ~/repo diff HEAD~1 HEAD^",
     // クォート内の > はリダイレクトではない (ダブルクォート内の ' もクォート開始ではない)
     'git -C /repo commit -m "a > b"',
     "git -C /repo commit -m \"it's > fine\"",
-    // エスケープした $ は展開ではない
-    "git -C /repo log --grep \\$x",
+    // クォート内の非 ASCII 文字
+    'git -C /repo commit -m "日本語のメッセージ"',
   ])("%s は hookApproved", (command) => {
     expect(evaluate(command)).toEqual({ decision: "allow", hookApproved: true });
+  });
+
+  // hook の allow は Claude Code 本体の確認を省略させるので、パーサ (shell-parser /
+  // rule-matcher) が bash と同じ解釈をすると言い切れる字句だけで書かれたコマンドに限る。
+  // 以下は bash では別コマンドが実行されるのに hook が 1 セグメントに吸収していた形
+  // (コメント / 改行 / ANSI-C quoting 内の \')、およびそれと同じ字句クラスの入力。
+  test.each([
+    "git -C /r status #'\ntouch /tmp/pwned",
+    "git -C /r status #'\npython3 -c 'import os'\n#'",
+    "git -C /r status #'\nrm -rf /tmp/x\n#'",
+    "git -C /r log $'\\'' ; touch /tmp/pwned #'",
+    "git -C /r status\ntouch /tmp/pwned",
+    "git -C /r status\rtouch /tmp/pwned",
+    "git -C /r status # comment",
+    // # を含む commit メッセージは保守化の許容トレードオフとして pass-through
+    'git -C /r commit -m "fix #12"',
+    // 対応の取れないクォート
+    "git -C /r log 'abc",
+    'git -C /r log "abc',
+    // 展開・エスケープの字句はクォートの内外を問わず hook allow の対象外
+    "git -C /repo log --format='%H $x'",
+    "git -C /repo log --grep \\$x",
+    "git -C /repo log --grep 'a\\b'",
+    'git -C /repo log $"x"',
+    // glob / brace は展開後の語が変わる
+    "git -C /repo log *",
+    "git -C /repo log {a,b}",
+    // ダブルクォート内の ! (履歴展開)
+    'git -C /repo commit -m "hi!"',
+    // 非 ASCII の空白 (bash は区切りとして扱わない)
+    "git -C /repo status x",
+  ])("%j は hookApproved ではない (字句が保守的ホワイトリスト外)", (command) => {
+    expect(evaluate(command)).not.toEqual({ decision: "allow", hookApproved: true });
+  });
+
+  // allow 一致がコマンド名のパス除去 (/tmp/evil/git → git) やクォート除去を経た候補由来の
+  // 場合、実際に起動されるのは allow ルールが想定したコマンドとは別の実行ファイル。
+  test.each([
+    "./git -C . status",
+    "/tmp/evil/git -C /r status",
+    "/usr/bin/git -C /r status",
+    "git -C /r status; /tmp/evil/echo hi",
+    "git -C /r status && ./echo hi",
+    "'git' -C /r status",
+    'git -C /r status && "echo" hi',
+  ])("%j は hookApproved ではない (コマンド名が bare でない)", (command) => {
+    expect(evaluate(command)).not.toEqual({ decision: "allow", hookApproved: true });
+  });
+
+  test("生コマンドを渡さない呼び出しは hookApproved にしない", () => {
+    expect(evaluateCommand(parseShellCommands("git -C /r status"), rules)).toEqual({
+      decision: "allow",
+      hookApproved: false,
+    });
   });
 
   test.each([
