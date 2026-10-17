@@ -46,7 +46,29 @@
         };
         init.defaultBranch = "master";
         web.browser = "google-chrome";
+        # fetch / clone は HTTPS + osxkeychain のまま。push だけを SSH
+        # (1Password SSH agent) へ回すため `insteadOf` ではなく
+        # `pushInsteadOf` を使う。
+        #
+        # 背景: osxkeychain に入っている GitHub OAuth App token に `workflow`
+        # scope が無く、`.github/workflows/` を含む push が remote 側で
+        # 拒否される:
+        #   ! [remote rejected] refusing to allow an OAuth App to create or
+        #     update workflow `.github/workflows/...` without `workflow` scope
+        # (`gh auth status` の token は `workflow` を持つが、git が使う資格情報
+        #  とは別物なので `gh` 側を直しても解決しない)
+        # push 経路を SSH にすると OAuth App token が経路から外れ、この
+        # remote rejected が原理的に起きなくなる。
+        #
+        # `insteadOf` にしない理由: fetch / clone まで書き換わるため、
+        # 1Password がロック中 / 未起動のときに読みまで失敗する。
+        # `pushInsteadOf` なら読みは HTTPS + osxkeychain のままで、
+        # SSH agent を要求するのは push だけ。
+        #
+        # トレードオフ: 1Password がロック中だと push が認証エラーで失敗する
+        # (HTTPS への fallback はしない)。読みは影響を受けない。
         credential.helper = "osxkeychain";
+        url."git@github.com:".pushInsteadOf = "https://github.com/";
         push.default = "simple";
         merge = {
           tool = "kdiff3";
