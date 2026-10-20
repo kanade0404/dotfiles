@@ -53,6 +53,8 @@ cowsay "Hello"
 nix run nixpkgs#cowsay -- "Hello"
 ```
 
+> unfree パッケージ (例: `_1password-cli`) は `nixpkgs#<attr>` だとそのまま使えない。扱いは[トラブルシューティング](#unfree-エラー)を参照。
+
 ### Nix ストアの管理
 
 ```bash
@@ -104,7 +106,7 @@ environment.systemPackages = with pkgs; [
 >   ```
 >
 > - `home-manager.useGlobalPkgs = true` のため、`home.nix` の `home.packages` に追加する unfree パッケージにも同じ predicate が効く。
-> - predicate が効くのはこの flake の設定を経由する評価 (`darwin-rebuild` / `nix build .#darwinConfigurations...`) だけ。`nix shell` / `nix run` でアドホックに使う場合は `NIXPKGS_ALLOW_UNFREE=1 nix shell --impure nixpkgs#<attr>` が必要。
+> - predicate が効くのはこの flake の `pkgs` を経由する評価だけ (`darwin-rebuild` / `nix build .#darwinConfigurations...` / 下記の `nix shell` 形)。registry の `nixpkgs#<attr>` には効かない。アドホック利用時の書き方は[トラブルシューティング](#unfree-エラー)を参照。
 
 ### CLI ツールの削除
 
@@ -292,6 +294,29 @@ nix eval nixpkgs#<パッケージ名>.meta.description
 ### aarch64-darwin 非対応エラー
 
 `Package 'xxx' is not available on aarch64-darwin` → nixpkgs でそのパッケージは macOS 非対応。`modules/homebrew.nix` の `brews` に追加して Homebrew で管理する。
+
+### unfree エラー
+
+```text
+Refusing to evaluate package '1password-cli-x.y.z' in ... because it has an unfree license (‘unfree’)
+```
+
+(古い nixpkgs では `has an unfree license (‘unfree’), refusing to evaluate.`。引用符は Unicode)
+
+- `darwin-rebuild switch` / `nix build` で出た場合 → `configuration.nix` の `allowUnfreePredicate` に `lib.getName` の値を追加する。手順は[CLI ツールの追加](#cli-ツールの追加)の注記を参照。
+- `nix shell` / `nix run` で出た場合 → `nixpkgs#<attr>` は registry の nixpkgs (lock と別 rev) を引き、predicate も効かない。`flake.lock` と同じ pin 済みのものを使うなら、この flake の `pkgs` を経由すれば predicate が効く:
+
+  ```bash
+  nix shell ~/work/dotfiles/nix#darwinConfigurations.kanade0404.pkgs.<attr>
+  nix run ~/work/dotfiles/nix#darwinConfigurations.kanade0404.pkgs.<attr> -- <args>
+  ```
+
+  lock に無い新しいものを試すだけなら、評価時だけ全許可にする:
+
+  ```bash
+  NIXPKGS_ALLOW_UNFREE=1 nix shell --impure nixpkgs#<attr>
+  NIXPKGS_ALLOW_UNFREE=1 nix run --impure nixpkgs#<attr> -- <args>
+  ```
 
 ### `/etc/xxx` のファイル衝突
 
