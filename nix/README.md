@@ -94,7 +94,7 @@ environment.systemPackages = with pkgs; [
 ];
 ```
 
-> **unfree パッケージ** (例: `_1password-cli`) は `configuration.nix` の `nixpkgs.config.allowUnfreePredicate` にパッケージ名 (`lib.getName` の値) を追加しないと評価エラーになる。`allowUnfree = true` で全許可にはしない。
+> **unfree パッケージ** (例: `_1password-cli`) は `configuration.nix` の `nixpkgs.config.allowUnfreePredicate` にパッケージ名 (`lib.getName` の値) を追加しないと `has an unfree license ('unfree'), refusing to evaluate` で評価エラーになる。`allowUnfree = true` で全許可にはしない。
 
 ### CLI ツールの削除
 

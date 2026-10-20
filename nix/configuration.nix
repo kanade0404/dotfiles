@@ -5,6 +5,7 @@
   nix.settings.experimental-features = [ "nix-command" "flakes" ];
 
   # unfree パッケージは個別に許可する (allowUnfree = true で全許可にはしない)
+  # NOTE: flake.nix の home-manager.useGlobalPkgs = true により home.nix 側にも効く
   nixpkgs.config.allowUnfreePredicate = pkg:
     builtins.elem (lib.getName pkg) [
       "1password-cli"
