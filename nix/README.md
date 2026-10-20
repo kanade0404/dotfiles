@@ -94,10 +94,11 @@ environment.systemPackages = with pkgs; [
 ];
 ```
 
-> **unfree パッケージ** (例: `_1password-cli`) は `configuration.nix` の `nixpkgs.config.allowUnfreePredicate` にパッケージ名 (`lib.getName` の値。attr 名とは異なることがあるので `nix eval nixpkgs#<attr>.pname` で確認) を追加しないと `has an unfree license (‘unfree’)` (引用符は Unicode) で評価エラーになる。`allowUnfree = true` で全許可にはしない。
+> **unfree パッケージ** (例: `_1password-cli`) は `configuration.nix` の `nixpkgs.config.allowUnfreePredicate` にパッケージ名 (`lib.getName` の値) を追加しないと `has an unfree license (‘unfree’)` (引用符は Unicode) で評価エラーになる。`allowUnfree = true` で全許可にはしない。
 >
+> - `lib.getName` の値は attr 名と異なることがある。`flake.lock` と同じ nixpkgs に対して `nix eval --raw ~/work/dotfiles/nix#darwinConfigurations.kanade0404.pkgs.<attr>.pname` で確認する (`.pname` の参照は unfree チェックに掛からない)。
 > - `home-manager.useGlobalPkgs = true` のため、`home.nix` の `home.packages` に追加する unfree パッケージにも同じ predicate が効く。
-> - predicate は `darwin-rebuild` 経由の評価にしか効かない。`nix shell` / `nix run` でアドホックに使う場合は `NIXPKGS_ALLOW_UNFREE=1 nix shell --impure nixpkgs#<attr>` が必要。
+> - predicate が効くのはこの flake の設定を経由する評価 (`darwin-rebuild` / `nix build .#darwinConfigurations...`) だけ。`nix shell` / `nix run` でアドホックに使う場合は `NIXPKGS_ALLOW_UNFREE=1 nix shell --impure nixpkgs#<attr>` が必要。
 
 ### CLI ツールの削除
 
