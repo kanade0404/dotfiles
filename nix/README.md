@@ -99,8 +99,8 @@ environment.systemPackages = with pkgs; [
 > - `lib.getName` の値は attr 名と異なることがある。`flake.lock` と同じ nixpkgs に対して、predicate と同じ関数で名前と unfree かどうかを一緒に確認する (`outPath` を force しないので、未許可の unfree パッケージでもチェックには掛からない):
 >
 >   ```bash
->   nix eval --json ~/work/dotfiles/nix#darwinConfigurations.kanade0404.pkgs.<attr> \
->     --apply 'p: { name = p.pname or (builtins.parseDrvName p.name).name; unfree = p.meta.unfree or false; }'
+>   nix eval --json ~/work/dotfiles/nix#darwinConfigurations.kanade0404.pkgs \
+>     --apply 'pkgs: let p = pkgs.<attr>; in { name = pkgs.lib.getName p; unfree = p.meta.unfree or false; }'
 >   ```
 >
 > - `home-manager.useGlobalPkgs = true` のため、`home.nix` の `home.packages` に追加する unfree パッケージにも同じ predicate が効く。
