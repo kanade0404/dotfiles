@@ -299,10 +299,10 @@ nix eval nixpkgs#<パッケージ名>.meta.description
 ### unfree エラー
 
 ```text
-error: Refusing to evaluate package '1password-cli-2.34.0' in /nix/store/...-source/pkgs/by-name/_1/_1password-cli/package.nix:89 because it has an unfree license (‘unfree’)
+error: Refusing to evaluate package '1password-cli-<version>' in /nix/store/...-source/pkgs/by-name/_1/_1password-cli/package.nix:<行番号> because it has an unfree license (‘unfree’)
 ```
 
-(現 pin の nixpkgs での実出力。パッケージ名は ASCII、ライセンス名は Unicode の引用符。古い nixpkgs では `has an unfree license (‘unfree’), refusing to evaluate.`)
+(パッケージ名は ASCII、ライセンス名は Unicode の引用符。古い nixpkgs では `has an unfree license (‘unfree’), refusing to evaluate.`)
 
 - `darwin-rebuild switch` / `nix build` で出た場合 → `configuration.nix` の `allowUnfreePredicate` に `lib.getName` の値を追加する。手順は[CLI ツールの追加](#cli-ツールの追加)の注記を参照。
 - `nix shell` / `nix run` で出た場合 → `nixpkgs#<attr>` は registry の nixpkgs (lock と別 rev) を引き、predicate も効かない。`configuration.nix` の predicate に `lib.getName` の値が**登録済み**のパッケージを `flake.lock` と同じ rev で使うなら、この flake の `pkgs` を経由すれば通る (未登録の unfree パッケージは同じエラーになる。なお `pkgs` の取り出しに nix-darwin + home-manager のモジュール評価が走るので数秒かかる):
