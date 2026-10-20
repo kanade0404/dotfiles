@@ -96,11 +96,11 @@ environment.systemPackages = with pkgs; [
 
 > **unfree パッケージ** (例: `_1password-cli`) は `configuration.nix` の `nixpkgs.config.allowUnfreePredicate` にパッケージ名 (`lib.getName` の値) を追加しないと `has an unfree license (‘unfree’)` (引用符は Unicode) で評価エラーになる。`allowUnfree = true` で全許可にはしない。
 >
-> - `lib.getName` の値は attr 名と異なることがある。`flake.lock` と同じ nixpkgs に対して、predicate と同じ関数で確認する (`outPath` を force しないので unfree チェックには掛からない):
+> - `lib.getName` の値は attr 名と異なることがある。`flake.lock` と同じ nixpkgs に対して、predicate と同じ関数で名前と unfree かどうかを一緒に確認する (`outPath` を force しないので、未許可の unfree パッケージでもチェックには掛からない):
 >
 >   ```bash
->   nix eval --raw ~/work/dotfiles/nix#darwinConfigurations.kanade0404.pkgs.<attr> \
->     --apply 'p: p.pname or (builtins.parseDrvName p.name).name'
+>   nix eval --json ~/work/dotfiles/nix#darwinConfigurations.kanade0404.pkgs.<attr> \
+>     --apply 'p: { name = p.pname or (builtins.parseDrvName p.name).name; unfree = p.meta.unfree or false; }'
 >   ```
 >
 > - `home-manager.useGlobalPkgs = true` のため、`home.nix` の `home.packages` に追加する unfree パッケージにも同じ predicate が効く。

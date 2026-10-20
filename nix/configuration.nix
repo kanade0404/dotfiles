@@ -7,8 +7,9 @@
   # unfree パッケージは個別に許可する (allowUnfree = true で全許可にはしない)
   # NOTE: flake.nix の home-manager.useGlobalPkgs = true により home.nix 側にも効く
   nixpkgs.config.allowUnfreePredicate = pkg:
+    # attr 名ではなく `lib.getName` の値 (pname) を並べる。確認手順は nix/README.md 参照
     builtins.elem (lib.getName pkg) [
-      "1password-cli"
+      "1password-cli" # attr: _1password-cli
     ];
 
   # System-level packages (migrated from Homebrew + mise)
