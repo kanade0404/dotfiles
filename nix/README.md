@@ -106,7 +106,7 @@ environment.systemPackages = with pkgs; [
 >   ```
 >
 > - `home-manager.useGlobalPkgs = true` のため、`home.nix` の `home.packages` に追加する unfree パッケージにも同じ predicate が効く。
-> - predicate が効くのはこの flake の `pkgs` を経由する評価だけ (`darwin-rebuild` / `nix build .#darwinConfigurations...` / 下記の `nix shell` 形)。registry の `nixpkgs#<attr>` には効かない。アドホック利用時の書き方は[トラブルシューティング](#unfree-エラー)を参照。
+> - predicate が効くのはこの flake の `pkgs` を経由する評価だけで、registry の `nixpkgs#<attr>` には効かない (→ [トラブルシューティング](#unfree-エラー))。
 
 ### CLI ツールの削除
 
@@ -298,13 +298,13 @@ nix eval nixpkgs#<パッケージ名>.meta.description
 ### unfree エラー
 
 ```text
-Refusing to evaluate package '1password-cli-x.y.z' in ... because it has an unfree license (‘unfree’)
+error: Refusing to evaluate package '1password-cli-2.34.0' in /nix/store/...-source/pkgs/by-name/_1/_1password-cli/package.nix:89 because it has an unfree license (‘unfree’)
 ```
 
-(古い nixpkgs では `has an unfree license (‘unfree’), refusing to evaluate.`。引用符は Unicode)
+(現 pin の nixpkgs での実出力。パッケージ名は ASCII、ライセンス名は Unicode の引用符。古い nixpkgs では `has an unfree license (‘unfree’), refusing to evaluate.`)
 
 - `darwin-rebuild switch` / `nix build` で出た場合 → `configuration.nix` の `allowUnfreePredicate` に `lib.getName` の値を追加する。手順は[CLI ツールの追加](#cli-ツールの追加)の注記を参照。
-- `nix shell` / `nix run` で出た場合 → `nixpkgs#<attr>` は registry の nixpkgs (lock と別 rev) を引き、predicate も効かない。`flake.lock` と同じ pin 済みのものを使うなら、この flake の `pkgs` を経由すれば predicate が効く:
+- `nix shell` / `nix run` で出た場合 → `nixpkgs#<attr>` は registry の nixpkgs (lock と別 rev) を引き、predicate も効かない。`configuration.nix` の predicate に**登録済み**の attr を `flake.lock` と同じ rev で使うなら、この flake の `pkgs` を経由すれば通る (未登録の unfree attr は同じエラーになる):
 
   ```bash
   nix shell ~/work/dotfiles/nix#darwinConfigurations.kanade0404.pkgs.<attr>
