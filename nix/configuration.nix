@@ -1,7 +1,16 @@
-{ pkgs, ... }: {
+{ pkgs, lib, ... }: {
   # Nix settings (nix.enable / experimental-features) は host 固有のため
   # flake.nix の mkDarwin が per-host に注入する。Determinate Nix 入りの
   # マシン (kanade0404-air) では nix.enable = false になる。詳細は flake.nix を参照。
+
+  # unfree パッケージは個別に許可する (allowUnfree = true で全許可にはしない)
+  # NOTE: flake.nix の home-manager.useGlobalPkgs = true により home.nix 側にも効く
+  nixpkgs.config.allowUnfreePredicate = pkg:
+    # attr 名ではなく `lib.getName pkg` の値 (通常は pname) を並べる。
+    # 確認手順は nix/README.md「CLI ツールの追加」の注記を参照
+    builtins.elem (lib.getName pkg) [
+      "1password-cli" # attr: _1password-cli
+    ];
 
   # System-level packages (migrated from Homebrew + mise)
   environment.systemPackages = with pkgs; [
@@ -74,6 +83,7 @@
     zsh-history-substring-search
 
     # Security & crypto
+    _1password-cli # `op` CLI (desktop app は Homebrew cask "1password" 側で管理)
     gnupg
     oath-toolkit
 

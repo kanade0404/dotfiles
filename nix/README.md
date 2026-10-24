@@ -53,6 +53,8 @@ cowsay "Hello"
 nix run nixpkgs#cowsay -- "Hello"
 ```
 
+> unfree パッケージ (例: `_1password-cli`) は `nixpkgs#<attr>` だとそのまま使えない。扱いは[トラブルシューティング](#unfree-エラー)を参照。
+
 ### Nix ストアの管理
 
 ```bash
@@ -93,6 +95,19 @@ environment.systemPackages = with pkgs; [
   neofetch  # ← 追加
 ];
 ```
+
+> **unfree パッケージ** (例: `_1password-cli`) は `configuration.nix` の `nixpkgs.config.allowUnfreePredicate` にパッケージ名 (`lib.getName` の値) を追加しないと `has an unfree license (‘unfree’)` (引用符は Unicode) で評価エラーになる。`allowUnfree = true` で全許可にはしない。
+>
+> - `lib.getName` の値は attr 名と異なることがある。`flake.lock` と同じ nixpkgs に対して、predicate と同じ関数で名前と unfree かどうかを一緒に確認する (`outPath` を force しないので、未許可の unfree パッケージでもチェックには掛からない):
+>
+>   ```bash
+>   nix eval --json ~/work/dotfiles/nix#darwinConfigurations.kanade0404.pkgs \
+>     --apply 'pkgs: let p = pkgs.<attr>; in { name = pkgs.lib.getName p; unfree = p.meta.unfree or null; }'
+>   ```
+>
+>   (`unfree` が `null` なら `meta.unfree` を持たない derivation。`p.meta.license` を直接見る)
+>
+> - `home-manager.useGlobalPkgs = true` のため、`home.nix` の `home.packages` に追加する unfree パッケージにも同じ predicate が効く。
 
 ### CLI ツールの削除
 
@@ -280,6 +295,29 @@ nix eval nixpkgs#<パッケージ名>.meta.description
 ### aarch64-darwin 非対応エラー
 
 `Package 'xxx' is not available on aarch64-darwin` → nixpkgs でそのパッケージは macOS 非対応。`modules/homebrew.nix` の `brews` に追加して Homebrew で管理する。
+
+### unfree エラー
+
+```text
+error: Refusing to evaluate package '1password-cli-<version>' in /nix/store/...-source/pkgs/by-name/_1/_1password-cli/package.nix:<行番号> because it has an unfree license (‘unfree’)
+```
+
+(パッケージ名は ASCII、ライセンス名は Unicode の引用符。古い nixpkgs では `has an unfree license (‘unfree’), refusing to evaluate.`)
+
+- `darwin-rebuild switch` / `nix build` で出た場合 → `configuration.nix` の `allowUnfreePredicate` に `lib.getName` の値を追加する。手順は[CLI ツールの追加](#cli-ツールの追加)の注記を参照。
+- `nix shell` / `nix run` で出た場合 → `nixpkgs#<attr>` は registry の nixpkgs (lock と別 rev) を引き、predicate も効かない。`configuration.nix` の predicate に `lib.getName` の値が**登録済み**のパッケージを `flake.lock` と同じ rev で使うなら、この flake の `pkgs` を経由すれば通る (未登録の unfree パッケージは同じエラーになる。なお `pkgs` の取り出しに nix-darwin + home-manager のモジュール評価が走るので数秒かかる):
+
+  ```bash
+  nix shell ~/work/dotfiles/nix#darwinConfigurations.kanade0404.pkgs.<attr>
+  nix run ~/work/dotfiles/nix#darwinConfigurations.kanade0404.pkgs.<attr> -- <args>
+  ```
+
+  lock に無い新しいものを試すだけなら、評価時だけ全許可にする:
+
+  ```bash
+  NIXPKGS_ALLOW_UNFREE=1 nix shell --impure nixpkgs#<attr>
+  NIXPKGS_ALLOW_UNFREE=1 nix run --impure nixpkgs#<attr> -- <args>
+  ```
 
 ### `/etc/xxx` のファイル衝突
 
