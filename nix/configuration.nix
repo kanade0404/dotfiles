@@ -1,8 +1,17 @@
-{ pkgs, ... }: {
+{ pkgs, lib, ... }: {
   # Nix settings — nix-darwin に /etc/nix/nix.conf を管理させる
   # (Determinate Nix を使う場合はこの Mac では `nix.enable = false` に戻すこと)
   nix.enable = true;
   nix.settings.experimental-features = [ "nix-command" "flakes" ];
+
+  # unfree パッケージは個別に許可する (allowUnfree = true で全許可にはしない)
+  # NOTE: flake.nix の home-manager.useGlobalPkgs = true により home.nix 側にも効く
+  nixpkgs.config.allowUnfreePredicate = pkg:
+    # attr 名ではなく `lib.getName pkg` の値 (通常は pname) を並べる。
+    # 確認手順は nix/README.md「CLI ツールの追加」の注記を参照
+    builtins.elem (lib.getName pkg) [
+      "1password-cli" # attr: _1password-cli
+    ];
 
   # System-level packages (migrated from Homebrew + mise)
   environment.systemPackages = with pkgs; [
@@ -75,6 +84,7 @@
     zsh-history-substring-search
 
     # Security & crypto
+    _1password-cli # `op` CLI (desktop app は Homebrew cask "1password" 側で管理)
     gnupg
     oath-toolkit
 
