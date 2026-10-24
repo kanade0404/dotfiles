@@ -8,6 +8,11 @@
     {
       "matchManagers": ["nix"],
       "groupName": "Nix flake inputs"
+    },
+    {
+      "description": "rulesync は skill 配布パイプラインの廃止 (#258) で依存から外す。そのレビュー窓の間に bump PR が出ると package.json / bun.lockb が必ず衝突する (#262 v17.1.0 / #263 v18 で実際に 2 回発生し、nightly の scan-pr-conflicts が自動解消した直後にまた conflict した)。Renovate は設定を default branch から読むため、抑止ルールは #258 のブランチ側ではなく master に直接入れないと効かない。だからこの PR は #258 とは分けてある。#258 が merge されれば rulesync 自体が依存から消えてこのルールは no-op になるので、その時点で削除してよい。",
+      "matchPackageNames": ["rulesync"],
+      "enabled": false
     }
   ]
 }
