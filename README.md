@@ -7,7 +7,7 @@ macOS (Apple Silicon) 用の個人 dotfiles。nix-darwin + home-manager (flakes)
 ### 前提条件
 
 - macOS (aarch64-darwin)
-- [Determinate Nix](https://determinate.systems/nix-installer/) がインストール済みであること
+- Nix がインストール済みであること ([Determinate Nix](https://determinate.systems/nix-installer/) の場合は `nix/flake.nix` の該当ホストを `nixEnable = false` にする)
 - このリポジトリが任意の clone/worktree パスに配置されていること
 
 ### 初回セットアップ (bootstrap.sh)
