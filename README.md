@@ -65,7 +65,7 @@ RUN_TESTS=1 ./bootstrap-codex-cloud.sh
 
 ### 新しい Mac で使う場合
 
-`nix/flake.nix` の `darwinConfigurations."kanade0404"` と `nix/configuration.nix` の `networking.hostName` を自分のホスト名に合わせて変更してから `bootstrap.sh` を実行してください (同一ホスト名で運用するなら変更不要)。
+`nix/flake.nix` の `darwinConfigurations` に `mkDarwin { hostName = "<ホスト名>"; nixEnable = <bool>; }` のエントリを追加してから `bootstrap.sh` を実行してください (既存エントリと同じホスト名で運用するなら変更不要)。`nixEnable` は Determinate Nix が入ったマシンでは `false` にします。
 
 ## 構成
 
