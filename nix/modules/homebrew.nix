@@ -5,11 +5,8 @@
       autoUpdate = true;
       cleanup = "zap"; # Remove formulae/casks not listed here
       upgrade = true;
-      # Homebrew 5.1+ では `brew bundle install --cleanup` の cleanup 実行に
-      # --force-cleanup / --force / $HOMEBREW_ASK のいずれかが必須。--force は
-      # install/upgrade 側も --overwrite 動作になり危険なため、cleanup の確認回避
-      # だけを目的に --force-cleanup を使う (nix-darwin の現 pin は付与しないため明示)。
-      extraFlags = [ "--force-cleanup" ];
+      # Homebrew 5.1+ の cleanup に必要な --force-cleanup は、nix-darwin が
+      # cleanup = "uninstall" / "zap" のときに自動で付与する (bb0b90d で確認済み)。
     };
 
     taps = [
