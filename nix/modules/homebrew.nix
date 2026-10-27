@@ -5,10 +5,14 @@
       autoUpdate = true;
       cleanup = "zap"; # Remove formulae/casks not listed here
       upgrade = true;
-      # Homebrew 5.1+ の cleanup に必要な --force-cleanup は、nix-darwin が
-      # cleanup = "uninstall" / "zap" のときに自動で付与する。nix-darwin を更新したら
-      # `darwin-rebuild build` 後の result/activate の brew bundle に含まれるか確認する。
-      # 含まれなくなった場合は extraFlags = [ "--force-cleanup" ] を戻す。
+      # Homebrew 5.1+ では `brew bundle install --cleanup` の cleanup 実行に
+      # --force-cleanup / --force / $HOMEBREW_ASK のいずれかが必須。--force は
+      # install/upgrade 側も --overwrite 動作になり危険なため、cleanup の確認回避
+      # だけを目的に --force-cleanup を使う。
+      # 新しい nix-darwin は cleanup = "zap" で同じフラグを自動付与するが、付与条件が
+      # 将来変わっても cleanup が静かに効かなくなるのを防ぐため、明示指定を残している
+      # (boolean switch なので重複しても無害)。
+      extraFlags = [ "--force-cleanup" ];
     };
 
     taps = [
