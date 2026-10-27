@@ -263,6 +263,10 @@ nix flake update nixpkgs
 nix flake update home-manager
 ```
 
+nixpkgs だけを大きく進めると、古い nix-darwin の `darwin-manual-html` が失敗することがある。
+`nixos-render-docs` の `--toc-depth` が削除されたことが原因である。
+その場合は nixpkgs、nix-darwin、home-manager をまとめて更新する。
+
 ### 更新を元に戻す
 
 ```bash

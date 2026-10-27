@@ -10,9 +10,10 @@
       # install/upgrade 側も --overwrite 動作になり危険なため、cleanup の確認回避
       # だけを目的に --force-cleanup を使う。
       # 新しい nix-darwin は cleanup = "uninstall" / "zap" で同じフラグを自動付与するが、
-      # 付与条件が将来変わっても cleanup が静かに効かなくなるのを防ぐため、明示指定を
-      # 残している (boolean switch なので重複しても無害)。付与状況は `darwin-rebuild build`
-      # 後に `grep -o -- '--force-cleanup' result/activate` で確認できる。
+      # 付与条件が将来変わっても darwin-rebuild の cleanup が失敗しないよう、明示指定を
+      # 残している (boolean switch なので重複しても無害)。自動付与の有無は
+      # `darwin-rebuild build` 後に `grep -o -- '--force-cleanup' result/activate | wc -l`
+      # で数えられる (自動 + 明示で 2、自動付与が消えると 1)。
       extraFlags = [ "--force-cleanup" ];
     };
 
