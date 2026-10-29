@@ -264,7 +264,12 @@ nix flake update home-manager
 ```
 
 nixpkgs だけを大きく進めると、古い nix-darwin の `darwin-manual-html` が失敗することがある。
-`nixos-render-docs` の `--toc-depth` が削除されたことが原因である。
+`nixos-render-docs` の `--toc-depth` が削除されたことが原因で、次のエラーになる。
+
+```text
+--toc-depth has been removed, use --sidebar-depth instead
+```
+
 その場合は nixpkgs、nix-darwin、home-manager をまとめて更新する。
 
 ### 更新を元に戻す
