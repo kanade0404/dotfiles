@@ -263,6 +263,21 @@ nix flake update nixpkgs
 nix flake update home-manager
 ```
 
+nixpkgs だけを大きく進めると、古い nix-darwin の `darwin-manual-html` が失敗することがある。
+`flake.nix` で nix-darwin / home-manager は `inputs.nixpkgs.follows = "nixpkgs"` としているため、
+nix-darwin 自身の派生物も新しい nixpkgs でビルドされ、`nixos-render-docs` の `--toc-depth` が
+削除されたことで次のエラーになる。
+
+```text
+--toc-depth has been removed, use --sidebar-depth instead
+```
+
+その場合は nix-darwin (と home-manager) も一緒に更新する。
+
+```bash
+nix flake update nixpkgs nix-darwin home-manager
+```
+
 ### 更新を元に戻す
 
 ```bash
