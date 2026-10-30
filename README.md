@@ -7,7 +7,7 @@ macOS (Apple Silicon) 用の個人 dotfiles。nix-darwin + home-manager (flakes)
 ### 前提条件
 
 - macOS (aarch64-darwin)
-- [Determinate Nix](https://determinate.systems/nix-installer/) がインストール済みであること
+- Nix がインストール済みであること ([Determinate Nix](https://determinate.systems/nix-installer/) の場合は `nix/flake.nix` の該当ホストを `nixEnable = false` にする)
 - このリポジトリが任意の clone/worktree パスに配置されていること
 
 ### 初回セットアップ (bootstrap.sh)
@@ -65,7 +65,7 @@ RUN_TESTS=1 ./bootstrap-codex-cloud.sh
 
 ### 新しい Mac で使う場合
 
-`nix/flake.nix` の `darwinConfigurations."kanade0404"` と `nix/configuration.nix` の `networking.hostName` を自分のホスト名に合わせて変更してから `bootstrap.sh` を実行してください (同一ホスト名で運用するなら変更不要)。
+`nix/flake.nix` の `darwinConfigurations` に `mkDarwin { hostName = "<ホスト名>"; nixEnable = <bool>; }` のエントリを追加してから `bootstrap.sh` を実行してください (既存エントリと同じホスト名で運用するなら変更不要)。`nixEnable` は Determinate Nix が入ったマシンでは `false` にします。
 
 ## 構成
 

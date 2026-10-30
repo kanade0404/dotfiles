@@ -1,8 +1,7 @@
 { pkgs, lib, ... }: {
-  # Nix settings — nix-darwin に /etc/nix/nix.conf を管理させる
-  # (Determinate Nix を使う場合はこの Mac では `nix.enable = false` に戻すこと)
-  nix.enable = true;
-  nix.settings.experimental-features = [ "nix-command" "flakes" ];
+  # Nix settings (nix.enable / experimental-features) は host 固有のため
+  # flake.nix の mkDarwin が per-host に注入する。Determinate Nix 入りの
+  # マシン (kanade0404-air) では nix.enable = false になる。詳細は flake.nix を参照。
 
   # unfree パッケージは個別に許可する (allowUnfree = true で全許可にはしない)
   # NOTE: flake.nix の home-manager.useGlobalPkgs = true により home.nix 側にも効く
@@ -109,10 +108,8 @@
     LC_ALL = "ja_JP.UTF-8";
   };
 
-  # Hostname (declaratively managed — sets macOS HostName / LocalHostName / ComputerName)
-  networking.hostName = "kanade0404";
-  networking.localHostName = "kanade0404";
-  networking.computerName = "kanade0404";
+  # Hostname (macOS HostName / LocalHostName / ComputerName) は host 固有のため
+  # flake.nix の mkDarwin が per-host に注入する (kanade0404 / kanade0404-air)。
 
   # User
   system.primaryUser = "kanade0404";
