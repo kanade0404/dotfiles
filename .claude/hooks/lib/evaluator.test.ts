@@ -236,55 +236,165 @@ describe("isPlainGitCCommand", () => {
     expect(isPlainGitCCommand("git -p -C /r log")).toBe(false);
     expect(isPlainGitCCommand("git -C /r --git-dir=/x log")).toBe(false);
   });
+
+  // -C の位置だけは単純な変数参照を許す (ADR 0004)。ダブルクォート内は値によらず 1 語、
+  // クォート無しは参照 1 個だけ (同じコマンド内の代入の条件は hookAllowSegments が見る)
+  test.each(["$R", "${R}", '"$R"', '"${R}"', '"${R}/sub"', '"$HOME/x y"'])("-C の %j は文法内", (dir) => {
+    expect(isPlainGitCCommand(`git -C ${dir} status`)).toBe(true);
+  });
+
+  test.each(["$R/sub", "${R}x", "$R$S", "${R:-x}", "$1", "$@", '"$1"', "'$R'", "$(pwd)", '"$(pwd)"', "${R}{a,b}"])(
+    "-C の %j は文法外",
+    (dir) => {
+      expect(isPlainGitCCommand(`git -C ${dir} status`)).toBe(false);
+    },
+  );
+
+  test("-C 以外の位置の変数参照は文法外", () => {
+    expect(isPlainGitCCommand("git -C /r log $R")).toBe(false);
+    expect(isPlainGitCCommand('git -C /r log "$R"')).toBe(false);
+  });
 });
 
 describe("evaluateCommand - git -C の hook allow (hookApproved)", () => {
   const rules = loadRepoRules();
-  // cwd は一時リポジトリ main (sub/dir・"r x" を持ち、../wt が worktree)。
-  // 文法外のケースでも -C の対象は存在する同一リポジトリ内のパスにして、
-  // hookApproved にならない理由が文法だけになるようにする。
-  let fx: GitFixture;
-  beforeAll(() => { fx = createGitFixture(); });
-  afterAll(() => { fx.cleanup(); });
-  const evaluate = (command: string, cwd: string = fx.main) =>
-    evaluateCommand(parseShellCommands(command), rules, command, cwd, {});
+  /** 代入してよい変数名の判定に使う環境 (hook の process.env に相当) */
+  const env = { PATH: "/usr/bin:/bin", HOME: "/Users/x", PAGER: "less" };
+  const evaluate = (command: string, e: Record<string, string> = env) =>
+    evaluateCommand(parseShellCommands(command), rules, command, e);
   const hookApproved = { decision: "allow", hookApproved: true } as const;
   const passThrough = { decision: "allow", hookApproved: false } as const;
 
-  // -C の対象が cwd と別の git common dir を持つと、そのリポジトリの .git/config
-  // (core.fsmonitor 等) や .git/hooks 経由で確認無しにコマンドを実行できる。
-  // 文法と allow に一致しても hook allow せず pass-through にする。
-  describe("-C の対象が cwd と同じリポジトリでなければ hookApproved にしない", () => {
+  // `git -C <dir> <sub>` は `git <sub>` と同じ扱いにする (ADR 0004)。-C の対象が cwd と別の
+  // リポジトリか・存在するかは判定に使わない。別リポジトリの .git/config や .git/hooks が
+  // 確認無しに実行されうることは受け入れたトレードオフ。
+  describe("-C の対象ディレクトリによらず hookApproved", () => {
     test.each([
-      ["無関係なリポジトリ", (f: GitFixture) => `git -C ${f.other} status`],
-      ["submodule 相当", () => "git -C sm status"],
-      ["存在しないパス", () => "git -C no-such-dir status"],
-      ["別リポジトリへのシンボリックリンク", () => "git -C link-other status"],
-      ["git 管理外", (f: GitFixture) => `git -C ${f.plain} status`],
-    ] as const)("%s", (_, command) => {
-      expect(evaluate(command(fx))).toEqual(passThrough);
+      "git -C /Users/kanade0404/orca/workspaces/skills/pinniped diff --stat",
+      "git -C ../other-repo status",
+      "git -C no-such-dir status",
+      "git -C /tmp/agent-made-repo log --oneline",
+    ])("%j", (command) => {
+      expect(evaluate(command)).toEqual(hookApproved);
     });
 
-    test("cwd が無い場合", () => {
-      const command = `git -C ${fx.main} status`;
-      expect(evaluateCommand(parseShellCommands(command), rules, command, undefined, {})).toEqual(
-        passThrough,
-      );
+    // 環境の GIT_DIR 等は非 -C の `git status` (本体が allow で自動許可する) にも同じく効くので、
+    // -C 版だけ止める理由にしない
+    test("GIT_DIR が環境にあっても hookApproved", () => {
+      expect(evaluate("git -C sub status", { ...env, GIT_DIR: "/x" })).toEqual(hookApproved);
+    });
+  });
+
+  // -C の引数の単純な変数参照。ダブルクォート内は値によらず 1 語。クォート無しは値が空なら
+  // 語ごと消え (zsh / bash)、bash では空白で分割されるので、同じコマンド内で必ず実行される
+  // 空でない・空白を含まない代入があるときだけ hookApproved にする。
+  describe("-C の変数参照", () => {
+    test.each([
+      'git -C "$R" diff --stat',
+      'git -C "${R}" status',
+      'git -C "${R}/sub" log --oneline',
+      "R=/Users/kanade0404/orca/workspaces/skills/pinniped; git -C $R diff --stat",
+      "R=/x; git -C ${R} log",
+      "R=/x && git -C $R status",
+      "R=/x; S=/y; git -C $R status; git -C $S diff",
+      "R=/x; git -C $R status || true",
+      "R=/x || true; git -C $R status",
+      "R='/x'; git -C $R status",
+      // クォートした参照は値に空白があっても 1 語
+      "R='/x y'; git -C \"$R\" status",
+    ])("%j は hookApproved", (command) => {
+      expect(evaluate(command)).toEqual(hookApproved);
     });
 
-    test("cwd が git 管理外の場合", () => {
-      expect(evaluate(`git -C ${fx.main} status`, fx.plain)).toEqual(passThrough);
+    test.each([
+      // 代入が無い (値が空なら `-C` が次の語を取る。`git -C diff --stat` になる)
+      "git -C $R diff --stat",
+      "git -C ${R} status",
+      // 代入が必ず実行されるとは限らない / サブシェルで実行される
+      "false && R=/x; git -C $R status",
+      "true || R=/x; git -C $R status",
+      "R=/x | git -C $R status",
+      "echo x | R=/x; git -C $R status",
+      // 代入の後に参照より前の位置で空にされうる / 値が空・空白を含む (bash で分割される)
+      "R=/x; R=; git -C $R status",
+      "R=/x; false && R= ; git -C $R status",
+      "R=; git -C $R status",
+      "R='/x y'; git -C $R status",
+      "R='/x status'; git -C $R log",
+      // 参照より後の代入
+      "git -C $R status; R=/x",
+      // 環境にある変数は子プロセスに渡り、代入で git の挙動を変えうる
+      "PAGER=/x; git -C $PAGER status",
+      // クォートしない連結・特殊パラメータ・既定値付きの展開
+      "R=/x; git -C $R/sub status",
+      "git -C $1 status",
+      "git -C ${R:-/x} status",
+    ])("%j は hookApproved ではない", (command) => {
+      expect(evaluate(command)).not.toEqual(hookApproved);
     });
 
-    test("GIT_DIR が環境にある場合", () => {
-      const command = "git -C sub status";
-      expect(
-        evaluateCommand(parseShellCommands(command), rules, command, fx.main, { GIT_DIR: "/x" }),
-      ).toEqual(passThrough);
+    test("環境に同名の変数 (大小文字違いを含む) があれば代入を受け付けない", () => {
+      expect(evaluate("R=/x; git -C $R status", { ...env, R: "/y" })).toEqual(passThrough);
+      expect(evaluate("r=/x; git -C $r status", { ...env, R: "/y" })).toEqual(passThrough);
+    });
+  });
+
+  // 複合コマンドは、生コマンド全体が「単純コマンド・代入を ; && || | で繋いだもの」の正の文法に
+  // 一致し、代入以外の全セグメントが allow ルールに肯定的に一致するときだけ hookApproved。
+  describe("複合コマンド", () => {
+    test.each([
+      "git -C /a status && git -C /b diff",
+      "git -C sub status; git -C sub diff",
+      "git -C sub log --oneline | head -5",
+      "git -C sub log --oneline|head -5",
+      "git status && git -C /b diff",
+      "git -C /a status; echo done",
+      "git -C /a status || true",
+      "git -C /a diff --stat | wc -l",
+      "pwd; git -C /a status",
+      "git -C /a status && sleep 1 && git -C /a log -1",
+    ])("%j は hookApproved", (command) => {
+      expect(evaluate(command)).toEqual(hookApproved);
     });
 
-    test("worktree からの main への -C は hookApproved", () => {
-      expect(evaluate(`git -C ${fx.main} status`, fx.worktree)).toEqual(hookApproved);
+    test.each([
+      // どのルールにも一致しないセグメント (matchCommand が null) を含む
+      "git -C /a status; some-undefined-cmd",
+      "git -C /a status && python3 script.py",
+      "git -C . status && git -C . submodule foreach touch x",
+      // -C の無いコマンドだけなら本体が自分で判定できるので hook allow しない
+      "git status && git diff",
+      "echo a; echo b",
+      // 組み込みコマンド (シェルの状態を変えうる) とラッパー
+      "git -C /a status; printf x",
+      "printf -v PATH /tmp/evil; git -C . status",
+      "git -C /a status; command touch x",
+      "git -C /a status; nice make",
+      "git -C /a status; time make",
+      "git -C /a status; exec make",
+      // 危険な変数への代入
+      "PATH=/tmp/evil; git -C . status",
+      "path=/tmp/evil; git -C . status",
+      "HOME=/tmp/x; git -C . status",
+      "IFS=/; git -C . status",
+      "GIT_CONFIG_GLOBAL=/tmp/x; git -C . status",
+      "LD_PRELOAD=/tmp/x.so; git -C . status",
+      // 代入の前置 (一時環境変数)
+      "R=/x git -C . status",
+      // 文法外の区切り・字句 (改行・バックグラウンド・|&・ヒアドキュメント・リダイレクト)
+      "git -C . status\ngit -C . diff",
+      "git -C . status & git -C . diff",
+      "git -C . status |& head",
+      "git -C . status;",
+      "; git -C . status",
+      "git -C . status ;; git -C . diff",
+      "git -C . log | head -5 > /tmp/out",
+      "/usr/bin/python3 - <<'EOF'\nprint(1)\nEOF\nR=/x; git -C $R diff --stat",
+      // -C 以外の位置の展開
+      "R=/x; echo $R; git -C . status",
+      "git -C . log \"$R\"",
+    ])("%j は hookApproved ではない", (command) => {
+      expect(evaluate(command)).not.toEqual(hookApproved);
     });
   });
 
@@ -311,9 +421,9 @@ describe("evaluateCommand - git -C の hook allow (hookApproved)", () => {
   });
 
   // 実行シェルは zsh (Claude Code の Bash tool は `zsh -c '... eval <cmd>'` で実行する)。
-  // 以下はいずれも zsh で git 以外のコマンドが実行される・git の実行内容が変わる・
-  // ファイルに書き込む形、またはそれと同じ字句クラスの入力。複合コマンドは hook allow
-  // しない (pass-through で本体の判定に委ねる)。
+  // 以下はいずれも zsh で allow ルールに一致しないコマンドが実行される・git の実行内容が変わる・
+  // ファイルに書き込む形、またはそれと同じ字句クラスの入力。hook allow しない
+  // (pass-through で本体の判定に委ねる)。
   test.each([
     // 関数定義で allow 済みコマンド名を再定義する (zsh の `name () cmd` 形)
     "echo () (touch X); git -C sub status; echo",
@@ -356,11 +466,8 @@ describe("evaluateCommand - git -C の hook allow (hookApproved)", () => {
     "/usr/bin/git -C sub status",
     "'git' -C sub status",
     "git -C sub status; /tmp/evil/echo hi",
-    // 複合コマンド・サブシェル・パイプ
-    "git -C a status && git -C b diff",
-    "git -C sub status && git -C sub diff",
-    "git -C sub status; git -C sub diff",
-    "git -C sub log --oneline | head -5",
+    "git -C sub status; ./echo hi",
+    // バックグラウンド・サブシェル・ブレースグループ
     "git -C sub status &",
     "(git -C sub status)",
     "{ git -C sub status; }",
@@ -406,7 +513,7 @@ describe("evaluateCommand - git -C の hook allow (hookApproved)", () => {
       { category: "allow", pattern: "Bash(git -C *)", regex: patternToRegex("git -C *") },
     ];
     const command = "git -C sub replace -d x";
-    expect(evaluateCommand(parseShellCommands(command), loose, command, fx.main, {})).toEqual({
+    expect(evaluateCommand(parseShellCommands(command), loose, command, {})).toEqual({
       decision: "allow",
       hookApproved: false,
     });
@@ -423,13 +530,11 @@ describe("evaluateCommand - git -C の hook allow (hookApproved)", () => {
     });
   });
 
-  // 文法に一致しない allow は従来どおり pass-through (hookApproved: false) のまま
+  // 文法または allow に一致しない allow は従来どおり pass-through (hookApproved: false) のまま
   test.each([
     "git status",
     "git status && git diff",
-    "git -C sub status && git -C sub diff",
     "git -C . status && python script.py",
-    "git -C . log --oneline | head -5",
     // 文法には一致しても正規化した `git <sub>` が非 -C allow に無いサブコマンド
     "git -C . submodule foreach rm -rf / status",
     "git -C . replace -d status",
@@ -437,23 +542,52 @@ describe("evaluateCommand - git -C の hook allow (hookApproved)", () => {
     "FOO=1 git -C . status",
     "git -C . log $(echo HEAD)",
     "PATH=/tmp/evil; git -C . status",
+    "git -C $R diff --stat",
   ])("%j は allow だが hookApproved ではない", (command) => {
     expect(evaluate(command)).toEqual({ decision: "allow", hookApproved: false });
   });
 
-  // deny / ask の判定は文法による hook allow の限定とは独立に従来どおり
+  // 正規化後の deny / ask は、-C の対象・変数参照・複合コマンドの hook allow とは独立に従来どおり効く
   test.each([
     "git -C /r reset --hard",
+    "git -C /other reset --hard",
     "git -C /r push --force",
+    "git -C $R push --force",
+    'git -C "$R" push --force',
+    "R=/x; git -C $R push --force",
+    "git -C ${R} reset --hard",
     "git -C /r commit --no-verify -m x",
+    "git -C $R commit --no-verify -m x",
     "git -C /r status; rm -rf x",
     "git -C /a status && git -C /b reset --hard",
+    "git -C /a status && git -C $R reset --hard",
+    "git -C /a status | git -C /b push -f origin main",
+    // 付け替え時だけ危険なサブコマンド (dangerousWhenRedirected)
+    "git -C $R rm -r .",
+    "git -C /other branch -d feature",
+    // R が空だと `git -C status rm -r .` (rm を status で実行) になる
+    "git -C $EMPTY status rm -r .",
+    // 機密パス
+    "git -C $R log -- ~/.ssh/id_rsa",
+    "git -C /other diff .env",
   ])("%j は deny", (command) => {
     expect(evaluate(command).decision).toBe("deny");
   });
 
-  test("git -C $(echo /x) status は ask", () => {
-    expect(evaluate("git -C $(echo /x) status").decision).toBe("ask");
+  // 変数参照以外の展開を含む -C の引数は、展開後の語数が変わりうるので ask
+  test.each([
+    "git -C $(echo /x) status",
+    "git -C `pwd` status",
+    'git -C "$(pwd)" status',
+    "git -C {a,b} status",
+    "git -C ${R}{a,b} status",
+    "git -C * status",
+    "git -C $R* status",
+    "git -C ${R:-/x} status",
+    "git -C $1 status",
+    'git -C "$@" status',
+  ])("%j は ask", (command) => {
+    expect(evaluate(command).decision).toBe("ask");
   });
 });
 
@@ -464,22 +598,28 @@ describe("evaluateCommand - git -C と ask ルール", () => {
   const askRule = (p: string): Rule => ({ category: "ask", pattern: `Bash(${p})`, regex: patternToRegex(p) });
   const rules = [...loadRepoRules(), askRule("git push *"), askRule("git commit *")];
   const evaluate = (command: string) =>
-    evaluateCommand(parseShellCommands(command), rules, command);
+    evaluateCommand(parseShellCommands(command), rules, command, {});
 
   test.each([
     'git -C /r commit -m "fix bug"',
     "git -C /r push origin main",
     "git --no-pager -C /r commit -m x",
+    "git -C $R push origin main",
+    'git -C "${R}" commit -m x',
+    "R=/x; git -C $R push origin main",
+    // 複合コマンドでも ask のセグメントがあれば ask (hook allow しない)
+    "git -C /r status && git -C /r push origin main",
   ])("非 -C allow と ask の両方に一致する %j は ask", (command) => {
     expect(evaluate(command).decision).toBe("ask");
   });
 
   test("ask に一致しない git -C /r status は ask にならない", () => {
-    expect(evaluate("git -C /r status").decision).toBe("allow");
+    expect(evaluate("git -C /r status")).toEqual({ decision: "allow", hookApproved: true });
   });
 
   test("deny は ask より優先: git -C /r push --force は deny", () => {
     expect(evaluate("git -C /r push --force").decision).toBe("deny");
+    expect(evaluate("git -C $R push --force").decision).toBe("deny");
   });
 });
 
@@ -534,7 +674,7 @@ describe("evaluateCommand - hook allow の根拠になる設定ファイル", ()
     const cwd = opts.cwd ?? fx.main;
     const env = opts.env ?? { HOME: home, CLAUDE_PROJECT_DIR: fx.main };
     const managed = opts.managed === undefined ? managedSources : opts.managed;
-    return evaluateCommand(parseShellCommands(command), loadRules(cwd, env, managed), command, cwd, {});
+    return evaluateCommand(parseShellCommands(command), loadRules(cwd, env, managed), command, {});
   }
 
   const hookApproved = { decision: "allow", hookApproved: true } as const;
@@ -603,6 +743,47 @@ describe("evaluateCommand - hook allow の根拠になる設定ファイル", ()
       writeSettings(join(home, ".claude", "settings.json"), { allow: ["Bash(*)", "Bash(git status *)"] });
       expect(evaluate("git -C . status")).toEqual(hookApproved);
       expect(evaluate("git -C . submodule foreach touch pwned")).toEqual(passThrough);
+    });
+  });
+
+  // 複合コマンドの git 以外のセグメントも、ユーザ設定のコマンド名を固定した allow に
+  // 肯定的に一致する必要がある (git -C 以外のセグメントの出自も git -C と同じ条件)
+  describe("複合コマンドの git 以外のセグメント", () => {
+    const gitStatus = "Bash(git status *)";
+
+    test("ユーザ設定にコマンド名を固定した allow があれば hookApproved", () => {
+      writeSettings(join(home, ".claude", "settings.json"), { allow: [gitStatus, "Bash(sleep *)"] });
+      expect(evaluate("git -C . status; sleep 1")).toEqual(hookApproved);
+    });
+
+    test.each([
+      [".codex/settings.json", () => join(fx.main, ".codex", "settings.json")],
+      ["プロジェクトの .claude/settings.json", () => join(fx.main, ".claude", "settings.json")],
+    ] as const)("%s にだけある allow は根拠にしない", (_, path) => {
+      writeSettings(join(home, ".claude", "settings.json"), { allow: [gitStatus] });
+      writeSettings(path(), { allow: ["Bash(sleep *)"] });
+      expect(evaluate("git -C . status; sleep 1")).toEqual(passThrough);
+    });
+
+    test.each(["Bash(*)", "Bash(s*)", "Bash(sleep*)"])("コマンド名を固定しない %s は根拠にしない", (pattern) => {
+      writeSettings(join(home, ".claude", "settings.json"), { allow: [gitStatus, pattern] });
+      expect(evaluate("git -C . status; sleep 1")).toEqual(passThrough);
+    });
+
+    // ラッパー・組み込みコマンドは allow の照合 (先頭のコマンド名) と実際の実行内容がずれる、
+    // またはシェルの状態を変えうるので、ユーザ設定に allow があっても根拠にしない
+    test.each([
+      ["Bash(command *)", "git -C . status; command touch pwned"],
+      ["Bash(printf *)", "git -C . status; printf x"],
+      ["Bash(nohup *)", "git -C . status; nohup touch pwned"],
+    ])("%s", (pattern, command) => {
+      writeSettings(join(home, ".claude", "settings.json"), { allow: [gitStatus, pattern] });
+      expect(evaluate(command)).toEqual(passThrough);
+    });
+
+    test("ユーザ設定の deny は git 以外のセグメントにも効く", () => {
+      writeSettings(join(home, ".claude", "settings.json"), { allow: [gitStatus, "Bash(sleep *)"], deny: ["Bash(sleep 9 *)"] });
+      expect(evaluate("git -C . status; sleep 9 x").decision).toBe("deny");
     });
   });
 

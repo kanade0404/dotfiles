@@ -86,7 +86,7 @@ function main(): void {
         return;
       }
 
-      const result = evaluateCommand(subCommands, rules, command, hookInput.cwd);
+      const result = evaluateCommand(subCommands, rules, command);
 
       switch (result.decision) {
         case "deny": {
@@ -100,15 +100,15 @@ function main(): void {
           respond("ask", result.reason);
           break;
         case "allow":
-          // Claude Code から起動され (--client=claude-code)、生コマンド全体が単一の単純な
-          // `git -C <dir> <sub> ...` の文法に一致し、<dir> が入力の cwd と同じリポジトリで、
-          // hook が正規化して allow と判定し、permission_mode が default / acceptEdits のときだけ allow を
-          // 返す (settings.json に -C 版ルールが無く本体は自力で allow しないため。evaluator.ts の
-          // isPlainGitCCommand、hook-response.ts の shouldEmitAllow 参照)。Codex は bare な
+          // Claude Code から起動され (--client=claude-code)、生コマンド全体が `git -C <dir> <sub> ...` を
+          // 含む単純コマンド・代入の並びの文法に一致し、代入以外の全セグメントが allow ルールに肯定的に
+          // 一致し (git -C は git <sub> に正規化して照合)、permission_mode が default / acceptEdits の
+          // ときだけ allow を返す (settings.json に -C 版ルールが無く本体は自力で allow しないため。
+          // evaluator.ts の hookAllowSegments、hook-response.ts の shouldEmitAllow 参照)。Codex は bare な
           // permissionDecision:"allow" を unsupported として hook 失敗扱いにするので、それ以外は従来どおり
           // 何も返さず終了し (exit 0 + 無出力 = pass-through)、本体の判定に委ねる。
           if (shouldEmitAllow(result, parseHookClient(process.argv), hookInput.permission_mode)) {
-            respond("allow", "git -C <dir> を正規化し、~/.claude/settings.json の allow ルールに一致");
+            respond("allow", "git -C <dir> を git <sub> に正規化し、全セグメントが ~/.claude/settings.json の allow ルールに一致");
           }
           process.exit(0);
       }

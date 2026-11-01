@@ -394,7 +394,9 @@ type DangerousGitFlagRule = {
 //    deny ルールの形に無い破壊的サブコマンド/フラグや、`-C` で付け替えた時だけ危険な
 //    操作 (dangerousWhenRedirected) を deny に昇格させる。
 // 3. 機密ファイルパス (checkSensitiveFilePaths) を deny に昇格させる。
-// 4. 正規化できない形 (展開を含む dir / 複数 -C / -C 以外の global option との併用等) は ask。
+//    `-C $R` (クォート無しの変数参照だけ) は、R が空で語ごと消えた形にも deny を照合する。
+// 4. 正規化できない形 (単純な変数参照以外の展開を含む dir / 複数 -C / -C 以外の global option
+//    との併用等) は ask。
 // 5. ask — 正規化した候補も含めて非 -C ask ルールに一致すれば ask (allow より先)。
 // 6. allow — 正規化した候補が非 -C allow ルールに一致すれば allow (gitCNormalized)。
 // settings.json には `-C` 版ルールを置かない (中間ワイルドカードは hook でも本体でも
@@ -1048,21 +1050,49 @@ function normalizeCommandName(command: string): string {
 type GitCAnalysis =
   | { readonly kind: "none" }
   | { readonly kind: "ask"; readonly reason: string }
-  | { readonly kind: "normalized"; readonly normalized: string };
+  | {
+      readonly kind: "normalized";
+      readonly normalized: string;
+      /**
+       * `-C` の引数がクォート無しの変数参照だけ (`$R`) のとき、値が空で語ごと消えた場合に
+       * シェルが実行するコマンド (`git -C $R status rm -r .` → `git -C status rm -r .`)。
+       * matchCommand はこれも deny だけ照合する。
+       */
+      readonly vanishingDirCommand?: string;
+    };
 
 /**
  * `-C` の引数に含まれるとシェル展開になる文字。展開後の語数が変わると実サブコマンドの
- * 位置がずれうる (`$(echo)` / 空の `$X` は語ごと消え、`{x,rm}` や `*` は複数語になる)。
+ * 位置がずれうる (`$(echo)` は語ごと消え、`{x,rm}` や `*` は複数語になる)。
+ * 単純な変数参照 (`$R` / `${R}`) は SIMPLE_VARIABLE_REFERENCE で先に取り除いてから判定する。
  * ANSI-C quoting (`$'...'`) は展開ではなくリテラルなので `$` の直後が `'` の場合は除く。
  * シングルクォート内の `$` も実際にはリテラルだが、区別せず安全側 (ask) に倒す。
  * `~` (チルダ展開) は 1 語のまま展開されるので対象外。
  * zsh の EXTENDED_GLOB の glob 演算子 (`^x` / `x#` / `x~y`) も対象外。Claude Code の Bash tool は
  * `setopt NO_EXTENDED_GLOB` で実行するので展開されない。有効な環境で正規化と実行がずれても、
- * hook が allow を返す文法 (evaluator.ts の isPlainGitCCommand) は `^` `#` を受け付けないので、
+ * hook が allow を返す文法 (evaluator.ts の hookAllowSegments) は `^` `#` を受け付けないので、
  * auto-approve にはならず pass-through (本体の確認) に落ちる (文法が許す word 途中の `~` は
  * ワイルドカードを伴わないので、EXTENDED_GLOB でも複数語には展開されない)。
  */
 const SHELL_EXPANSION_IN_WORD = /`|\$(?!')|[*?[{]/;
+
+/**
+ * `-C` の引数で許す単純な変数参照 (`$NAME` / `${NAME}`)。ダブルクォートの内外を問わない。
+ * SHELL_EXPANSION_IN_WORD で判定する前に取り除くので、`${` は `{` (ブレース展開) より先に
+ * ここで消費される。取り除いた後に `$` (`${R:-x}`・`$1`・`$(`)、バッククォート、glob、
+ * ブレース展開が残れば従来どおり ask にする。
+ * 受け入れる制約 (ADR 0004): bash ではクォートしない参照が値の空白で複数語に分割される。
+ * 空のときに語ごと消える形は analyzeGitC の vanishingDirCommand で deny だけ追加で照合する。
+ */
+const SIMPLE_VARIABLE_REFERENCE = /\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*\})/g;
+
+/** クォート無しの変数参照だけからなる word (値が空なら zsh / bash とも語ごと消える) */
+const UNQUOTED_VARIABLE_ONLY_WORD = /^(?:\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*\}))+$/;
+
+/** `-C` の引数に、単純な変数参照以外のシェル展開が含まれるか */
+function hasShellExpansionInDir(dir: string): boolean {
+  return SHELL_EXPANSION_IN_WORD.test(dir.replace(SIMPLE_VARIABLE_REFERENCE, ""));
+}
 
 /**
  * analyzeGitC が値トークンを 1 つ読み飛ばす global option。findGitSubcommand と同じ
@@ -1099,9 +1129,11 @@ function rawTokenSpans(input: string): { start: number; end: number }[] {
  * 判定する (matchCommand 参照)。非 -C ルールはプレフィックス一致なのでサブコマンド位置に
  * anchor される。
  *
- * 正規化するのは「`-C` が 1 つだけ・その引数がリテラル・他の global option は
- * SIDE_EFFECT_FREE_GIT_GLOBAL_OPTS だけ・env による付け替えが無い」場合に限る。
- * それ以外 (複数 `-C` / `--git-dir` / `--work-tree` / `-c` / 展開を含む dir 等) は
+ * 正規化するのは「`-C` が 1 つだけ・その引数がリテラルか単純な変数参照 (`$R` / `"${R}"` 等。
+ * hasShellExpansionInDir)・他の global option は SIDE_EFFECT_FREE_GIT_GLOBAL_OPTS だけ・
+ * env による付け替えが無い」場合に限る。`-C` の対象ディレクトリ自体は判定に使わない
+ * (`git -C <dir> <sub>` は `git <sub>` と同じ扱い。ADR 0004)。
+ * それ以外 (複数 `-C` / `--git-dir` / `--work-tree` / `-c` / 変数参照以外の展開を含む dir 等) は
  * 正規化結果が実際の実行と一致する保証が無いので ask にする。
  * 戻り値の `normalized` は元のクォートを保った生文字列 (非 -C コマンドと同じ条件で
  * ルール照合するため)。
@@ -1112,12 +1144,14 @@ function analyzeGitC(command: string, stripped: string): GitCAnalysis {
   if (spans.length === 0 || commandBaseName(raw(0)) !== "git") return { kind: "none" };
 
   const dirs: string[] = [];
+  let dirSpan: { start: number; end: number } | null = null;
   let otherOption: string | null = null;
   let i = 1;
   while (i < spans.length) {
     const word = normalizeWord(raw(i));
     if (word === "-C" && i + 1 < spans.length) {
       dirs.push(raw(i + 1));
+      dirSpan = spans[i + 1];
       i += 2;
       continue;
     }
@@ -1130,7 +1164,7 @@ function analyzeGitC(command: string, stripped: string): GitCAnalysis {
   }
   if (dirs.length === 0) return { kind: "none" };
 
-  if (dirs.some((dir) => SHELL_EXPANSION_IN_WORD.test(dir))) {
+  if (dirs.some(hasShellExpansionInDir)) {
     return { kind: "ask", reason: "-C の引数にシェル展開を含む" };
   }
   if (dirs.length > 1) return { kind: "ask", reason: "-C を複数指定している" };
@@ -1141,7 +1175,12 @@ function analyzeGitC(command: string, stripped: string): GitCAnalysis {
     return { kind: "ask", reason: "-C と環境変数によるリポジトリ付け替えを併用している" };
   }
   if (i >= spans.length) return { kind: "none" };
-  return { kind: "normalized", normalized: `git ${stripped.slice(spans[i].start)}` };
+  const normalized = `git ${stripped.slice(spans[i].start)}`;
+  if (dirSpan !== null && UNQUOTED_VARIABLE_ONLY_WORD.test(dirs[0])) {
+    const vanishingDirCommand = `${stripped.slice(0, dirSpan.start)}${stripped.slice(dirSpan.end).trimStart()}`;
+    return { kind: "normalized", normalized, vanishingDirCommand };
+  }
+  return { kind: "normalized", normalized };
 }
 
 /**
@@ -1193,6 +1232,14 @@ export function matchCommand(
   // ここで早期チェックしないと機密パス操作が hook をすり抜ける。
   if (checkSensitiveFilePaths(command)) {
     return { decision: "deny", command, pattern: "sensitive-file-path" };
+  }
+
+  // `-C $R` の R が空だと `-C` は次の語を引数に取り、実サブコマンドがずれる
+  // (`git -C $R status rm -r .` は `git -C status rm -r .` として実行される)。
+  // その形でも deny に当たるなら deny にする (ask / allow はずれる前の正規化で判定する)。
+  if (gitC.kind === "normalized" && gitC.vanishingDirCommand !== undefined) {
+    const vanished = matchCommand(gitC.vanishingDirCommand, rules);
+    if (vanished?.decision === "deny") return { decision: "deny", command, pattern: vanished.pattern };
   }
 
   // `git -C` 形だが正規化できない (展開を含む dir / 付け替えの併用等)

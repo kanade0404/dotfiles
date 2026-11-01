@@ -1079,6 +1079,13 @@ describe("統合テスト: settings.json ルールでの判定", () => {
       ["git -C /repo log --grep rebase", "Bash(git log *)"],
       ["git -C /repo diff -- reset", "Bash(git diff *)"],
       ['git -C /repo commit -m "fix: reset handler"', "Bash(git commit *)"],
+      // -C の引数の単純な変数参照 (ADR 0004)。`${` はブレース展開より先に変数参照として扱う
+      ["git -C $R diff --stat", "Bash(git diff *)"],
+      ["git -C ${R} log --oneline", "Bash(git log *)"],
+      ['git -C "$R" status', "Bash(git status *)"],
+      ['git -C "${R}" status', "Bash(git status *)"],
+      ['git -C "$HOME/x" status', "Bash(git status *)"],
+      ["git -C $R/sub status", "Bash(git status *)"],
     ])("%s は %s で allow", (command, pattern) => {
       expect(matchCommand(command, settingsRules)).toEqual({
         decision: "allow",
@@ -1125,6 +1132,14 @@ describe("統合テスト: settings.json ルールでの判定", () => {
       ["git -C /repo rm -r .", "dangerous-git-flags"],
       // 曖昧な付け替え (正規化しない形) でも破壊的なら backstop の deny が ask より先
       ["git -C /a -C /b reset --hard", "dangerous-git-flags"],
+      // -C の引数が変数参照でも正規化後の deny / backstop は同じ
+      ["git -C $R push --force", "Bash(git push --force *)"],
+      ['git -C "${R}" reset --hard', "Bash(git reset *)"],
+      ["git -C $R rm -r .", "dangerous-git-flags"],
+      // クォート無しの $EMPTY が空だと `git -C status rm -r .` (status で rm) として実行される。
+      // 語が消えた形にも deny を照合する
+      ["git -C $EMPTY status rm -r .", "dangerous-git-flags"],
+      ["git -C ${EMPTY} log reset --hard", "Bash(git reset *)"],
     ])("%s は %s で deny", (command, pattern) => {
       expect(matchCommand(command, settingsRules)).toEqual({ decision: "deny", command, pattern });
     });
@@ -1132,19 +1147,24 @@ describe("統合テスト: settings.json ルールでの判定", () => {
 
   describe("git -C: 正規化できない形は ask", () => {
     test.each([
-      // `-C` の引数にシェル展開があると、展開後の語数が変わって実サブコマンドの位置が
-      // ずれうる (`$(echo)` や空の `$X` は語ごと消え、`{x,rm}` は 2 語になる)
+      // `-C` の引数に単純な変数参照以外のシェル展開があると、展開後の語数が変わって
+      // 実サブコマンドの位置がずれうる (`$(echo)` は語ごと消え、`{x,rm}` は 2 語になる)
       "git -C $(echo /x) status",
       // backstop の tokenize は $(...) を 1 語として扱えずサブコマンドを取り違えるため、
       // 破壊的サブコマンドでも deny ではなく ask で止める
       "git -C $(echo /x) reset --hard",
-      'git -C "$HOME/x" status',
       "git -C `pwd` status",
-      "git -C $EMPTY status rm -r .",
       "git -C $(echo status >/dev/null; echo /other) rm -r .",
       "git -C {x,rm} status",
       "git -C * status",
       'git -C "$(git rev-parse --show-toplevel)" status',
+      // 変数参照を取り除いた後に残る展開 (既定値付き・特殊パラメータ・glob・ブレース展開)
+      "git -C ${R:-/x} status",
+      "git -C $1 status",
+      'git -C "$@" status',
+      "git -C $R* status",
+      "git -C ${R}{a,b} status",
+      "git -C ${R status",
       // 付け替えの重ね掛け / 他の付け替え手段との併用
       "git -C a -C b status",
       "git -C /x --git-dir=/y/.git status",
@@ -1234,6 +1254,12 @@ describe("統合テスト: settings.json ルールでの判定", () => {
     });
     test("git -C /a status && git -C $(echo /b) status は ask", () => {
       expect(judgeCommand("git -C /a status && git -C $(echo /b) status")).toBe("ask");
+    });
+    test("R=/b; git -C $R diff --stat は ask にならない", () => {
+      expect(judgeCommand("R=/b; git -C $R diff --stat")).toBe("allow");
+    });
+    test("R=/b; git -C $R push --force は deny", () => {
+      expect(judgeCommand("R=/b; git -C $R push --force")).toBe("deny");
     });
   });
 

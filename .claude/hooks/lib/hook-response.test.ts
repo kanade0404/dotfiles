@@ -166,8 +166,9 @@ describe("pre-tool-use-bash-analyzer (プロセス)", () => {
     expect(JSON.parse(r.stdout).hookSpecificOutput.permissionDecision).toBe("deny");
   });
 
-  // hook が allow を返すのは、生コマンド全体が単一の単純な `git ... -C <dir> ... <sub> ...`
-  // の文法 (evaluator.ts の isPlainGitCCommand) に一致し、<dir> が cwd と同じリポジトリの場合だけ。
+  // hook が allow を返すのは、生コマンド全体が `git ... -C <dir> ... <sub> ...` を含む単純コマンド・
+  // 代入の並びの文法 (evaluator.ts の hookAllowSegments) に一致し、代入以外の全セグメントが
+  // allow ルールに肯定的に一致する場合だけ。<dir> は判定に使わない。
   test.each([
     "git -C sub status",
     "git -C sub log --oneline -5",
@@ -177,8 +178,44 @@ describe("pre-tool-use-bash-analyzer (プロセス)", () => {
     "git -C sub diff --stat",
     "git -C sub log --format=%H",
     "git -C ../wt status",
+    'git -C "$R" diff --stat',
+    "R=/Users/kanade0404/orca/workspaces/skills/pinniped; git -C $R diff --stat",
+    "git -C sub status && git -C sub diff",
+    "git -C sub log --oneline | head -5",
   ])("Claude Code: %j は allow を返す", (command) => {
     expect(env.decisionOf(command)).toBe("allow");
+  });
+
+  // 従来は -C の引数の変数参照で ask を返していた。正規化後の deny / ask に当たらなければ
+  // 確認を出さない (文法外・代入の条件を満たさないものは pass-through で本体の判定に委ねる)
+  test.each([
+    "git -C $R diff --stat",
+    "/usr/bin/python3 - <<'EOF'\nprint(1)\nEOF\nR=/Users/kanade0404/orca/workspaces/skills/pinniped; git -C $R diff --stat",
+  ])("Claude Code: %j は何も出力しない", (command) => {
+    expect(env.decisionOf(command)).toBeNull();
+  });
+
+  test.each(["git -C $R push --force", "git -C /other reset --hard", "R=/x; git -C $R push --force"])(
+    "Claude Code: %j は deny",
+    (command) => {
+      expect(env.decisionOf(command)).toBe("deny");
+    },
+  );
+
+  // Codex には allow を返さない。-C の変数参照は ask ではなく pass-through になる
+  test.each([
+    "git -C $R diff --stat",
+    "R=/x; git -C $R diff --stat",
+    "git -C sub status && git -C sub diff",
+    "git -C /other status",
+  ])("Codex (引数無し): %j は何も出力しない", (command) => {
+    const r = env.runHook(command, []);
+    expect({ status: r.status, stdout: r.stdout }).toEqual({ status: 0, stdout: "" });
+  });
+
+  test("Codex (引数無し): git -C $R push --force は deny", () => {
+    const r = env.runHook("git -C $R push --force", []);
+    expect(JSON.parse(r.stdout).hookSpecificOutput.permissionDecision).toBe("deny");
   });
 
   test("Claude Code: worktree を cwd にした main への git -C は allow を返す", () => {
@@ -207,7 +244,8 @@ describe("pre-tool-use-bash-analyzer (プロセス)", () => {
     "./git -C . status",
     "/tmp/evil/git -C sub status",
     "git -C sub status; /tmp/evil/echo hi",
-    "git -C sub status && git -C sub diff",
+    "git -C sub status; command touch X",
+    "PATH=/tmp/evil; git -C sub status",
     "(git -C sub status)",
     "git -C =x status",
     "git -C ~/x status",
@@ -217,32 +255,28 @@ describe("pre-tool-use-bash-analyzer (プロセス)", () => {
     expect(env.decisionOf(command)).not.toBe("allow");
   });
 
-  // -C の対象が cwd と別の git common dir を持つ (そのリポジトリの .git/config や
-  // .git/hooks で任意コマンドを実行されうる) 場合は allow せず pass-through にする。
+  // `git -C <dir> <sub>` は `git <sub>` と同じ扱いで、-C の対象が cwd と別のリポジトリでも
+  // allow を返す (ADR 0004)。対象リポジトリの .git/config (core.fsmonitor 等) や .git/hooks が
+  // 確認無しに実行されうることは受け入れたトレードオフ。
   test.each([
     ["無関係なリポジトリ", (f: GitFixture) => `git -C ${f.other} status`],
     ["submodule 相当", () => "git -C sm status"],
     ["main 内の別リポジトリ", () => "git -C nested status"],
     ["存在しないパス", () => "git -C no-such-dir status"],
     ["別リポジトリへのシンボリックリンク", () => "git -C link-other status"],
-    // git worktree add で作られていない gitdir (common dir が同じでも)
     ["手で作った gitdir", () => "git -C crafted status"],
     ["gitdir が worktrees/<name> 配下でない", () => "git -C notwt status"],
     ["逆リンクが一致しない gitdir", () => "git -C hijack status"],
-  ] as const)("Claude Code: -C の対象が %s なら何も出力しない", (_, command) => {
-    expect(env.decisionOf(command(env.fx))).toBeNull();
+  ] as const)("Claude Code: -C の対象が %s でも allow を返す", (_, command) => {
+    expect(env.decisionOf(command(env.fx))).toBe("allow");
   });
 
   test("Claude Code: worktreeConfig 有効なリポジトリの正規の worktree への git -C は allow を返す", () => {
     expect(env.decisionOf(`git -C ${join(env.fx.base, "wtc-sparse")} status`, env.fx.worktreeConfig, { CLAUDE_PROJECT_DIR: env.fx.worktreeConfig })).toBe("allow");
   });
 
-  test("Claude Code: worktreeConfig 有効なリポジトリで手で作った gitdir (config.worktree に fsmonitor) への git -C は何も出力しない", () => {
-    expect(env.decisionOf("git -C crafted status", env.fx.worktreeConfig, { CLAUDE_PROJECT_DIR: env.fx.worktreeConfig })).toBeNull();
-  });
-
-  test("Claude Code: cwd が git 管理外なら何も出力しない", () => {
-    expect(env.decisionOf(`git -C ${env.fx.main} status`, env.fx.plain)).toBeNull();
+  test("Claude Code: cwd が git 管理外でも allow を返す", () => {
+    expect(env.decisionOf(`git -C ${env.fx.main} status`, env.fx.plain)).toBe("allow");
   });
 });
 

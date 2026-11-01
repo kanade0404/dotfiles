@@ -135,7 +135,13 @@ TypeScript 製の PreToolUse hook で Bash コマンドの権限を統合管理�
 - Codex は `.codex/rules/default.rules` の `prefix_rule()` で sandbox 外実行の `allow/prompt/forbidden` を判定
 - シェルコマンドを構文解析（パイプ、`&&`、コマンド置換、ヒアドキュメント等）
 - dangerous-git-flags 検出（`--no-verify`, `--force` 等の位置非依存チェック）
-- `git -C <dir> <subcommand>` は `git <subcommand>` に正規化して通常の git ルールで判定する。`settings.json` には `git -C` 系ルールを置かない。Claude Code から起動されたとき (`--client=claude-code`) に限り、コマンド全体が単一の単純な `git [opt] -C <dir> [opt] <sub> [args]` の文法に一致し、`-C` の対象が hook 入力の cwd と同じ git common dir を持つリポジトリ (同一リポジトリか、`git worktree add` で作った正規の worktree) で、permission_mode が `default` / `acceptEdits` の場合だけ hook が allow を返す (複合コマンド・パイプ・リダイレクト・前置は本体の判定に委ねる)。Codex には allow を返さない。経緯は [ADR 0003](docs/adr/0003-normalize-git-c-in-hook.md)
+- `git -C <dir> <subcommand>` は `git <subcommand>` に正規化して通常の git ルールで判定する。経緯と受け入れたトレードオフは [ADR 0004](docs/adr/0004-treat-git-c-as-plain-git.md)
+  - `-C` の対象ディレクトリ (別リポジトリかどうか) は判定に使わない。`-C` の引数の単純な変数参照 (`$R` / `"${R}"` など) も正規化する
+  - `settings.json` には `git -C` 系ルールを置かない。hook が動かない環境で、本体が `-C` 版の deny を外したまま自動許可しないためである
+  - hook が allow を返すのは、Claude Code から起動され (`--client=claude-code`)、permission_mode が `default` / `acceptEdits` のときだけである
+  - さらにコマンド全体が、単純コマンドと代入を `;` / `&&` / `||` / `|` で繋いだ正の文法に一致し、`git -C` を含む必要がある。代入以外の全セグメントは `~/.claude/settings.json` の allow ルールに肯定的に一致しなければならない (`git -C` は正規化後で照合)
+  - ヒアドキュメント・リダイレクト・前置・改行を含むコマンドは本体の判定に委ねる。Codex には allow を返さない
+  - 別リポジトリの `.git/config` や `.git/hooks` が確認無しに実行されうること、bash でクォートしない `$VAR` が単語分割されることは受け入れている
 - deny 時に代替ツールを案内（`ls` → Glob ツール、`cat` → Read ツール等）
 
 ```bash

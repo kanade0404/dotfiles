@@ -45,6 +45,9 @@
           status = "auto";
         };
         init.defaultBranch = "master";
+        # clone した作業ツリーに埋め込まれた bare リポジトリ (embedded bare
+        # repository) の config を、`git -C` や `cd` で読まないようにする。
+        safe.bareRepository = "explicit";
         web.browser = "google-chrome";
         credential.helper = "osxkeychain";
         push.default = "simple";

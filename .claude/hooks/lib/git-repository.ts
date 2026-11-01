@@ -183,7 +183,7 @@ type Repository = {
  * git 自身は `HEAD` に加えて `objects/` と `refs/` が揃った階層だけを gitdir とみなすが、
  * ここでは区別しない (安全側)。そのため作業ツリー内に `HEAD` という名前のファイル /
  * ディレクトリを持つ階層 (git を模したテストフィクスチャなど) とその配下も解決不能になり、
- * そこへの `git -C` は hook allow されない。
+ * そこで開始したセッションでは hook allow しない (localSettingsRootsOf が null を返す)。
  */
 function resolveRepository(dir: string): Repository {
   let current = dir;
@@ -215,9 +215,9 @@ function resolveRepository(dir: string): Repository {
  * - git 管理外: 空配列 (本体は開始ディレクトリの settings.local.json を読む)
  * - 作業ツリーのルート (`.git` のある階層) と、common dir の名前が `.git` ならその親
  *   (main checkout のルート) を返す
- * - linked worktree で common dir の名前が `.git` でない、または isSameGitRepository と同じ条件で
- *   解決できない (環境変数による付け替え・core.worktree・手で作った gitdir 等): null
- *   (本体が読むファイルを特定できない)
+ * - linked worktree で common dir の名前が `.git` でない、または解決できない (環境変数による
+ *   付け替え・core.worktree・手で作った gitdir・sparse-checkout 以外の設定を含む config.worktree・
+ *   読み取りエラー等): null (本体が読むファイルを特定できない)
  */
 export function localSettingsRootsOf(dir: string, env: Env = process.env): readonly string[] | null {
   try {
@@ -228,33 +228,5 @@ export function localSettingsRootsOf(dir: string, env: Env = process.env): reado
     return gitdir === common ? [worktreeRoot] : null;
   } catch (e) {
     return e instanceof OutsideRepository ? [] : null;
-  }
-}
-
-/**
- * `git -C <dir>` の対象が、hook 入力の cwd のリポジトリと同じ git common dir を持つか
- * (= 同一リポジトリのサブディレクトリか、同一リポジトリの worktree か)。
- *
- * `git -C <dir>` は <dir> のリポジトリの設定 (core.fsmonitor / diff.external /
- * core.sshCommand 等) と .git/hooks を使う。エージェントが書き込める任意のリポジトリを
- * 対象にすると、allow 済みの `status` 等でも確認無しに任意コマンドを実行できるので、
- * hook の allow は cwd と同じリポジトリに限る。
- *
- * git は実行せず、ファイルシステムだけで解決する。cwd が無い / 相対パス、環境変数による
- * 付け替え、存在しない・ディレクトリでないパス、`.git` ファイルの不正な内容、bare
- * リポジトリ、core.worktree、`git worktree add` で作られていない gitdir (commondir を持つが
- * `<common>/worktrees/<name>` でない・逆リンクが一致しない)、sparse-checkout 以外の設定を
- * 含む config.worktree、読み取りエラー等はすべて false (allow しない) にする。
- */
-export function isSameGitRepository(cwd: string | undefined, dir: string, env: Env = process.env): boolean {
-  try {
-    if (cwd === undefined || !isAbsolute(cwd) || dir === "") return false;
-    if (REPOSITORY_ENV_VARS.some((name) => env[name] !== undefined)) return false;
-    const cwdPath = physicalResolve("/", cwd);
-    const target = physicalResolve(cwdPath, dir);
-    if (!statSync(cwdPath).isDirectory() || !statSync(target).isDirectory()) return false;
-    return resolveRepository(cwdPath).common === resolveRepository(target).common;
-  } catch {
-    return false;
   }
 }
