@@ -139,9 +139,11 @@ TypeScript 製の PreToolUse hook で Bash コマンドの権限を統合管理�
   - `-C` の対象ディレクトリ (別リポジトリかどうか) は判定に使わない。`-C` の引数の単純な変数参照 (`$R` / `"${R}"` など) も正規化する
   - `settings.json` には `git -C` 系ルールを置かない。hook が動かない環境で、本体が `-C` 版の deny を外したまま自動許可しないためである
   - hook が allow を返すのは、Claude Code から起動され (`--client=claude-code`)、permission_mode が `default` / `acceptEdits` のときだけである
-  - さらにコマンド全体が、単純コマンドと代入を `;` / `&&` / `||` / `|` で繋いだ正の文法に一致し、`git -C` を含む必要がある。代入以外の全セグメントは `~/.claude/settings.json` の allow ルールに肯定的に一致しなければならない (`git -C` は正規化後で照合)
+  - さらにコマンド全体が、単純コマンドと代入を `;` / `&&` / `||` / `|` で繋いだ正の文法に一致し、`git -C` を含む必要がある。代入以外の全セグメントは deny / ask のどれにも当たらず、`~/.claude/settings.json` の allow ルールに肯定的に一致しなければならない (`git -C` は正規化後で照合)
+  - 代入できるのは、同じコマンド内で `git -C` の引数として参照される変数だけである。クォートしない `-C $R` は、R が空で語が消えた形 (`git -C <次の語> ...`) も allow に一致するときだけ許す。`git -C "$R"` とクォートすれば、この条件は課さない
   - ヒアドキュメント・リダイレクト・前置・改行を含むコマンドは本体の判定に委ねる。Codex には allow を返さない
   - 別リポジトリの `.git/config` や `.git/hooks` が確認無しに実行されうること、bash でクォートしない `$VAR` が単語分割されることは受け入れている
+  - clone した作業ツリーに埋め込まれた bare リポジトリ (embedded bare repository) の経路は、`nix/home.nix` の `safe.bareRepository = "explicit"` で塞いでいる。この設定は home-manager (`nix/home.nix`) を適用したホストにしか効かない。`install.sh` で hook だけを配ったマシンでは、embedded bare repository の経路が開いたままになる
 - deny 時に代替ツールを案内（`ls` → Glob ツール、`cat` → Read ツール等）
 
 ```bash

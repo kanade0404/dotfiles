@@ -1076,6 +1076,18 @@ type GitCAnalysis =
  */
 const SHELL_EXPANSION_IN_WORD = /`|\$(?!')|[*?[{]/;
 
+/** 変数名 (POSIX の名前規則) の正規表現の断片。evaluator.ts の文法と共有する */
+export const VARIABLE_NAME_SOURCE = "[A-Za-z_][A-Za-z0-9_]*";
+
+/**
+ * 単純な変数参照 `$NAME` / `${NAME}` の正規表現の断片 (キャプチャ無し)。evaluator.ts の文法と共有する。
+ * `$NAME` はシェルと同じく名前の文字を最長で読む (`$R_x` は `R_x` の参照)。直後に名前の文字が
+ * 続かないことを要求して分け方を 1 通りにし、後ろに名前の文字にも一致する文字クラスが続く文法
+ * (evaluator.ts の QUOTED_DIR_WORD) でバックトラックが指数的に増えないようにする。
+ */
+export const VARIABLE_REFERENCE_SOURCE =
+  `\\$(?:${VARIABLE_NAME_SOURCE}(?![A-Za-z0-9_])|\\{${VARIABLE_NAME_SOURCE}\\})`;
+
 /**
  * `-C` の引数で許す単純な変数参照 (`$NAME` / `${NAME}`)。ダブルクォートの内外を問わない。
  * SHELL_EXPANSION_IN_WORD で判定する前に取り除くので、`${` は `{` (ブレース展開) より先に
@@ -1084,10 +1096,10 @@ const SHELL_EXPANSION_IN_WORD = /`|\$(?!')|[*?[{]/;
  * 受け入れる制約 (ADR 0004): bash ではクォートしない参照が値の空白で複数語に分割される。
  * 空のときに語ごと消える形は analyzeGitC の vanishingDirCommand で deny だけ追加で照合する。
  */
-const SIMPLE_VARIABLE_REFERENCE = /\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*\})/g;
+const SIMPLE_VARIABLE_REFERENCE = new RegExp(VARIABLE_REFERENCE_SOURCE, "g");
 
 /** クォート無しの変数参照だけからなる word (値が空なら zsh / bash とも語ごと消える) */
-const UNQUOTED_VARIABLE_ONLY_WORD = /^(?:\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*\}))+$/;
+const UNQUOTED_VARIABLE_ONLY_WORD = new RegExp(`^(?:${VARIABLE_REFERENCE_SOURCE})+$`);
 
 /** `-C` の引数に、単純な変数参照以外のシェル展開が含まれるか */
 function hasShellExpansionInDir(dir: string): boolean {

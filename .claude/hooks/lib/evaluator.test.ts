@@ -254,6 +254,27 @@ describe("isPlainGitCCommand", () => {
     expect(isPlainGitCCommand("git -C /r log $R")).toBe(false);
     expect(isPlainGitCCommand('git -C /r log "$R"')).toBe(false);
   });
+
+  // `"$aaaa…"` の参照の名前の長さの選び方が参照ごとに複数あると、一致しない入力で分け方を
+  // 全て試し、指数的に遅くなる (修正前は参照 6 個で約 0.5 秒かかり、JSC の上限で打ち切られていた)
+  describe("変数参照を多数並べた入力でもすぐに終わる (ReDoS)", () => {
+    const refs = "$aaaaaaaaaaaaaaaa".repeat(30);
+    const rules = loadRepoRules();
+    test.each([
+      `git -C "${refs}" status > /tmp/x`,
+      `git -C "${refs}" status; git -C "${refs}" log >`,
+      `R=/x; git -C "${refs}x" status && echo "${refs}"`,
+      `git -C "${refs}$" status`,
+    ])("%#", (command) => {
+      const start = performance.now();
+      expect(isPlainGitCCommand(command)).toBe(false);
+      expect(evaluateCommand(parseShellCommands(command), rules, command, {})).not.toEqual({
+        decision: "allow",
+        hookApproved: true,
+      });
+      expect(performance.now() - start).toBeLessThan(100);
+    });
+  });
 });
 
 describe("evaluateCommand - git -C の hook allow (hookApproved)", () => {
@@ -287,21 +308,26 @@ describe("evaluateCommand - git -C の hook allow (hookApproved)", () => {
 
   // -C の引数の単純な変数参照。ダブルクォート内は値によらず 1 語。クォート無しは値が空なら
   // 語ごと消え (zsh / bash)、bash では空白で分割されるので、同じコマンド内で必ず実行される
-  // 空でない・空白を含まない代入があるときだけ hookApproved にする。
+  // 空でない・空白を含まない代入があり、さらに値が入った形 (`git <sub> ...`) と語が消えた形
+  // (`git -C <次の語> ...`) の両方が allow に一致し deny / ask に当たらないときだけ hookApproved にする。
   describe("-C の変数参照", () => {
     test.each([
       'git -C "$R" diff --stat',
       'git -C "${R}" status',
       'git -C "${R}/sub" log --oneline',
-      "R=/Users/kanade0404/orca/workspaces/skills/pinniped; git -C $R diff --stat",
-      "R=/x; git -C ${R} log",
-      "R=/x && git -C $R status",
-      "R=/x; S=/y; git -C $R status; git -C $S diff",
-      "R=/x; git -C $R status || true",
-      "R=/x || true; git -C $R status",
-      "R='/x'; git -C $R status",
+      'R=/Users/kanade0404/orca/workspaces/skills/pinniped; git -C "$R" diff --stat',
+      'R=/x; S=/y; git -C "$R" status; git -C "${S}/sub" diff',
       // クォートした参照は値に空白があっても 1 語
       "R='/x y'; git -C \"$R\" status",
+      // 語が消えた形は `git -C --no-pager log` (`--no-pager` のディレクトリで git log) で、これも allow
+      "R=/x; git -C $R --no-pager log",
+      "R=/x; git -C ${R} --no-pager log",
+      "R=/x && git -C $R --no-pager log",
+      "R=/x; git -C $R --no-pager log || true",
+      "R=/x || true; git -C $R --no-pager log",
+      "R='/x'; git -C $R --no-pager log",
+      // 語が消えた形は `git -C status log` (`git log`) で、値が入った形 `git status log` も allow
+      "R=/x; git -C $R status log",
     ])("%j は hookApproved", (command) => {
       expect(evaluate(command)).toEqual(hookApproved);
     });
@@ -310,21 +336,29 @@ describe("evaluateCommand - git -C の hook allow (hookApproved)", () => {
       // 代入が無い (値が空なら `-C` が次の語を取る。`git -C diff --stat` になる)
       "git -C $R diff --stat",
       "git -C ${R} status",
+      "git -C $R --no-pager log",
+      // 語が消えた形が allow に一致しない (`git -C diff --stat` / `git -C status` / `git -C log --oneline`)
+      "R=/Users/kanade0404/orca/workspaces/skills/pinniped; git -C $R diff --stat",
+      "R=/x; git -C $R status",
+      "R=/x; git -C ${R} log --oneline",
+      // 語が消えた形が allow に無いサブコマンドになる (`git -C diff replace -d x` は `git replace -d x`)
+      "R=/x; git -C $R diff replace -d x",
+      "R=/x; git -C $R diff submodule foreach touch x",
       // 代入が必ず実行されるとは限らない / サブシェルで実行される
-      "false && R=/x; git -C $R status",
-      "true || R=/x; git -C $R status",
-      "R=/x | git -C $R status",
-      "echo x | R=/x; git -C $R status",
+      "false && R=/x; git -C $R --no-pager log",
+      "true || R=/x; git -C $R --no-pager log",
+      "R=/x | git -C $R --no-pager log",
+      "echo x | R=/x; git -C $R --no-pager log",
       // 代入の後に参照より前の位置で空にされうる / 値が空・空白を含む (bash で分割される)
-      "R=/x; R=; git -C $R status",
-      "R=/x; false && R= ; git -C $R status",
-      "R=; git -C $R status",
-      "R='/x y'; git -C $R status",
-      "R='/x status'; git -C $R log",
+      "R=/x; R=; git -C $R --no-pager log",
+      "R=/x; false && R= ; git -C $R --no-pager log",
+      "R=; git -C $R --no-pager log",
+      "R='/x y'; git -C $R --no-pager log",
+      "R='/x status'; git -C $R --no-pager log",
       // 参照より後の代入
-      "git -C $R status; R=/x",
+      "git -C $R --no-pager log; R=/x",
       // 環境にある変数は子プロセスに渡り、代入で git の挙動を変えうる
-      "PAGER=/x; git -C $PAGER status",
+      "PAGER=/x; git -C $PAGER --no-pager log",
       // クォートしない連結・特殊パラメータ・既定値付きの展開
       "R=/x; git -C $R/sub status",
       "git -C $1 status",
@@ -334,8 +368,56 @@ describe("evaluateCommand - git -C の hook allow (hookApproved)", () => {
     });
 
     test("環境に同名の変数 (大小文字違いを含む) があれば代入を受け付けない", () => {
-      expect(evaluate("R=/x; git -C $R status", { ...env, R: "/y" })).toEqual(passThrough);
-      expect(evaluate("r=/x; git -C $r status", { ...env, R: "/y" })).toEqual(passThrough);
+      expect(evaluate("R=/x; git -C $R --no-pager log", { ...env, R: "/y" })).toEqual(passThrough);
+      expect(evaluate("r=/x; git -C $r --no-pager log", { ...env, R: "/y" })).toEqual(passThrough);
+      expect(evaluate('R=/x; git -C "$R" status', { ...env, R: "/y" })).toEqual(passThrough);
+    });
+
+    // 代入しても値が入らない変数 (bash の FUNCNAME、zsh の funcstack 等) と、bash でコマンドの解決を
+    // 変える変数。語が消えた形も allow になる形 (`--no-pager log`) でも、名前で弾く
+    test.each([
+      "FUNCNAME", "funcstack", "functrace", "funcfiletrace", "funcsourcetrace",
+      "EXECIGNORE", "FIGNORE", "HOSTFILE", "BASH_COMPAT",
+    ])("特殊な変数 %s への代入は hookApproved ではない", (name) => {
+      expect(evaluate(`${name}=/x; git -C $${name} --no-pager log`)).toEqual(passThrough);
+      expect(evaluate(`${name}=/x; git -C "$${name}" status`)).toEqual(passThrough);
+    });
+
+    // 代入できるのは同じコマンド内で `git -C` の引数として参照される変数だけ。それ以外の変数は
+    // export 済みかどうかを hook から確かめきれない (Bash tool のシェルだけが読む export がある)
+    test.each([
+      "TFE_ADDRESS=https://evil.example; git -C . status && make plan",
+      "TFE_ADDRESS=https://evil.example; git -C . status",
+      'R=/x; S=/y; git -C "$R" status',
+      "S=/y; git -C $R --no-pager log",
+      "R=/x; echo ok; git -C . status",
+    ])("%j は hookApproved ではない", (command) => {
+      expect(evaluate(command)).toEqual(passThrough);
+    });
+
+    describe("CLAUDE_ENV_FILE", () => {
+      let dir: string;
+      beforeAll(() => {
+        dir = mkdtempSync(join(tmpdir(), "evaluator-env-file-"));
+      });
+      afterAll(() => {
+        rmSync(dir, { recursive: true, force: true });
+      });
+
+      test("export されている変数 (大小文字違いを含む) への代入は hookApproved ではない", () => {
+        const file = join(dir, "env.sh");
+        writeFileSync(file, "export GOPATH=/Users/x/go\nexport R='/y'\ntypeset -x S\n");
+        const withFile = { ...env, CLAUDE_ENV_FILE: file };
+        expect(evaluate('R=/x; git -C "$R" status', withFile)).toEqual(passThrough);
+        expect(evaluate('r=/x; git -C "$r" status', withFile)).toEqual(passThrough);
+        expect(evaluate('S=/x; git -C "$S" status', withFile)).toEqual(passThrough);
+        expect(evaluate('T=/x; git -C "$T" status', withFile)).toEqual(hookApproved);
+      });
+
+      test("ファイルが存在しない場合は無視する", () => {
+        const withMissing = { ...env, CLAUDE_ENV_FILE: join(dir, "missing.sh") };
+        expect(evaluate('R=/x; git -C "$R" status', withMissing)).toEqual(hookApproved);
+      });
     });
   });
 
@@ -611,6 +693,36 @@ describe("evaluateCommand - git -C と ask ルール", () => {
     "git -C /r status && git -C /r push origin main",
   ])("非 -C allow と ask の両方に一致する %j は ask", (command) => {
     expect(evaluate(command).decision).toBe("ask");
+  });
+
+  // matchCommand は -C の無いコマンドでは allow を ask より先に見るので、evaluateCommand の判定は
+  // allow (pass-through) になる。hook allow は全セグメントを ask とも照合し、確認を省略させない
+  test.each([
+    "git -C /r status && git push origin main",
+    "git push origin main; git -C /r status",
+    "git -C /r status && git commit -m x",
+    // -C の無い git でも、語が消えた形 (`git -C diff push origin main` は `git push origin main`) でも
+    "R=/x; git -C $R diff push origin main",
+  ])("allow と ask の両方に一致するセグメントを含む %j は hookApproved ではない", (command) => {
+    expect(evaluate(command)).not.toEqual({ decision: "allow", hookApproved: true });
+  });
+
+  test("git 以外のセグメントも ask と照合する", () => {
+    const makeRules: Rule[] = [
+      ...rules,
+      { category: "allow", pattern: "Bash(make *)", regex: patternToRegex("make *"), readByClaudeCode: true },
+      askRule("make deploy *"),
+    ];
+    const command = "git -C /r status && make deploy prod";
+    expect(evaluateCommand(parseShellCommands(command), makeRules, command, {})).toEqual({
+      decision: "allow",
+      hookApproved: false,
+    });
+    const allowed = "git -C /r status && make build";
+    expect(evaluateCommand(parseShellCommands(allowed), makeRules, allowed, {})).toEqual({
+      decision: "allow",
+      hookApproved: true,
+    });
   });
 
   test("ask に一致しない git -C /r status は ask にならない", () => {

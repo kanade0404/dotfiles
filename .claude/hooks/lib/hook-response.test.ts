@@ -168,7 +168,7 @@ describe("pre-tool-use-bash-analyzer (プロセス)", () => {
 
   // hook が allow を返すのは、生コマンド全体が `git ... -C <dir> ... <sub> ...` を含む単純コマンド・
   // 代入の並びの文法 (evaluator.ts の hookAllowSegments) に一致し、代入以外の全セグメントが
-  // allow ルールに肯定的に一致する場合だけ。<dir> は判定に使わない。
+  // deny / ask に当たらず allow ルールに肯定的に一致する場合だけ。<dir> は判定に使わない。
   test.each([
     "git -C sub status",
     "git -C sub log --oneline -5",
@@ -179,7 +179,9 @@ describe("pre-tool-use-bash-analyzer (プロセス)", () => {
     "git -C sub log --format=%H",
     "git -C ../wt status",
     'git -C "$R" diff --stat',
-    "R=/Users/kanade0404/orca/workspaces/skills/pinniped; git -C $R diff --stat",
+    'R=/Users/kanade0404/orca/workspaces/skills/pinniped; git -C "$R" diff --stat',
+    // クォートしない $R は、値が入った形と語が消えた形 (`git -C --no-pager log`) の両方が allow のとき
+    "R=/x; git -C $R --no-pager log",
     "git -C sub status && git -C sub diff",
     "git -C sub log --oneline | head -5",
   ])("Claude Code: %j は allow を返す", (command) => {
@@ -190,6 +192,8 @@ describe("pre-tool-use-bash-analyzer (プロセス)", () => {
   // 確認を出さない (文法外・代入の条件を満たさないものは pass-through で本体の判定に委ねる)
   test.each([
     "git -C $R diff --stat",
+    // 語が消えた形 (`git -C diff --stat`) が allow に一致しない
+    "R=/Users/kanade0404/orca/workspaces/skills/pinniped; git -C $R diff --stat",
     "/usr/bin/python3 - <<'EOF'\nprint(1)\nEOF\nR=/Users/kanade0404/orca/workspaces/skills/pinniped; git -C $R diff --stat",
   ])("Claude Code: %j は何も出力しない", (command) => {
     expect(env.decisionOf(command)).toBeNull();

@@ -1,4 +1,10 @@
-import { matchCommand, SIDE_EFFECT_FREE_GIT_GLOBAL_OPTS } from "./rule-matcher.ts";
+import { readFileSync } from "node:fs";
+import {
+  matchCommand,
+  SIDE_EFFECT_FREE_GIT_GLOBAL_OPTS,
+  VARIABLE_NAME_SOURCE,
+  VARIABLE_REFERENCE_SOURCE,
+} from "./rule-matcher.ts";
 import type { Rule } from "./types.ts";
 
 type Env = Readonly<Record<string, string | undefined>>;
@@ -20,17 +26,26 @@ const PLAIN_WORD = `[${PLAIN_CHARS}](?:[${PLAIN_CHARS}]|(?<=[A-Za-z0-9_-])=|(?<=
 /** シングル / ダブルクォートの word。中身は PLAIN_CHARS と半角スペースだけ (連結は不可) */
 const QUOTED_WORD = `'[ ${PLAIN_CHARS}]*'|"[ ${PLAIN_CHARS}]*"`;
 const WORD = `(?:${PLAIN_WORD}|${QUOTED_WORD})`;
-/** 変数名 (POSIX の名前規則) */
-const NAME = "[A-Za-z_][A-Za-z0-9_]*";
-/** 単純な変数参照 `$NAME` / `${NAME}` */
-const VARIABLE_REFERENCE = `\\$(?:${NAME}|\\{${NAME}\\})`;
+/** 変数名 (POSIX の名前規則)。rule-matcher.ts と共有する */
+const NAME = VARIABLE_NAME_SOURCE;
+/**
+ * 単純な変数参照 `$NAME` / `${NAME}`。rule-matcher.ts と共有する。`$NAME` は名前の文字を
+ * 最長で読む (直後に名前の文字が続かない) ので、QUOTED_DIR_WORD の中で後ろの PLAIN_CHARS との
+ * 分け方が 1 通りに決まる。
+ */
+const VARIABLE_REFERENCE = VARIABLE_REFERENCE_SOURCE;
+/** VARIABLE_REFERENCE だけからなる word (クォート無しの `$R` / `${R}`) */
+const UNQUOTED_VARIABLE_WORD = new RegExp(`^${VARIABLE_REFERENCE}$`);
+/** word に含まれる VARIABLE_REFERENCE を全て拾う */
+const VARIABLE_REFERENCES = new RegExp(VARIABLE_REFERENCE, "g");
 /**
  * `-C` の位置だけで許す word。WORD に加えて、ダブルクォート内の単純な変数参照
  * (`"$R"` / `"${R}/sub"`。値によらず 1 語のまま) と、クォート無しの変数参照 1 個
  * (`$R` / `${R}`。値が空なら語ごと消え、bash では空白で分割されるので、
- * hookAllowSegments が同じコマンド内の代入を条件にする) を許す。
- * 各選択肢は先頭の文字 (素の文字 / `'` / `"` / `$`) で排他にする (LIST_GRAMMAR で word を
- * 繰り返したときに、一致しない入力でバックトラックが指数的に増えないようにする)。
+ * hookAllowSegments が同じコマンド内の代入と、語が消えた形の照合を条件にする) を許す。
+ * 各選択肢は先頭の文字 (素の文字 / `'` / `"` / `$`) で排他にする。QUOTED_DIR_WORD の中も、
+ * 素の文字と変数参照は先頭の文字で排他で、変数参照の終わりは VARIABLE_REFERENCE で 1 通りに決まる
+ * (LIST_GRAMMAR で word を繰り返したときに、一致しない入力でバックトラックが指数的に増えないようにする)。
  */
 const QUOTED_DIR_WORD = `"(?:[ ${PLAIN_CHARS}]|${VARIABLE_REFERENCE})*"`;
 const DIR_WORD = `(?:${PLAIN_WORD}|'[ ${PLAIN_CHARS}]*'|${QUOTED_DIR_WORD}|${VARIABLE_REFERENCE})`;
@@ -40,9 +55,14 @@ const GLOBAL_OPT = `(?:${[...SIDE_EFFECT_FREE_GIT_GLOBAL_OPTS]
   .map((opt) => opt.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
   .join("|")})`;
 const GIT_C_SEGMENT = `git(?: +${GLOBAL_OPT})* +-C +(${DIR_WORD})(?: +${GLOBAL_OPT})* +${SUBCOMMAND}(?: +${WORD})*`;
-const GIT_C_GRAMMAR = new RegExp(`^${GIT_C_SEGMENT}$`);
-/** `-C` の無い git: global option は副作用の無いものだけ */
-const PLAIN_GIT_GRAMMAR = new RegExp(`^git(?: +${GLOBAL_OPT})* +${SUBCOMMAND}(?: +${WORD})*$`);
+/** `d` フラグ: hookAllowSegments が `-C` の引数の位置 (indices[1]) を使う */
+const GIT_C_GRAMMAR = new RegExp(`^${GIT_C_SEGMENT}$`, "d");
+/**
+ * `-C` の無い git。global option は付けられない (`git --no-pager log` は文法外)。
+ * allow ルールの照合 (positivelyAllowed) は生のセグメントで行い、`Bash(git log *)` は
+ * global option 付きの形に一致しないので、文法もそれに合わせる。
+ */
+const PLAIN_GIT_GRAMMAR = new RegExp(`^git +${SUBCOMMAND}(?: +${WORD})*$`);
 /** git 以外の単純コマンド。コマンド名はパス・クォート・`=` を含まない素の名前 */
 const COMMAND_NAME = "[A-Za-z0-9_][A-Za-z0-9_.+-]*";
 const SIMPLE_COMMAND_GRAMMAR = new RegExp(`^(${COMMAND_NAME})(?: +${WORD})*$`);
@@ -115,28 +135,70 @@ const NON_ALLOWABLE_COMMANDS: ReadonlySet<string> = new Set([
 const HARMLESS_BUILTINS: ReadonlySet<string> = new Set(["echo", "pwd", "true", "false", "test"]);
 
 /**
- * 代入するとシェル自身や後続のコマンドの挙動を変える変数 (大小文字を区別せずに比較する)。
- * 環境変数 (hook の環境にあるもの) は別に弾くので、ここに挙げるのは環境に無くても
- * シェルが特別扱いするもの。網羅ではない。
+ * 代入するとシェル自身や後続のコマンドの挙動を変える変数と、代入しても値が入らない変数
+ * (大小文字を区別せずに比較する)。環境変数 (hook の環境と CLAUDE_ENV_FILE にあるもの) は別に
+ * 弾くので、ここに挙げるのは環境に無くてもシェルが特別扱いするもの。網羅ではない。
+ * - `EXECIGNORE` / `FIGNORE` / `HOSTFILE` / `BASH_COMPAT` は bash でコマンドの解決や挙動を変える
+ *   (`EXECIGNORE=/usr/bin/git` は PATH 上の後ろにある git を使わせる)
+ * - bash の `FUNCNAME`、zsh の `funcstack` / `functrace` / `funcfiletrace` / `funcsourcetrace` は
+ *   代入しても値が入らない (関数の外では空)。クォートしない `-C $FUNCNAME` は語ごと消える
  */
 const SPECIAL_VARIABLES: ReadonlySet<string> = new Set([
   "path", "ifs", "home", "cdpath", "fpath", "module_path", "mailpath", "manpath", "ps4", "env", "bash_env",
   "zdotdir", "prompt_command", "globignore", "shellopts", "bashopts", "posixly_correct", "nullcmd",
-  "readnullcmd", "tmpprefix", "histfile",
+  "readnullcmd", "tmpprefix", "histfile", "execignore", "fignore", "hostfile", "bash_compat",
+  "funcname", "funcstack", "functrace", "funcfiletrace", "funcsourcetrace",
 ]);
 const SPECIAL_VARIABLE_PREFIXES = ["git_", "ld_", "dyld_", "bash_func"];
 
 /**
- * 代入だけのセグメントで代入してよい変数名か。
+ * 代入だけのセグメントで代入してよい変数名か (同じコマンド内で `git -C` の引数として参照される
+ * ことは呼び出し側の hookAllowSegments が確かめる)。
  * 環境にある変数 (export 済みで子プロセスに渡る: PATH / HOME / PAGER 等) と、シェルが特別扱い
  * する変数 (IFS / zsh の path 等) は、代入すると後続の git や他のコマンドの実行内容が変わる
  * (`PATH=/tmp/evil; git -C . status`、`HOME=/tmp/x; git status` は /tmp/x/.gitconfig を読む)。
- * 大小文字を区別せずに比較する (zsh は `path` を `PATH` に連動させる)。
+ * 環境は hook の環境 (env) と、Bash tool のシェルだけが読み込む CLAUDE_ENV_FILE の export
+ * (exportedNames) を合わせて見る。大小文字を区別せずに比較する (zsh は `path` を `PATH` に連動させる)。
  */
-function isAssignableName(name: string, env: Env): boolean {
+function isAssignableName(name: string, env: Env, exportedNames: ReadonlySet<string>): boolean {
   const lower = name.toLowerCase();
   if (SPECIAL_VARIABLES.has(lower) || SPECIAL_VARIABLE_PREFIXES.some((p) => lower.startsWith(p))) return false;
+  if (exportedNames.has(lower)) return false;
   return !Object.keys(env).some((key) => key.toLowerCase() === lower);
+}
+
+const ASSIGNED_NAME = new RegExp(`(?<![A-Za-z0-9_])(${NAME})=`, "g");
+const EXPORT_LINE = /^\s*(?:export|declare|typeset)\s+(.*)$/gm;
+const NAME_TOKEN = new RegExp(`^${NAME}$`);
+
+/**
+ * CLAUDE_ENV_FILE (SessionStart hook が書き出し、Bash tool のシェルが読み込む export) にある
+ * 変数名を小文字で返す。hook の環境に CLAUDE_ENV_FILE が無い・読めない場合は空。
+ * 形式 (`export -p` の出力など) によらず、`NAME=` の形の名前と、`export` / `declare` / `typeset` の
+ * 行にある名前の形の語を全て拾う。値の中の語も拾いうるが、代入できない名前が増えるだけで安全側。
+ */
+function exportedNamesFromEnvFile(env: Env): ReadonlySet<string> {
+  const file = env.CLAUDE_ENV_FILE;
+  if (file === undefined || file === "") return new Set();
+  let content: string;
+  try {
+    content = readFileSync(file, "utf-8");
+  } catch {
+    return new Set();
+  }
+  const names = new Set<string>();
+  for (const m of content.matchAll(ASSIGNED_NAME)) names.add(m[1].toLowerCase());
+  for (const m of content.matchAll(EXPORT_LINE)) {
+    for (const token of m[1].split(/\s+/)) {
+      if (NAME_TOKEN.test(token)) names.add(token.toLowerCase());
+    }
+  }
+  return names;
+}
+
+/** `-C` の引数 (DIR_WORD) が参照する変数名 */
+function referencedNames(dirWord: string): string[] {
+  return [...dirWord.matchAll(VARIABLE_REFERENCES)].map((m) => m[0].replace(/^\$\{?|\}$/g, ""));
 }
 
 /**
@@ -250,12 +312,19 @@ function isSafelyAssignedBefore(
  * 次を全て満たす場合に限る。shell-parser の分解結果は使わず、生コマンドに正の文法を当てる。
  * - 生コマンド全体が LIST_GRAMMAR に一致する (splitAllowableList)
  * - `git -C` のセグメントが 1 つ以上ある (-C が無いコマンドは従来どおり本体の判定に委ねる)
- * - 代入だけのセグメントは、代入してよい変数名 (isAssignableName) に限る
- * - 代入以外の全セグメントが allow ルールに肯定的に一致する (照合に使う allow は rulesForHookAllow)。
- *   deny / ask / どのルールにも一致しない (null) セグメントが 1 つでもあれば allow しない
+ * - 代入だけのセグメントは、同じコマンド内で `git -C` の引数として参照される変数で、代入してよい
+ *   変数名 (isAssignableName) に限る
+ * - 代入以外の全セグメントが、deny / ask (危険 git フラグ・機密パスを含む) のどれにも当たらず、
+ *   allow ルールに肯定的に一致する (照合に使う allow は rulesForHookAllow)。どのルールにも一致しない
+ *   セグメントが 1 つでもあれば allow しない。ask は allow と両方に当たる場合も含めて全セグメントで
+ *   照合する (matchCommand は `-C` の無いコマンドで allow を ask より先に見るので、その結果だけでは
+ *   ask を見落とす)
  *   - `git -C` は GIT_C_GRAMMAR に一致し、正規化した `git <sub> ...` が allow に一致する
- *     (gitCNormalized)。`-C` の引数がクォート無しの変数参照なら isSafelyAssignedBefore も満たす
- *   - `-C` の無い git は PLAIN_GIT_GRAMMAR に一致し、サブコマンドを固定した git の allow に一致する
+ *     (gitCNormalized)。ask も正規化した形で照合する。`-C` の引数がクォート無しの変数参照なら、
+ *     isSafelyAssignedBefore を満たし、語が消えた形 (`git -C <次の語> ...`) も同じ条件を満たす
+ *     (代入しても値が入らない変数や、列挙から漏れた特殊な変数で語が消えても、実行内容が allow に収まる)
+ *   - `-C` の無い git は PLAIN_GIT_GRAMMAR に一致し、サブコマンドを固定した git の allow に生の
+ *     セグメントが一致する
  *   - git 以外は SIMPLE_COMMAND_GRAMMAR に一致し、コマンド名が組み込みコマンド・ラッパーでなく、
  *     コマンド名を固定したユーザ設定の allow に生のセグメントが一致する
  */
@@ -264,30 +333,50 @@ function hookAllowSegments(command: string, rules: readonly Rule[], env: Env): b
   if (list === null) return false;
   const { segments, separators } = list;
   const allowRules = rulesForHookAllow(rules);
+  const blockingRules = rules.filter((rule) => rule.category !== "allow");
   const positivelyAllowed = (text: string) =>
     allowRules.some((rule) => rule.category === "allow" && rule.regex.test(text));
-  let hasGitC = false;
+  /** deny / ask (危険 git フラグ・機密パス、`git -C` は正規化後と語が消えた形の deny を含む) に当たるか */
+  const blocked = (text: string) => matchCommand(text, blockingRules) !== null;
+  /** `git -C` の正規化した `git <sub> ...` が allow に一致し、deny / ask に当たらないか */
+  const gitCAllowed = (text: string) => {
+    const result = matchCommand(text, allowRules);
+    return result?.decision === "allow" && result.gitCNormalized === true && !blocked(text);
+  };
+
+  const gitCSegments = new Map<number, RegExpExecArray>();
+  const referenced = new Set<string>();
+  for (const segment of segments) {
+    if (segment.kind !== "command") continue;
+    const gitC = GIT_C_GRAMMAR.exec(segment.text);
+    if (gitC === null) continue;
+    gitCSegments.set(segment.index, gitC);
+    for (const name of referencedNames(gitC[1])) referenced.add(name);
+  }
+  if (gitCSegments.size === 0) return false;
+  const exportedNames = exportedNamesFromEnvFile(env);
 
   for (const segment of segments) {
     if (segment.kind === "assignment") {
-      if (!isAssignableName(segment.name, env)) return false;
+      if (!referenced.has(segment.name) || !isAssignableName(segment.name, env, exportedNames)) return false;
       continue;
     }
     const { text } = segment;
-    const result = matchCommand(text, allowRules);
-    if (result === null || result.decision !== "allow") return false;
-
-    const gitC = GIT_C_GRAMMAR.exec(text);
-    if (gitC !== null) {
-      if (result.gitCNormalized !== true) return false;
-      const variable = /^\$(?:([A-Za-z_][A-Za-z0-9_]*)|\{([A-Za-z_][A-Za-z0-9_]*)\})$/.exec(gitC[1]);
-      const variableName = variable?.[1] ?? variable?.[2];
-      if (variableName !== undefined && !isSafelyAssignedBefore(variableName, segment.index, segments, separators)) {
-        return false;
+    const gitC = gitCSegments.get(segment.index);
+    if (gitC !== undefined) {
+      if (!gitCAllowed(text)) return false;
+      const dir = gitC[1];
+      const variable = UNQUOTED_VARIABLE_WORD.test(dir) ? referencedNames(dir)[0] : undefined;
+      if (variable !== undefined) {
+        if (!isSafelyAssignedBefore(variable, segment.index, segments, separators)) return false;
+        const indices = gitC.indices?.[1];
+        if (indices === undefined) return false;
+        const vanished = `${text.slice(0, indices[0])}${text.slice(indices[1]).trimStart()}`;
+        if (!gitCAllowed(vanished)) return false;
       }
-      hasGitC = true;
       continue;
     }
+    if (blocked(text)) return false;
     if (PLAIN_GIT_GRAMMAR.test(text)) {
       if (!positivelyAllowed(text)) return false;
       continue;
@@ -297,7 +386,7 @@ function hookAllowSegments(command: string, rules: readonly Rule[], env: Env): b
       return false;
     }
   }
-  return hasGitC;
+  return true;
 }
 
 export type EvaluationResult =
@@ -409,12 +498,13 @@ export function isAssignmentOnly(command: string): boolean {
  *
  * 例外は `git -C <dir> <sub>` を含むコマンドで、settings.json に `-C` 版ルールを置かない
  * (rule-matcher の analyzeGitC 参照) ため本体は自力で allow しない。生コマンド (rawCommand)
- * 全体が hookAllowSegments の条件 (正の文法に一致し、代入以外の全セグメントが allow ルールに
- * 肯定的に一致する。`git -C` は正規化した `git <sub> ...` で照合する) を満たす場合に限り
- * hookApproved を立て、hook 自身が allow を返せるようにする。`-C` の対象ディレクトリ
+ * 全体が hookAllowSegments の条件 (正の文法に一致し、代入以外の全セグメントが deny / ask に
+ * 当たらず allow ルールに肯定的に一致する。`git -C` は正規化した `git <sub> ...` で照合する) を
+ * 満たす場合に限り hookApproved を立て、hook 自身が allow を返せるようにする。`-C` の対象ディレクトリ
  * (別リポジトリかどうか) は判定に使わない (ADR 0004)。
  * rawCommand を渡さない呼び出しは検査できないので hookApproved にしない。
- * env は代入してよい変数名の判定 (isAssignableName) に使う環境変数 (テスト用、既定は process.env)。
+ * env は代入してよい変数名の判定 (isAssignableName) に使う環境変数と CLAUDE_ENV_FILE
+ * (テスト用、既定は process.env)。
  */
 export function evaluateCommand(
   subCommands: readonly string[],
