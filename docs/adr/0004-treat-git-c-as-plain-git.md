@@ -37,58 +37,56 @@ ADR 0003 の決定のうち、本 ADR の Decision で変えたもの以外は�
   - auto mode では、本体は `Bash(*)` やインタプリタのワイルドカードのような広い allow を落とすが、`Bash(git -C *)` を落とすとは限らない。残れば classifier を経ずに `git -C` の任意のサブコマンドを実行させる。
 - (a) をそのまま「shell-parser で分解したセグメントが全て allow なら allow」とすると、ADR 0003 の Negative に記録した漏れをもう一度開く。漏れの例は `#` コメント + 改行、ANSI-C quoting の `\'`、パス付きコマンド名、zsh の関数定義 `name () body`、`=(...)`、`time VAR=...`、`>&1mk` である。
 - evaluateCommand の allow は「deny / ask に当たらなかった」という意味で、どのルールにも一致しないセグメント (`matchCommand` が null) は読み飛ばしている。これを根拠に allow を返すとバイパスになる。
-- シェルの変数展開の性質は次のとおりである。
+- シェルの変数展開の性質は次のとおりである。zsh の挙動は zsh 5.9 で `zsh -f -c` を実行して確かめた。
   - クォートしない参照 (`$R`) は、値が空なら zsh でも bash でも語ごと消える。`git -C $R status rm -r .` は R が空なら `git -C status rm -r .` (ディレクトリ `status` で `git rm -r .`) として実行される。
-  - bash はクォートしない参照を IFS で単語分割する。zsh は既定 (`SH_WORD_SPLIT` 無効) では分割しない。Claude Code の Bash tool はユーザの `$SHELL` (本環境では zsh) で実行する。
-  - ダブルクォートした参照 (`"$R"`、`"${R}/sub"`) は値によらず 1 語のままである (空なら `-C ""` になり、git はカレントディレクトリとして扱う)。
+  - bash はクォートしない参照を IFS で単語分割する。zsh は既定 (`SH_WORD_SPLIT` 無効) ではスカラーを分割しないが、配列の参照は要素ごとに別の語になる。`a=(x push --force); git -C $a status` は zsh で `git -C x push --force status` として実行される。
+  - zsh の修飾子は値を変える。`R=/x` のとき `$R:e` (拡張子) は空になり、語ごと消える。添字 (`$R[1]`) も同様に値を変える。
+  - ダブルクォートした参照 (`"$R"`、`"${R}"`) は値によらず 1 語のままである。zsh の配列でも、`"$a"` は要素を空白で繋いだ 1 語になる。空なら `-C ""` になり、git はカレントディレクトリとして扱う。
+  - Claude Code の Bash tool はユーザの `$SHELL` (本環境では zsh) で実行する。
 - `git -C <dir>` は `<dir>` のリポジトリの `.git/config` と `.git/hooks` を読み込む。ADR 0003 はこれを理由に hook allow を同一リポジトリに限っていた (ADR 0003 の Option D を却下した理由)。
+- 一度は、代入 (`R=/x; git -C $R ...`) とクォートしない `$R` も hook allow の対象にした。そのために、代入の位置と値の条件、代入できる変数名の制限、特殊な変数の列挙、`CLAUDE_ENV_FILE` の読み込み、語が消えた形の allow 照合を足した。しかしレビューのたびに新しい抜け道が見つかり、収束しなかった。見つかった抜け道は、zsh の配列と修飾子、代入しても値の入らない変数、PreToolUse hook には渡らない `CLAUDE_ENV_FILE` などである。またユーザは auto mode で使っており、hook allow の経路 (`default` / `acceptEdits` でだけ効く) は普段使われない。ユーザの本来の要望は「`-C $R` を理由に hook が ask しない」ことで、これは deny / ask の判定の側で満たせる。
 
 ## Decision
 
 - `-C` の対象ディレクトリは判定に使わない。`isSameGitRepository` とその条件を hook allow から外し、関数とテストを削除する (呼び出し元は `evaluator.ts` だけだった)。`git-repository.ts` のリポジトリ解決は、`localSettingsRootsOf` (本体が `.claude/settings.local.json` を読むルートの特定) のために残す。境界のテストは `localSettingsRootsOf` に対するものに移す。
-- `-C` の引数の単純な変数参照を正規化の対象にする (`rule-matcher.ts` の `hasShellExpansionInDir`)。対象は `$NAME`、`${NAME}`、`"$NAME"`、`"${NAME}"` と、`"${NAME}/sub"` のようなダブルクォート内の参照である。
-  - `$NAME` と `${NAME}` を取り除いてから `SHELL_EXPANSION_IN_WORD` を当てる。`${` は `{` (ブレース展開) より先に変数参照として消費される。取り除いた後に `$` (`${R:-x}`、`$1`、`$@`、`$(`)、バッククォート、glob (`*?[`)、ブレース展開 (`{a,b}`) が残れば従来どおり ask にする。
-  - `-C` の引数がクォートしない変数参照だけの場合 (`$R`、`${R}`) は、値が空で語が消えた形 (`git -C <次の語> ...`) にも deny を照合する (`GitCAnalysis` の `vanishingDirCommand`)。ask と allow は消える前の正規化で判定する。
+- `-C` の引数の変数参照を、deny / ask の判定のために正規化する (`rule-matcher.ts` の `EXACT_VARIABLE_DIR`)。
+  - 対象は、語全体がちょうど `$NAME`、`${NAME}`、`"$NAME"`、`"${NAME}"` のどれかで、前後に何も付かないものだけである。`$NAME` は名前の文字を最長で読む。
+  - それ以外の形は従来どおり ask にする。zsh の修飾子 (`$R:e`、`$R:t`)、添字 (`$R[1]`)、連結 (`$R/sub`、`"${R}/sub"`)、既定値付き (`${R:-x}`)、特殊パラメータ (`$1`、`$@`) などが該当する。修飾子と添字は値を変え、`$R:e` は空になって語ごと消えうるためである。
+  - クォートしない形 (`$R`、`${R}`) は、値が入った形 (正規化した `git <sub> ...`) と、値が空で語が消えた形 (`git -C <次の語> ...`) の両方で deny と ask を照合する。語が消えた形は `analyzeGitC` の `vanishingDirCommand` で 1 か所で組み立てる。`ask: ["Bash(git push *)"]` があれば、`git -C $EMPTY status push origin main` は ask になる。語の消えた形を正規化できないこと (`git -C diff --stat` は `--stat` を global option と読む) は、ask の理由にしない。allow は値が入った形で判定する。
+  - クォートしない形の変数について、同じコマンドの中にその名前を配列にする代入・宣言があれば ask にする (`hasArrayAssignment`)。対象は次の形である。
+    - `NAME=(`、`NAME+=(`、`NAME[...]=`
+    - `typeset` / `declare` / `local` / `readonly` / `set` / `read` などに、`a` か `A` を含むオプションと NAME が続く形
+    - `mapfile` / `readarray` / `zparseopts` の後ろの NAME
+
+    ユーザ自身の設定 (`~/.zshrc` など) で定義された配列は検知できず、防がない。
 - 複合コマンドは (a) を採る。ただし shell-parser の分解結果は使わず、生コマンド全体に正の文法を当てる (`evaluator.ts` の `hookAllowSegments`)。次を全て満たすときだけ hook allow を返す。
 
     ```text
     list    := segment (SEP segment)*
     SEP     := " "* (";" | "&&" | "||" | "|") " "*
-    segment := NAME "=" word?                          代入だけ
-             | "git" (SP gopt)* SP "-C" SP dirword (SP gopt)* SP sub (SP word)*
+    segment := "git" (SP gopt)* SP "-C" SP dirword (SP gopt)* SP sub (SP word)*
              | "git" SP sub (SP word)*                 -C の無い git (global option は不可)
              | cmd (SP word)*                           git 以外の単純コマンド
-    dirword := word | "\"" (plain | " " | varref)* "\"" | varref
+    dirword := word | "\"" varref "\""
     varref  := "$" NAME | "${" NAME "}"
     cmd     := [A-Za-z0-9_] [A-Za-z0-9_.+-]*
-    word / gopt / sub / plain / SP は ADR 0003 の文法と同じ
+    word / gopt / sub / SP は ADR 0003 の文法と同じ
     ```
 
-  - 改行、末尾や途中の `&`、`|&`、ヒアドキュメント、リダイレクト、括弧、`-C` 以外の位置の展開は文法外で、pass-through にする。word の字句は区切りの文字 (`;` `&` `|`) を含まないので、文法に一致した文字列は区切りの位置でそのまま分割でき、トークナイザを通さない。
+  - hook allow の対象は、リテラルの dir と `"$VAR"` / `"${VAR}"` の `git -C` と、`-C` の無い git と allow に当たる git 以外の単純コマンドを繋いだ複合コマンドである。
+  - 代入 (`R=/x`) とクォートしない変数参照 (`-C $R`) は対象外にする。理由は 2 つある。1 つは、zsh の配列と修飾子があるため、クォートしない語の展開は静的に決められないことである。もう 1 つは、代入が export 済みの変数を書き換え、後のセグメントや git 自身の動作を変えうることである。hook からは、Bash tool のシェルだけが読み込む export (SessionStart hook が `CLAUDE_ENV_FILE` に書き出すもの) を確かめられない。
+  - 改行、末尾や途中の `&`、`|&`、ヒアドキュメント、リダイレクト、括弧、`-C` 以外の位置の展開も文法外で、pass-through にする。word の字句は区切りの文字 (`;` `&` `|`) を含まないので、文法に一致した文字列は区切りの位置でそのまま分割でき、トークナイザを通さない。
   - `git -C` のセグメントが 1 つ以上ある。`-C` の無いコマンドだけなら従来どおり本体が判定する。
-  - 代入以外の全セグメントが allow ルールに肯定的に一致する。deny / ask に当たるセグメントや、どのルールにも一致しない (null) セグメントが 1 つでもあれば allow しない。
-    - ask は allow と両方に当たる場合も含めて、全セグメントで照合する。`matchCommand` は `-C` の無いコマンドでは allow を ask より先に見る。その判定結果だけでは、allow と ask の両方に当たるセグメントを見落とす。例は、allow と ask の両方に `Bash(git push *)` がある状態の `git push origin main` である。`matchCommand` の順序は pass-through の UX のために変えず、`hookAllowSegments` が deny / ask のルールだけで改めて照合する。`git -C` のセグメントは正規化した形でも照合する。
+  - 全セグメントが allow ルールに肯定的に一致し、deny / ask に当たらない。どのルールにも一致しない (null) セグメントが 1 つでもあれば allow しない。
+    - `git -C` のセグメントは、`matchCommand` が正規化した `git <sub> ...` で deny > ask > allow の順に照合する。allow の結果だけで、deny / ask に当たらないことも分かる。
+    - `-C` の無いセグメントと git 以外のセグメントでは、`matchCommand` は allow を ask より先に見る。その結果だけでは、allow と ask の両方に当たるセグメントを見落とす。例は、allow と ask の両方に `Bash(git push *)` がある状態の `git push origin main` である。`matchCommand` の順序は pass-through の UX のために変えず、`hookAllowSegments` が deny / ask のルールだけで改めて照合する。
     - `-C` の無い git は global option を付けない形 (`git <sub> ...`) だけを文法に入れる。allow ルールは生のセグメントで照合し、`Bash(git log *)` は `git --no-pager log` に一致しないためである。
   - 照合に使う allow は、ユーザ設定 `~/.claude/settings.json` 由来 (`readByClaudeCode`) で、次のどちらかに当たるものに限る (`rulesForHookAllow`)。deny / ask は ADR 0003 と同じく出自を問わず全て使う。
     - git のセグメントには、サブコマンドをリテラルで固定した allow (ADR 0003 と同じ `SUBCOMMAND_ANCHORED_GIT_PATTERN`) を使う。`git -C` は正規化した `git <sub> ...` で照合する。
     - git 以外のセグメントには、コマンド名をリテラルで固定した allow (`Bash(echo *)`、`Bash(pwd)`、`Bash(bun test *)`) を使う。`Bash(*)`、`Bash(e*)`、`Bash(echo*)` は使わない。
-  - git 以外のコマンド名からは、シェルの予約語、zsh / bash の組み込みコマンド、別のコマンドを起動するラッパーを除く (`NON_ALLOWABLE_COMMANDS`)。`command`、`printf`、`time`、`nice`、`nohup`、`env`、`exec` などが該当する。
+  - git 以外のコマンド名からは、シェルの予約語、zsh / bash の組み込みコマンド、別のコマンドを起動するラッパーを除く (`NON_ALLOWABLE_COMMANDS`)。`command`、`printf`、`time`、`nice`、`nohup`、`env`、`exec` などが該当する。状態を変えない `echo`、`pwd`、`true`、`false`、`test` は含めない。
     - 組み込みコマンドはシェルの状態を書き換えて、後続のセグメントの意味を変えうる (`printf -v PATH ...`、`hash git=...`)。
     - ラッパーでは、allow の照合に使う先頭のコマンド名と、実際に実行されるコマンドがずれる。
-    - 状態を変えない `echo`、`pwd`、`true`、`false`、`test` は許す。
-  - 代入だけのセグメントで代入できるのは、同じコマンド内で `git -C` の引数として参照される変数だけである。`TFE_ADDRESS=https://evil.example; git -C . status && make plan` のように、後続のコマンドが読む変数を書き換える代入を自動許可しないためである。そのうえで、環境変数とシェルが特別扱いする変数は代入しない。
-    - 環境変数は、hook の環境にあるものと、`CLAUDE_ENV_FILE` に export されているものである。`CLAUDE_ENV_FILE` は SessionStart hook が `~/.zshrc` で増えた export を書き出すファイルで、Bash tool のシェルだけが読み込む。hook の環境から読めない場合や、ファイルが無い場合は無視する。大小文字を区別せずに比べる。
-    - 特別扱いする変数は `IFS`、`HOME`、zsh の `path` / `fpath` などと、`GIT_`、`LD_`、`DYLD_` で始まるものである。`PATH=/tmp/evil; git -C . status` や `HOME=/tmp/x; git -C . status` (`/tmp/x/.gitconfig` を読む) を自動許可しないためである。
-    - bash でコマンドの解決や挙動を変える `EXECIGNORE`、`FIGNORE`、`HOSTFILE`、`BASH_COMPAT` も特別扱いする変数に含める。代入しても値の入らない bash の `FUNCNAME` と、zsh の `funcstack`、`functrace`、`funcfiletrace`、`funcsourcetrace` も含める。
-  - `-C` の引数がクォートしない変数参照 (`$R`) のときは、同じコマンド内での R の代入を条件にする (`isSafelyAssignedBefore`)。
-    - 参照より前に、必ず実行される位置の R の代入がある。必ず実行される位置とは、先頭からその代入までの区切りが全て `;` で、代入の直後の区切りが `|` でないことを指す。
-    - コマンド内の R の代入は、全て値が空でなく空白を含まない。
-    - `false && R=/x; git -C $R status`、`R=/x | git -C $R status`、`R=/x; R=; git -C $R status`、`R='/x y'; git -C $R status` は自動許可しない。代入の無い `git -C $R diff` も自動許可しない (pass-through)。
-    - ダブルクォートした `"$R"` は値によらず 1 語なので、この条件を課さない。
-  - クォートしない `$R` では、さらに 2 つの解釈がどちらも allow ルールに肯定的に一致し、どちらも deny / ask に当たらないことを求める。1 つは値が入った解釈 (正規化した `git <sub> ...`) で、もう 1 つは語が消えた解釈 (`git -C <次の語> ...`。`-C` が次の語を取るので、正規化すると `git <その次> ...` になる) である。代入しても値の入らない変数や、列挙から漏れた特殊な変数で語が消える場合を考える。そのときも、実行される内容を allow の範囲に収めるためである。
-    - `R=/x; git -C $R --no-pager log` は自動許可する。語の消えた形は `git -C --no-pager log` で、正規化すると `git log` になる。
-    - `R=/x; git -C $R diff --stat` は自動許可しない。語の消えた形 `git -C diff --stat` は allow に一致しない。
-    - `R=/x; git -C $R diff push origin main` も自動許可しない。語の消えた形は `git push origin main` で、ask に当たる。
 - ADR 0003 の決定のうち、上で変えたもの以外は維持する。
   - settings.json には `git -C` 系の permission ルールを置かない (テストで固定している)。
   - 正規化後の照合順 (非 -C の deny → 危険 git フラグの backstop → 機密パス → 非 -C の ask → 非 -C の allow)。
@@ -102,11 +100,11 @@ ADR 0003 の決定のうち、本 ADR の Decision で変えたもの以外は�
 
 ### Positive
 
-- 上の例の `git -C $R diff --stat` は ask にならない。auto mode のセッションでは pass-through になり classifier が判定する。`default` / `acceptEdits` のセッションでは、`R=...; git -C "$R" diff --stat` とクォートすれば hook が自動許可する。クォートしない `R=...; git -C $R diff --stat` は、語が消えた形 (`git -C diff --stat`) が allow に一致しないので pass-through になる。
+- 上の例の `R=...; git -C $R diff --stat` は ask にならない。ただし代入とクォートしない変数参照を含むので hook allow もせず、pass-through になる。auto mode のセッションでは classifier が判定し、`default` / `acceptEdits` のセッションでは本体が確認を出す。`git -C "$R" diff --stat` とクォートし、代入を含めなければ、`default` / `acceptEdits` でも hook が自動許可する。
 - `default` / `acceptEdits` のセッションでは、別リポジトリへの `git -C` が確認無しに通る。`git -C /a status && git -C /b diff` や `git -C /r log | head -5` のような複合コマンドも同様である。
 - `git -C $R push --force`、`git -C /other reset --hard`、`R=/x; git -C $R push --force` は従来どおり deny になる。
-- ask ルールに当たるセグメントを含む複合コマンドは hook allow しない。`git -C` のセグメントは正規化後の形で、`-C` の無いセグメントと git 以外のセグメントは生の形で照合する。allow と ask の両方に当たるセグメントも同じである。たとえば allow と ask の両方に `Bash(git push *)` があるとき、`git -C /r status && git push origin main` は hook allow せず、本体の判定に委ねる。正規化後の ask は、`git -C` のセグメントについては evaluateCommand の判定でも ask になる。
-- hook allow の判定から、ファイルシステムで git の探索を再現する処理 (`isSameGitRepository`) が無くなる。
+- ask ルールに当たるセグメントを含む複合コマンドは hook allow しない。allow と ask の両方に当たるセグメントも同じである。たとえば allow と ask の両方に `Bash(git push *)` があるとき、`git -C /r status && git push origin main` は hook allow せず、本体の判定に委ねる。
+- hook allow の条件は、文法と allow / deny / ask の照合だけになる。代入の位置や値、変数名の列挙、環境変数の読み取りのように、シェルの状態を hook の側で推測する処理は持たない。hook allow の判定から、ファイルシステムで git の探索を再現する処理 (`isSameGitRepository`) も無くなる。
 
 ### Negative
 
@@ -114,12 +112,12 @@ ADR 0003 の決定のうち、本 ADR の Decision で変えたもの以外は�
   - `.git/config` では `core.fsmonitor`、`diff.external`、`core.sshCommand`、`core.hooksPath` などが外部コマンドを起動する。
   - エージェントは一時ディレクトリに `git init` して `.git/config` を書き、`git -C <dir> status` で任意のコマンドを実行させられる。`acceptEdits` では、ファイルの書き込み自体も確認無しで通りうる。
   - ADR 0003 が Option D として却下した形を、ユーザの要望で受け入れる。cwd のリポジトリ自体の設定を経由した実行面は、ADR 0003 の時点でも非 -C の `git status` と同じく残っていた。
-- 受け入れたトレードオフの 2 つ目は、bash ではクォートしない `$VAR` が単語分割されることである。
-  - hook は `-C $R` を 1 語として正規化する。R に空白を含む値が入っていると、実際に実行されるサブコマンドと hook が照合したサブコマンドがずれる。`R='/x reset --hard'` なら、`git -C $R status` は bash で `git -C /x reset --hard status` になる。
-  - hook allow は、クォートしない参照に同じコマンド内の空白を含まない代入を求める。そのため、この場合は自動許可しない。
-  - ただし deny / ask の照合も 1 語として行う。環境から来た値や bash 以外での分割 (zsh の `SH_WORD_SPLIT`) では、危険 git フラグの backstop や deny が効かないまま pass-through になりうる。以前は `-C` の引数に `$` があれば一律に ask だった。
-  - pass-through 後は、`default` では本体が確認を出し、auto mode では classifier が判定する (settings.json に `-C` ルールが無いので本体は自動許可しない)。`bypassPermissions` では実行される。
-  - 値が空で語が消える形は、evaluateCommand の判定では deny だけ追加で照合し、ask は照合しない。`ask: ["Bash(git push *)"]` があっても、`git -C $EMPTY status push` は EMPTY が空なら `git -C status push` として実行される。hook はこれを ask とせず pass-through する。hook allow の判定では、語が消えた形にも allow への一致と、deny / ask に当たらないことを求める。
+- 受け入れたトレードオフの 2 つ目は、クォートしない `$VAR` の語数が静的に決まらないことである。deny / ask の判定は `-C $R` を 1 語 (値が入った形) か 0 語 (語が消えた形) として行う。
+  - bash では、R に空白を含む値が入っていると単語分割される。`R='/x reset --hard'` なら、`git -C $R status` は bash で `git -C /x reset --hard status` になる。
+  - zsh では、R が配列なら要素ごとに別の語になる。同じコマンド内の配列の代入・宣言は ask にするが、`~/.zshrc` などユーザの設定で定義された配列や、`hasArrayAssignment` の列挙から漏れた形は検知できない。
+  - これらの場合は、危険 git フラグの backstop や deny が効かないまま pass-through になりうる。以前は `-C` の引数に `$` があれば一律に ask だった。
+  - pass-through 後は、`default` では本体が確認を出し、auto mode では classifier が判定する (settings.json に `-C` ルールが無いので本体は自動許可しない)。`bypassPermissions` では実行される。hook allow はクォートしない参照を対象にしないので、hook がこれを自動許可することはない。
+- 代入やクォートしない `-C $R` を含むコマンドは、`default` / `acceptEdits` では本体の確認が出る。自動許可したい場合は、代入を分けて `git -C "$R" diff` とクォートする。
 - 複合コマンドの hook allow は、本体が自分でセグメントを解析して判定する手順を飛ばす。git 以外のセグメントは、ユーザ設定のコマンド名を固定した allow に一致することを根拠にする。`default` / `acceptEdits` の本体も同じ allow で自動許可するが、本体がそれ以外に行う検査 (作業ディレクトリ外のパスなど) と一致する保証は無い。
 - 複合コマンドの文法は、ADR 0003 の単一コマンドの文法と違い、文法に一致する入力を zsh と bash で実際に実行する検証 (偽の `git` を PATH に置いたランダム生成の実行) をしていない。根拠はシェルの字句規則の検討と、hook をプロセスとして起動するテストだけである。
 - 別リポジトリの `.git/config` と `.git/hooks` は `git clone` でコピーされない。それでも、確認無しに実行される設定が入りうる経路は 3 つある。
@@ -132,8 +130,7 @@ ADR 0003 の決定のうち、本 ADR の Decision で変えたもの以外は�
   - nix 2.34.9 の `builtins.fetchGit` と `nix flake metadata --refresh` は影響を受けない。
   - Go は検証していない。VCS キャッシュ (`$GOMODCACHE/cache/vcs`) は bare リポジトリなので、`GOPROXY=direct` での git 取得は壊れる可能性がある。cargo も `net.git-fetch-with-cli=true` にすると同じ可能性がある。既定の libgit2 を使う場合は影響しない。
   - 該当するディレクトリだけは、`includeIf "gitdir:<dir>/"` で `safe.bareRepository = all` にして回避する。
-- 組み込みコマンド・ラッパーの除外 (`NON_ALLOWABLE_COMMANDS`) と特別扱いする変数 (`SPECIAL_VARIABLES`) は列挙であり、網羅を保証しない。代入できる変数は `git -C` の引数として参照されるものに限るので、代入の値が届くのは `-C` の引数と、その変数を読むシェル自身の挙動だけである。export 済みかどうかは、hook の環境変数と `CLAUDE_ENV_FILE` で近似している。hook の環境から `CLAUDE_ENV_FILE` を読めない構成では、Bash tool のシェルスナップショットだけで export された変数への代入を自動許可しうる。ユーザ設定の alias・関数・global alias が文法に一致する入力の意味を変えうる点は ADR 0003 と同じく防御対象外とする。
-- クォートしない `-C $R` は、ほとんどの場合 `default` / `acceptEdits` でも本体の確認が出る。代入を伴わない場合 (`git -C $R diff`) と、語の消えた形が allow に一致しない場合 (`R=/x; git -C $R diff --stat`) である。自動許可したい場合は `git -C "$R" diff` とクォートする。
+- 組み込みコマンド・ラッパーの除外 (`NON_ALLOWABLE_COMMANDS`) と配列の代入・宣言の検知 (`hasArrayAssignment`) は列挙であり、網羅を保証しない。ユーザ設定の alias・関数・global alias が文法に一致する入力の意味を変えうる点は ADR 0003 と同じく防御対象外とする。
 - 上の例そのもの (ヒアドキュメント付きの `/usr/bin/python3` を含む) は文法外なので hook allow しない。python3 はユーザ設定の allow にも無いので、`default` では本体が確認を出す。
 
 ### Neutral
@@ -158,7 +155,7 @@ ADR 0003 の決定のうち、本 ADR の Decision で変えたもの以外は�
 - 概要: 1 つ目の経路だけを直す。
 - 却下理由: ユーザの要望は別リポジトリへの `git -C` も止めないことである。上の例も別リポジトリが対象だった。
 
-### Option D: クォートしない `$R` を、同じコマンド内の代入を条件にせず hook allow する
+### Option D: 代入とクォートしない `$R` も、条件を付けて hook allow する
 
-- 概要: `-C $R` を常に 1 語として扱う。
-- 却下理由: R が空のとき `git -C $R status rm -r .` は `git -C status rm -r .` として実行され、hook が照合した `git status rm -r .` (allow) と実行内容がずれる。zsh でも起きるので、bash だけのトレードオフとしては受け入れられない。
+- 概要: 同じコマンド内の代入を条件に、`R=/x; git -C $R diff --stat` も hook allow する。代入の位置と値、代入できる変数名、特殊な変数の列挙、`CLAUDE_ENV_FILE` の export、語が消えた形の allow 照合を条件にする。
+- 却下理由: Context に書いたとおり、条件を足すたびに新しい抜け道が見つかり収束しなかった。zsh の配列と修飾子は値を見ないと語数が決まらない。代入しても値の入らない変数もある。`CLAUDE_ENV_FILE` は PreToolUse hook に渡らないので、Bash tool のシェルだけが export する変数を hook から確かめられない。この経路はユーザが普段使う auto mode では効かず、得るものも小さい。

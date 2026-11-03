@@ -7,6 +7,7 @@ import {
   stripShellPrefixes,
   checkDangerousGitFlags,
   extractBashPattern,
+  hasArrayAssignment,
   patternToRegex,
 } from "./rule-matcher.ts";
 import { loadRules } from "./rules.ts";
@@ -1079,13 +1080,11 @@ describe("統合テスト: settings.json ルールでの判定", () => {
       ["git -C /repo log --grep rebase", "Bash(git log *)"],
       ["git -C /repo diff -- reset", "Bash(git diff *)"],
       ['git -C /repo commit -m "fix: reset handler"', "Bash(git commit *)"],
-      // -C の引数の単純な変数参照 (ADR 0004)。`${` はブレース展開より先に変数参照として扱う
+      // -C の引数の語全体が変数参照 1 個の形 (ADR 0004)。`${` はブレース展開より先に変数参照として扱う
       ["git -C $R diff --stat", "Bash(git diff *)"],
       ["git -C ${R} log --oneline", "Bash(git log *)"],
       ['git -C "$R" status', "Bash(git status *)"],
       ['git -C "${R}" status', "Bash(git status *)"],
-      ['git -C "$HOME/x" status', "Bash(git status *)"],
-      ["git -C $R/sub status", "Bash(git status *)"],
     ])("%s は %s で allow", (command, pattern) => {
       expect(matchCommand(command, settingsRules)).toEqual({
         decision: "allow",
@@ -1096,7 +1095,7 @@ describe("統合テスト: settings.json ルールでの判定", () => {
     });
 
     // コマンド名のフルパス・クォートもベース名で正規化して判定する (hook 自身の allow は
-    // evaluator の isPlainGitCCommand が素の `git` 始まりに限るので、ここでは対象外)。
+    // evaluator の hookAllowSegments が素の `git` 始まりに限るので、ここでは対象外)。
     test.each([
       "/usr/bin/git -C /repo status",
       "./git -C . status",
@@ -1158,13 +1157,23 @@ describe("統合テスト: settings.json ルールでの判定", () => {
       "git -C {x,rm} status",
       "git -C * status",
       'git -C "$(git rev-parse --show-toplevel)" status',
-      // 変数参照を取り除いた後に残る展開 (既定値付き・特殊パラメータ・glob・ブレース展開)
+      // 語全体が変数参照 1 個でない形 (既定値付き・特殊パラメータ・glob・ブレース展開・連結・
+      // zsh の修飾子と添字。R=/x なら `$R:e` は空になり語ごと消える)
       "git -C ${R:-/x} status",
       "git -C $1 status",
       'git -C "$@" status',
       "git -C $R* status",
       "git -C ${R}{a,b} status",
       "git -C ${R status",
+      "git -C $R/sub status",
+      'git -C "$HOME/x" status',
+      'git -C "${R}/sub" status',
+      "git -C $R$S status",
+      "git -C $R:e status",
+      "git -C $R:t log",
+      "git -C ${R}:h status",
+      "git -C $R[1] status",
+      "git -C ${R}x status",
       // 付け替えの重ね掛け / 他の付け替え手段との併用
       "git -C a -C b status",
       "git -C /x --git-dir=/y/.git status",
@@ -1260,6 +1269,73 @@ describe("統合テスト: settings.json ルールでの判定", () => {
     });
     test("R=/b; git -C $R push --force は deny", () => {
       expect(judgeCommand("R=/b; git -C $R push --force")).toBe("deny");
+    });
+  });
+
+  // クォート無しの `$EMPTY` が空だと `-C` は次の語を取る。語が消えた形が ask ルールに当たれば ask
+  describe("git -C: 語が消えた形の ask", () => {
+    const askRule = (p: string): Rule => ({ category: "ask", pattern: `Bash(${p})`, regex: patternToRegex(p) });
+    const rules = [...settingsRules, askRule("git push *")];
+
+    test.each([
+      "git -C $EMPTY status push origin main",
+      "git -C ${EMPTY} diff push origin main",
+    ])("%s は ask", (command) => {
+      expect(matchCommand(command, rules)).toEqual({ decision: "ask", command, pattern: "Bash(git push *)" });
+    });
+
+    // 語が消えた形が正規化できない (`git -C diff --stat`) ことは ask の理由にしない
+    test.each([
+      ["git -C $R diff --stat", "Bash(git diff *)"],
+      ["git -C $R status", "Bash(git status *)"],
+    ])("%s は %s で allow", (command, pattern) => {
+      expect(matchCommand(command, rules)).toEqual({ decision: "allow", command, pattern, gitCNormalized: true });
+    });
+
+    // クォートした参照は語が消えない
+    test('git -C "$EMPTY" status push origin main は ask にならない', () => {
+      expect(matchCommand('git -C "$EMPTY" status push origin main', rules)?.decision).toBe("allow");
+    });
+  });
+
+  describe("hasArrayAssignment", () => {
+    test.each([
+      "a=(x y)",
+      "a+=(x)",
+      "a[1]=x",
+      "a[1]+=x",
+      "foo; a=(x) && bar",
+      "typeset -a a",
+      "typeset -ga a",
+      "typeset -A a",
+      "declare -a a=(x)",
+      "local -a a",
+      "readonly -a a",
+      "export -a a",
+      "set -A a x y",
+      "set +A a x",
+      "read -A a",
+      "read -ra a",
+      "vared -a a",
+      "mapfile a",
+      "readarray -t a",
+      "zparseopts -a a x",
+    ])("%j は a を配列にする", (command) => {
+      expect(hasArrayAssignment(command, "a")).toBe(true);
+    });
+
+    test.each([
+      "a=x",
+      "ab=(x)",
+      "ba=(x)",
+      "$a=(x)",
+      "typeset a",
+      "typeset -x a",
+      "local a=x",
+      "read a",
+      "typeset -a b; echo a",
+    ])("%j は a を配列にしない", (command) => {
+      expect(hasArrayAssignment(command, "a")).toBe(false);
     });
   });
 

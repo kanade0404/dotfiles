@@ -136,13 +136,17 @@ TypeScript 製の PreToolUse hook で Bash コマンドの権限を統合管理�
 - シェルコマンドを構文解析（パイプ、`&&`、コマンド置換、ヒアドキュメント等）
 - dangerous-git-flags 検出（`--no-verify`, `--force` 等の位置非依存チェック）
 - `git -C <dir> <subcommand>` は `git <subcommand>` に正規化して通常の git ルールで判定する。経緯と受け入れたトレードオフは [ADR 0004](docs/adr/0004-treat-git-c-as-plain-git.md)
-  - `-C` の対象ディレクトリ (別リポジトリかどうか) は判定に使わない。`-C` の引数の単純な変数参照 (`$R` / `"${R}"` など) も正規化する
+  - `-C` の対象ディレクトリ (別リポジトリかどうか) は判定に使わない
+  - `-C` の引数は、語全体がちょうど `$R` / `${R}` / `"$R"` / `"${R}"` のどれかなら正規化する。zsh の修飾子 (`$R:e`)・添字・連結 (`$R/sub`)・既定値付きなどは ask にする
+  - クォートしない `$R` は、値が空で語が消えた形 (`git -C <次の語> ...`) にも deny / ask を照合する。同じコマンド内でその名前を配列にしていれば ask にする
   - `settings.json` には `git -C` 系ルールを置かない。hook が動かない環境で、本体が `-C` 版の deny を外したまま自動許可しないためである
   - hook が allow を返すのは、Claude Code から起動され (`--client=claude-code`)、permission_mode が `default` / `acceptEdits` のときだけである
-  - さらにコマンド全体が、単純コマンドと代入を `;` / `&&` / `||` / `|` で繋いだ正の文法に一致し、`git -C` を含む必要がある。代入以外の全セグメントは deny / ask のどれにも当たらず、`~/.claude/settings.json` の allow ルールに肯定的に一致しなければならない (`git -C` は正規化後で照合)
-  - 代入できるのは、同じコマンド内で `git -C` の引数として参照される変数だけである。クォートしない `-C $R` は、R が空で語が消えた形 (`git -C <次の語> ...`) も allow に一致するときだけ許す。`git -C "$R"` とクォートすれば、この条件は課さない
+  - さらにコマンド全体が、単純コマンドを `;` / `&&` / `||` / `|` で繋いだ正の文法に一致し、`git -C` を含む必要がある。全セグメントは deny / ask のどれにも当たらず、`~/.claude/settings.json` の allow ルールに肯定的に一致しなければならない (`git -C` は正規化後で照合)
+  - hook allow の対象は、リテラルの dir と `"$VAR"` の `git -C`、`-C` の無い git、allow に当たる git 以外の単純コマンドを繋いだものである
+  - 代入 (`R=/x`) とクォートしない変数 (`-C $R`) は hook allow の対象外にする。zsh の配列や修飾子があるので、クォートしない語の展開は静的に決められない。代入は export 済みの変数を書き換え、後のセグメントや git 自身の動作を変えうる
+  - そのため `R=/x; git -C $R diff --stat` は ask にならないが、自動許可もされず pass-through になる。auto mode では classifier が判定し、`default` では本体が確認を出す
   - ヒアドキュメント・リダイレクト・前置・改行を含むコマンドは本体の判定に委ねる。Codex には allow を返さない
-  - 別リポジトリの `.git/config` や `.git/hooks` が確認無しに実行されうること、bash でクォートしない `$VAR` が単語分割されることは受け入れている
+  - 別リポジトリの `.git/config` や `.git/hooks` が確認無しに実行されうることは受け入れている。クォートしない `$VAR` の語数 (bash の単語分割、ユーザ設定で定義した zsh の配列) を deny / ask の判定で追いきれないことも受け入れている
   - clone した作業ツリーに埋め込まれた bare リポジトリ (embedded bare repository) の経路は、`nix/home.nix` の `safe.bareRepository = "explicit"` で塞いでいる。この設定は home-manager (`nix/home.nix`) を適用したホストにしか効かない。`install.sh` で hook だけを配ったマシンでは、embedded bare repository の経路が開いたままになる
 - deny 時に代替ツールを案内（`ls` → Glob ツール、`cat` → Read ツール等）
 
