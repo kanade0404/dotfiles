@@ -431,6 +431,11 @@ describe("evaluateCommand - git -C の hook allow (hookApproved)", () => {
       // -C 以外の位置の展開
       "R=/x; echo $R; git -C . status",
       "git -C . log \"$R\"",
+      // クォートした機密パス (deny と機密パスの照合はクォートの中を消してから行う)
+      "git -C . status; head '.env'",
+      'git -C . status && tail "/Users/x/.ssh/id_ed25519"',
+      "git -C . log -p -- '.env'",
+      'git -C "$R" log -p -- ".env"',
     ])("%j は hookApproved ではない", (command) => {
       expect(evaluate(command)).not.toEqual(hookApproved);
     });

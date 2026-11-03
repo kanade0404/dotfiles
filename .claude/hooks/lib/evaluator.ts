@@ -73,6 +73,8 @@ const NON_ALLOWABLE_COMMANDS: ReadonlySet<string> = new Set([
   // ラッパー
   "sudo", "doas", "xargs", "timeout", "gtimeout", "stdbuf", "caffeinate", "arch",
   "script", "watch", "chroot", "setsid", "unbuffer", "ionice", "taskset", "flock",
+  // zsh のモジュールの組み込み
+  "zsystem", "sysopen", "sysread", "syswrite", "sysseek", "ztcp", "zsocket", "zftp", "private", "compctl", "compadd",
 ]);
 
 /**
@@ -115,16 +117,21 @@ function hookAllowSegments(command: string, rules: readonly Rule[]): boolean {
   const blockingRules = rules.filter((rule) => rule.category !== "allow");
   const positiveRules = allowRules.filter((rule) => rule.category === "allow");
   const positivelyAllowed = (text: string) => positiveRules.some((rule) => rule.regex.test(text));
+  // deny と機密パスの照合はクォートの中を消してから行うので、クォートを外した形でも照合する。
+  // 文法上クォートの中はリテラルなので、外しても意味は変わらない (`"$R"` は ask になるので外さない)
+  const blocked = (text: string) =>
+    matchCommand(text, blockingRules) !== null ||
+    matchCommand(text.replace(/(["'])([^"'$]*)\1/g, "$2"), blockingRules) !== null;
   let hasGitC = false;
 
   for (const text of segments) {
     if (GIT_C_GRAMMAR.test(text)) {
       const result = matchCommand(text, allowRules);
-      if (result?.decision !== "allow" || result.gitCNormalized !== true) return false;
+      if (result?.decision !== "allow" || result.gitCNormalized !== true || blocked(text)) return false;
       hasGitC = true;
       continue;
     }
-    if (matchCommand(text, blockingRules) !== null) return false;
+    if (blocked(text)) return false;
     if (PLAIN_GIT_GRAMMAR.test(text)) {
       if (!positivelyAllowed(text)) return false;
       continue;
@@ -260,7 +267,7 @@ export function evaluateCommand(
 
     const result = matchCommand(sub, rules);
     if (result?.decision === "deny") denyReasons.push({ command: sub, pattern: result.pattern });
-    else if (result?.decision === "ask") askReasons.push(sub);
+    else if (result?.decision === "ask") askReasons.push(`${sub} → ${result.pattern}`);
   }
 
   if (denyReasons.length > 0) {

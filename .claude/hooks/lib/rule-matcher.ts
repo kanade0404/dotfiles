@@ -1138,15 +1138,13 @@ function analyzeGitC(command: string, stripped: string): GitCAnalysis {
   const raw = (k: number) => stripped.slice(spans[k].start, spans[k].end);
   if (spans.length === 0 || commandBaseName(raw(0)) !== "git") return { kind: "none" };
 
-  const dirs: string[] = [];
-  let dirSpan: { start: number; end: number } | null = null;
+  const dirSpans: { start: number; end: number }[] = [];
   let otherOption: string | null = null;
   let i = 1;
   while (i < spans.length) {
     const word = normalizeWord(raw(i));
     if (word === "-C" && i + 1 < spans.length) {
-      dirs.push(raw(i + 1));
-      dirSpan = spans[i + 1];
+      dirSpans.push(spans[i + 1]);
       i += 2;
       continue;
     }
@@ -1157,7 +1155,8 @@ function analyzeGitC(command: string, stripped: string): GitCAnalysis {
     // (`--opt=value` 形は 1 トークンなので下の i++ だけで済む)
     i += GIT_C_VALUE_GLOBAL_OPTS.has(word) && i + 1 < spans.length ? 2 : 1;
   }
-  if (dirs.length === 0) return { kind: "none" };
+  if (dirSpans.length === 0) return { kind: "none" };
+  const dirs = dirSpans.map((span) => stripped.slice(span.start, span.end));
 
   if (dirs.some(hasShellExpansionInDir)) {
     return { kind: "ask", reason: "-C の引数にシェル展開を含む" };
@@ -1169,15 +1168,16 @@ function analyzeGitC(command: string, stripped: string): GitCAnalysis {
   if (hasGitRedirectEnv(command)) {
     return { kind: "ask", reason: "-C と環境変数によるリポジトリ付け替えを併用している" };
   }
+  const [dirSpan] = dirSpans;
   const dirVariable = dirVariableOf(dirs[0]);
   if (i >= spans.length) {
     if (dirVariable !== undefined && !dirVariable.quoted) {
-      return { kind: "ask", reason: "クォートしない変数参照は展開後の語数を静的に決められない" };
+      return { kind: "ask", reason: "クォートしない変数参照は展開後の語数が決まらない。\"$R\" とクォートすれば確認しない" };
     }
     return { kind: "none" };
   }
   const normalized = `git ${stripped.slice(spans[i].start)}`;
-  if (dirVariable === undefined || dirVariable.quoted || dirSpan === null) return { kind: "normalized", normalized };
+  if (dirVariable === undefined || dirVariable.quoted) return { kind: "normalized", normalized };
   const vanishingDirCommand = `${stripped.slice(0, dirSpan.start)}${stripped.slice(dirSpan.end).trimStart()}`;
   return { kind: "normalized", normalized, vanishingDirCommand };
 }
@@ -1237,7 +1237,7 @@ export function matchCommand(
   if (gitC.kind === "normalized" && gitC.vanishingDirCommand !== undefined) {
     const vanished = matchCommand(gitC.vanishingDirCommand, rules);
     if (vanished?.decision === "deny") return { decision: "deny", command, pattern: vanished.pattern };
-    return { decision: "ask", command, pattern: "git -C (クォートしない変数参照は展開後の語数を静的に決められない)" };
+    return { decision: "ask", command, pattern: "git -C (クォートしない変数参照は展開後の語数が決まらない。\"$R\" とクォートすれば確認しない)" };
   }
 
   // `git -C` 形だが正規化できない (展開を含む dir / 付け替えの併用等)
