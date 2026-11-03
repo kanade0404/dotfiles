@@ -24,15 +24,6 @@
 
     taps = [
       { name = "ariga/tap"; trusted = true; }
-      # Herdr UI (herdr-gpui) の作者 Fabien Penso の個人 tap。herdr 本体 (herdrdev) とは
-      # 無関係の第三者なので、tap 全体は信頼せず、casks 側で herdr-gpui だけを trusted に
-      # する。これで防げるのは tap に追加される他の cask / formula だけで、herdr-gpui の
-      # cask 定義そのもの (HEAD に追従し preflight 等も実行される) は作者を全面的に信頼する。
-      # Homebrew 7.0 の実装で確認済み (5.1.x は未確認): cask の読み込み (cask_loader) は
-      # cask 単位の trust で通るので、アプリ内 updater の `brew upgrade --cask herdr-gpui` も通る。
-      # 全 cask を列挙する経路 (Cask.all) は、tap 内の未信頼 cask を読み飛ばすだけでエラーに
-      # しない (Trust.trusted_cask_files)。brew bundle の cleanup が読み込むのは入っている
-      # cask だけで、それは trusted 済み。
       "penso/tap"
     ];
 
@@ -61,11 +52,6 @@
       "notion"
       "obsidian"
       "orbstack"
-      # herdr daemon の GUI クライアント (Herdr UI)。信頼の範囲は taps の penso/tap を参照。
-      # tap HEAD は固定していない (nix-homebrew の mutableTaps = false で固定できるが、
-      # 管理方式ごと移行になるので採らない)。greedy は将来 auto_updates が宣言されても
-      # upgrade = true で上げ続けるため。daemon (brews の "herdr") とは別リリースなので、
-      # GUI が繋がらなくなったら `herdr --version` と GUI のバージョンの組み合わせを疑う。
       { name = "penso/tap/herdr-gpui"; greedy = true; trusted = true; }
       "postman"
       "raycast"

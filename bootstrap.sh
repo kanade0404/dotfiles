@@ -39,24 +39,17 @@ eval "$(/opt/homebrew/bin/brew shellenv)"
 # ---- サードパーティ tap の信頼 (Homebrew 5.1+) ----
 # 新しい Homebrew は非公式 tap の formula/cask を読み込む前に明示的な信頼を要求する
 # (HOMEBREW_REQUIRE_TAP_TRUST)。未信頼だと darwin-rebuild の brew bundle が
-# "Refusing to load formula ... from untrusted tap" で失敗する。
-# Brewfile の trusted: true は brew bundle 自身も登録するが、Homebrew 5.1.x には
-# 読み込みより前に登録しない経路があった (Homebrew/brew#22631) ため、ここで事前に登録する。
-# 対象は nix/modules/homebrew.nix の trusted = true な tap と、完全修飾名 (tap/name) の
-# brews / casks (nix-darwin は brews / casks の trusted を既定 true にするが、短縮名と
-# homebrew/ 配下の公式 tap は trust 不要なので除く)。nix eval で動的取得して二重管理を避ける。
+# "Refusing to load formula ... from untrusted tap" で失敗する。信頼対象は
+# nix/modules/homebrew.nix の taps / brews / casks を nix eval で動的取得し、二重管理を避ける。
 if brew help trust >/dev/null 2>&1; then
   log "サードパーティ tap / formula / cask を信頼登録"
-  # flakes の有効化 (下の experimental features 節) より前に走るので、ここで明示的に付ける。
-  # shellcheck disable=SC2016 # ${flag} などは Nix の補間でシェル展開しない
+  # shellcheck disable=SC2016
   trust_targets=$(nix --extra-experimental-features 'nix-command flakes' eval --raw \
     "$DOTFILES_DIR/nix#darwinConfigurations.$FLAKE_ATTR.config.homebrew" \
     --apply 'hb: let
-        qualified = e: builtins.match "[^/]+/[^/]+/[^/]+" e.name != null # user/repo/name
+        qualified = e: builtins.match "[^/]+/[^/]+/[^/]+" e.name != null
           && builtins.match "[Hh]omebrew/.*" e.name == null;
         fmt = flag: es: map (e: "${flag} ${e.name}") es;
-        # tap は明示 opt-in (== true)、完全修飾名の brews / casks は明示的に false でない限り対象
-        # (nix-darwin の既定値が将来 null 等に変わっても漏れないように)。
         taps = builtins.filter (t: (t.trusted or false) == true) hb.taps;
         items = es: builtins.filter (e: qualified e && (e.trusted or null) != false) es;
       in builtins.concatStringsSep "\n" (
@@ -64,19 +57,14 @@ if brew help trust >/dev/null 2>&1; then
     || die "homebrew.nix の trust 対象取得に失敗しました (nix eval)"
   while read -r kind name; do
     [ -n "${name:-}" ] || continue
-    # darwin-rebuild より前に呼ぶため tap 未取得でも、種別を明示すれば trust は名前を
-    # JSON へ記録するだけなので通常は成功する。失敗しても中断せず警告に留める。
-    # tap は "user/repo" から tap と推論されるので、種別フラグの無い初期の brew trust でも
-    # 通るよう位置引数で渡す。
-    # stdin は here-string の残りの行なので、brew に読ませないよう /dev/null を渡す。
     case "$kind" in
       --tap) brew trust "$name" </dev/null ;;
       *) brew trust "$kind" "$name" </dev/null ;;
-    esac || warn "brew trust $kind $name が失敗 (上の brew のエラーを確認。種別フラグ非対応の古い brew なら brew update 後に再実行)"
+    esac || warn "brew trust $kind $name が失敗"
   done <<< "$trust_targets"
 else
-  warn "この Homebrew では 'brew trust' が無いため tap / formula / cask の trust 事前登録をスキップします。"
-  warn "Homebrew 5.1+ では後続の darwin-rebuild が untrusted tap エラーで失敗する可能性があります (homebrew.nix の trusted = true な tap と、完全修飾名の formula / cask を trust すること)。"
+  warn "この Homebrew では 'brew trust' が無いため trust 登録をスキップします。"
+  warn "Homebrew 5.1+ では後続の darwin-rebuild が untrusted tap エラーで失敗する可能性があります。"
 fi
 
 # ---- Nix experimental features (一時ユーザー設定) ----
