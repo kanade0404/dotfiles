@@ -189,12 +189,20 @@ describe("pre-tool-use-bash-analyzer (プロセス)", () => {
   // 確認を出さない。代入とクォートしない変数参照は hook allow の対象外なので、pass-through で
   // 本体の判定に委ねる
   test.each([
-    "git -C $R diff --stat",
     "R=/Users/kanade0404/orca/workspaces/skills/pinniped; git -C $R diff --stat",
     'R=/Users/kanade0404/orca/workspaces/skills/pinniped; git -C "$R" diff --stat',
-    "/usr/bin/python3 - <<'EOF'\nprint(1)\nEOF\nR=/Users/kanade0404/orca/workspaces/skills/pinniped; git -C $R diff --stat",
+    "/usr/bin/python3 - <<'EOF'\nprint(1)\nEOF\nR=/Users/kanade0404/orca/workspaces/skills/pinniped; git -C \"$R\" diff --stat",
   ])("Claude Code: %j は何も出力しない", (command) => {
     expect(env.decisionOf(command)).toBeNull();
+  });
+
+  // クォートしない $R は、同じコマンド内でリテラルを代入し、コマンド全体が閉じた字句のときだけ
+  // 正規化する。代入が無い (外の環境の値) ときや、ヒアドキュメント等を含むときは ask
+  test.each([
+    "git -C $R diff --stat",
+    "/usr/bin/python3 - <<'EOF'\nprint(1)\nEOF\nR=/Users/kanade0404/orca/workspaces/skills/pinniped; git -C $R diff --stat",
+  ])("Claude Code: %j は ask", (command) => {
+    expect(env.decisionOf(command)).toBe("ask");
   });
 
   test.each(["git -C $R push --force", "git -C /other reset --hard", "R=/x; git -C $R push --force"])(
@@ -206,7 +214,7 @@ describe("pre-tool-use-bash-analyzer (プロセス)", () => {
 
   // Codex には allow を返さない。-C の変数参照は ask ではなく pass-through になる
   test.each([
-    "git -C $R diff --stat",
+    'git -C "$R" diff --stat',
     "R=/x; git -C $R diff --stat",
     "git -C sub status && git -C sub diff",
     "git -C /other status",

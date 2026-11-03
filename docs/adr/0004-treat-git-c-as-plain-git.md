@@ -53,13 +53,16 @@ ADR 0003 の決定のうち、本 ADR の Decision で変えたもの以外は�
   - 対象は、語全体がちょうど `$NAME`、`${NAME}`、`"$NAME"`、`"${NAME}"` のどれかで、前後に何も付かないものだけである。`$NAME` は名前の文字を最長で読む。
   - それ以外の形は従来どおり ask にする。zsh の修飾子 (`$R:e`、`$R:t`)、添字 (`$R[1]`)、連結 (`$R/sub`、`"${R}/sub"`)、既定値付き (`${R:-x}`)、特殊パラメータ (`$1`、`$@`) などが該当する。修飾子と添字は値を変え、`$R:e` は空になって語ごと消えうるためである。
   - クォートしない形 (`$R`、`${R}`) は、値が入った形 (正規化した `git <sub> ...`) と、値が空で語が消えた形 (`git -C <次の語> ...`) の両方で deny と ask を照合する。語が消えた形は `analyzeGitC` の `vanishingDirCommand` で 1 か所で組み立てる。`ask: ["Bash(git push *)"]` があれば、`git -C $EMPTY status push origin main` は ask になる。語の消えた形を正規化できないこと (`git -C diff --stat` は `--stat` を global option と読む) は、ask の理由にしない。allow は値が入った形で判定する。
-  - クォートしない形は、値が 1 個のスカラーだと静的に言える場合だけ正規化し、それ以外は ask にする (`isStaticScalarDirVariable`)。配列を作る構文は `typeset -T`、`zstyle -a`、`${(A)name::=...}`、`set --` (`argv`)、tied 配列 (`CDPATH` と `cdpath`) など数が多く、列挙では収束しない。そこで次の閉じた規則を使う。4 つを全て満たすときだけ正規化する。
-    - NAME は大文字、数字、`_` だけからなる (`^[A-Z_][A-Z0-9_]*$`)。zsh の特殊配列と tied 配列 (`argv`、`path`、`cdpath`、`fpath`、`pipestatus` など) は全て小文字の名前なので、これで除外できる。
-    - コマンド全体の `$` は、全て `-C` の引数のちょうど `$NAME` / `${NAME}` の参照である。クォートの中も含め、他の `$` が 1 つでもあれば外れる。`${(A)R::=...}`、`${(P)x}`、`$(...)`、`$'...'`、`set -A $x` などを、列挙せずにまとめて除外できる。
-    - コマンドの中で NAME が語として現れるのは、`-C` の参照と、セグメント先頭の `NAME=<リテラル>` だけである。照合は大文字と小文字を区別せず、語の境界で区切る。リテラルは `^[A-Za-z0-9_./~:@%+,=-]*$` に一致し、括弧、クォート、`$`、バックスラッシュ、glob、空白を含まない。`typeset -T X R`、`zstyle -a ctx style R`、`read -A R`、`set -A R`、`R=(...)` を除外できる。`"R=(x)"` のようなクォートの中の文字列も外れるが、安全側の偽陽性として受け入れる。
-    - `eval`、`source`、`.` コマンド、バッククォートを含まない。
+  - クォートしない形は、値が 1 個のスカラーだと静的に言える場合だけ正規化し、それ以外は ask にする (`isStaticScalarDirVariable`)。配列を作る構文は `typeset -T`、`zstyle -a`、`${(A)name::=...}`、`set --` (`argv`)、tied 配列 (`CDPATH` と `cdpath`) など数が多く、列挙では収束しない。名前もクォートの連結 (`R''R`)、ブレース展開 (`AB{C,}`)、glob (`set -A ? ...`) で組み立てられる。そこで、受け入れる形を次の閉じた文法で絞る。6 つを全て満たすときだけ正規化する。
+    - コマンド全体が閉じた字句 (`^[-A-Za-z0-9_./:@%+,=~$;&| \t]*$`) だけからなる。`${NAME}` は、先に `$NAME` の形へ畳む。クォート、バックスラッシュ、ブレース、glob (`*?[`)、括弧、リダイレクト、`!`、`#`、改行が 1 つでもあれば外れる。
+    - NAME は大文字で始まり、大文字、数字、`_` だけからなる (`^[A-Z][A-Z0-9_]*$`)。zsh の特殊配列と tied 配列 (`argv`、`path`、`cdpath`、`fpath`、`pipestatus` など) は全て小文字の名前なので、これで除外できる。シェルが暗黙に代入する名前 (`REPLY`、`OPTARG`、`MATCH`、`BASH_REMATCH`、`PWD`、`IFS`、`PATH` など) も除外する。
+    - NAME は、それより前のセグメントで、`NAME=<リテラル>` だけのセグメントとして代入されている。代入の直後の区切りは `;` か `&&` である。リテラルは `^[A-Za-z0-9_./~:@%+,=-]*$` に一致し、空白を含まない。代入が無く外の環境の値に頼る場合は外れる。代入だけのセグメントは NAME への代入に限り、他の変数への代入 (`IFS=:` など) や前置の代入 (`X=1 cmd`) があれば外れる。
+    - コマンド全体の `$` は、全て `-C` の引数のちょうど `$NAME` / `${NAME}` の参照である。
+    - NAME (大文字と小文字を区別する) が単独の語や `NAME=...` の語として現れるのは、代入の左辺と `-C` の参照だけである。代入の右辺は走査しない。`typeset -T X R`、`zstyle -a ctx style R`、`printf -v R` などを除外できる。`-r` や `/src/r/app` は対象にならない。
+    - 変数・オプション・評価を変えうる組み込みとラッパーが、単独の語としてどこにも現れない。評価とオプションに関わる語は `eval`、`source`、`.`、`set`、`setopt`、`unsetopt`、`emulate` である。変数を宣言・代入する語は `typeset`、`declare`、`local`、`readonly`、`export`、`integer`、`float`、`read`、`vared` である。名前を引数に取って代入する `zstyle`、`getopts`、`mapfile`、`readarray`、`zparseopts` も含める。ほかに `builtin`、`command`、`exec` も含める。位置は問わないので、予約語の後 (`if . ./env.sh`) も含む。`git -C $R add .` のような引数の `.` も外れるが、安全側の偽陽性として受け入れる。
+  - クォートしない変数を ask にせず通すのは、同じコマンドの中でリテラルを代入した場合だけである。代入の無い `git -C $R diff --stat` は ask になる。外の環境の変数を使うときは、`git -C "$R" diff --stat` とクォートすれば ask にならない。
   - ask にする場合も、正規化した形で deny を照合する。`git -C $dir push --force` は deny になる。
-  - この規則の前提として、ユーザ自身の `~/.zshrc` やシェルスナップショットで定義された配列、alias、tied 配列は防がない。これらの値の出どころはユーザ自身が管理しているためである。
+  - この規則の前提として、ユーザ自身の `~/.zshrc` やシェルスナップショットで定義された配列、alias、オプションは防がない。これらの値の出どころはユーザ自身が管理しているためである。
 - 複合コマンドは (a) を採る。ただし shell-parser の分解結果は使わず、生コマンド全体に正の文法を当てる (`evaluator.ts` の `hookAllowSegments`)。次を全て満たすときだけ hook allow を返す。
 
     ```text
@@ -101,7 +104,8 @@ ADR 0003 の決定のうち、本 ADR の Decision で変えたもの以外は�
 
 ### Positive
 
-- 上の例の `R=...; git -C $R diff --stat` は ask にならない。ただし代入とクォートしない変数参照を含むので hook allow もせず、pass-through になる。auto mode のセッションでは classifier が判定し、`default` / `acceptEdits` のセッションでは本体が確認を出す。`git -C "$R" diff --stat` とクォートし、代入を含めなければ、`default` / `acceptEdits` でも hook が自動許可する。
+- `R=...; git -C $R diff --stat` 単体は ask にならない。ただし代入とクォートしない変数参照を含むので hook allow もせず、pass-through になる。auto mode のセッションでは classifier が判定し、`default` / `acceptEdits` のセッションでは本体が確認を出す。
+- 上の例そのもの (ヒアドキュメントを含む) は、閉じた字句の外の文字 (クォート・括弧・改行) を含むので、クォートしない `$R` のままでは ask になる。`git -C "$R" diff --stat` とクォートすれば ask にならない。代入を含めなければ、`default` / `acceptEdits` でも hook が自動許可する。
 - `default` / `acceptEdits` のセッションでは、別リポジトリへの `git -C` が確認無しに通る。`git -C /a status && git -C /b diff` や `git -C /r log | head -5` のような複合コマンドも同様である。
 - `git -C $R push --force`、`git -C /other reset --hard`、`R=/x; git -C $R push --force` は従来どおり deny になる。
 - ask ルールに当たるセグメントを含む複合コマンドは hook allow しない。allow と ask の両方に当たるセグメントも同じである。たとえば allow と ask の両方に `Bash(git push *)` があるとき、`git -C /r status && git push origin main` は hook allow せず、本体の判定に委ねる。
@@ -115,8 +119,8 @@ ADR 0003 の決定のうち、本 ADR の Decision で変えたもの以外は�
   - ADR 0003 が Option D として却下した形を、ユーザの要望で受け入れる。cwd のリポジトリ自体の設定を経由した実行面は、ADR 0003 の時点でも非 -C の `git status` と同じく残っていた。
 - 受け入れたトレードオフの 2 つ目は、クォートしない `$VAR` の語数が静的に決まらないことである。deny / ask の判定は `-C $R` を 1 語 (値が入った形) か 0 語 (語が消えた形) として行う。
   - bash では、R に空白を含む値が入っていると単語分割される。`R='/x reset --hard'` なら、`git -C $R status` は bash で `git -C /x reset --hard status` になる。
-    - 同じコマンド内で代入されたリテラルの値は、`isStaticScalarDirVariable` の規則 3 により空白を含まないので、この分割は起きない。分割が起きうるのは、環境やユーザの設定から来た値である。
-  - zsh では、R が配列なら要素ごとに別の語になる。同じコマンドの中で配列にしうる形は `isStaticScalarDirVariable` で ask にする。`~/.zshrc` やシェルスナップショットなど、ユーザ自身の設定で定義された配列 (大文字の名前のもの) は検知できない。
+    - クォートしない `$R` を正規化するのは、同じコマンド内でリテラル (空白を含まない) を代入した場合だけで、`IFS` への代入や `setopt` も含まない。そのため、この分割は同じコマンドの中では起きない。分割が起きうるのは、ユーザ自身の設定 (`IFS` や `SH_WORD_SPLIT` を変える `~/.zshrc` など) が効いている場合である。
+  - zsh では、R が配列なら要素ごとに別の語になる。同じコマンドの中で配列にしうる形は `isStaticScalarDirVariable` で ask にする。`~/.zshrc` やシェルスナップショットなど、ユーザ自身の設定で定義された配列・alias は検知できない。
   - これらの場合は、危険 git フラグの backstop や deny が効かないまま pass-through になりうる。以前は `-C` の引数に `$` があれば一律に ask だった。
   - pass-through 後は、`default` / `acceptEdits` では本体が確認を出し、auto mode では classifier が判定する (settings.json に `-C` ルールが無いので本体は自動許可しない)。`bypassPermissions` では実行される。hook allow はクォートしない参照を対象にしないので、hook がこれを自動許可することはない。
 - 代入やクォートしない `-C $R` を含むコマンドは、`default` / `acceptEdits` では本体の確認が出る。自動許可したい場合は、代入を分けて `git -C "$R" diff` とクォートする。

@@ -100,12 +100,12 @@ const NON_ALLOWABLE_COMMANDS: ReadonlySet<string> = new Set([
   "functions", "getcap", "getln", "getopts", "hash", "help", "history", "integer", "jobs", "kill", "let",
   "limit", "local", "log", "logout", "mapfile", "popd", "print", "printf", "pushd", "pushln", "r", "read",
   "readarray", "readonly", "rehash", "return", "sched", "set", "setcap", "setopt", "shift", "shopt",
-  "source", "stat", "suspend", "times", "trap", "ttyctl", "type", "typeset", "ulimit", "umask", "unalias",
+  "source", "stat", "strftime", "suspend", "times", "trap", "ttyctl", "type", "typeset", "ulimit", "umask", "unalias",
   "unfunction", "unhash", "unlimit", "unset", "unsetopt", "vared", "wait", "whence", "where", "which",
   "zcompile", "zformat", "zle", "zmodload", "zparseopts", "zprof", "zpty", "zregexparse", "zstyle",
   // 別のコマンドを起動するラッパー
   "env", "nohup", "nice", "sudo", "doas", "xargs", "timeout", "gtimeout", "stdbuf", "caffeinate", "arch",
-  "script", "watch", "chroot", "setsid", "unbuffer",
+  "script", "watch", "chroot", "setsid", "unbuffer", "ionice", "taskset", "flock",
 ]);
 
 /**
@@ -325,7 +325,7 @@ export function evaluateCommand(
 ): EvaluationResult {
   const denyReasons: { command: string; pattern: string }[] = [];
   const askReasons: string[] = [];
-  const whole = rawCommand ?? subCommands.join("\n");
+  const whole = rawCommand ?? subCommands.join("; ");
 
   for (const sub of subCommands) {
     if (isAssignmentOnly(sub)) continue;

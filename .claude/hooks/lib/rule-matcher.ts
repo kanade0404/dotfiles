@@ -1123,48 +1123,71 @@ function hasShellExpansionInDir(dir: string): boolean {
   return dirVariableOf(dir) === undefined && SHELL_EXPANSION_IN_WORD.test(dir);
 }
 
-/** 大文字・数字・`_` だけの変数名。zsh の特殊配列・tied 配列 (`argv` / `path` / `cdpath` / `fpath` 等) は全て小文字 */
-const UPPERCASE_NAME = /^[A-Z_][A-Z0-9_]*$/;
-/** セグメント先頭の `NAME=<リテラル>` のリテラル。括弧・クォート・`$`・バックスラッシュ・glob・空白を含まない */
-const ASSIGNMENT_LITERAL = /^[A-Za-z0-9_./~:@%+,=-]*$/;
-/** セグメントの先頭 (コマンド文字列の先頭か、区切り `;` `&` `|` 改行の直後の空白の後) */
-const SEGMENT_START = /(?:^|[;&|\n])[ \t]*$/;
-/** `eval` / `source` / バッククォート */
-const EVAL_LIKE = /`|(?<![A-Za-z0-9_./-])(?:eval|source)(?![A-Za-z0-9_./-])/;
-/** `.` コマンド (セグメント先頭か、`builtin` / `command` 等の後の単独の `.`) */
-const DOT_COMMAND = /(?:^|[;&|\n({])[ \t]*(?:(?:builtin|command|exec|noglob|nocorrect)[ \t]+)*\.(?=[ \t]|$)/m;
+/**
+ * 閉じた字句。クォート・バックスラッシュ・ブレース・glob (`*?[`)・括弧・リダイレクト・`!`・`#`・改行を含まない
+ * (`${NAME}` は先に `$NAME` に畳んでから当てる)。
+ */
+const CLOSED_LEXICON = /^[-A-Za-z0-9_./:@%+,=~$;&| \t]*$/;
+/** 大文字で始まり、大文字・数字・`_` だけの変数名。zsh の特殊配列と tied 配列 (`argv` / `path` 等) は全て小文字 */
+const SCALAR_NAME = /^[A-Z][A-Z0-9_]*$/;
+/** シェルが暗黙に代入する (またはシェル自身の動作に使う) 大文字の名前 */
+const IMPLICIT_NAMES: ReadonlySet<string> = new Set([
+  "REPLY", "OPTARG", "OPTIND", "MATCH", "MBEGIN", "MEND", "BASH_REMATCH", "PWD", "OLDPWD", "IFS", "HOME",
+  "PATH", "CDPATH", "FPATH", "MANPATH", "SECONDS", "RANDOM", "LINENO", "TRY_BLOCK_ERROR",
+]);
+/** 単独の語として現れたら正規化しない語 (変数・オプション・評価を変えうる組み込みとラッパー) */
+const FORBIDDEN_WORDS: ReadonlySet<string> = new Set([
+  "eval", "source", ".", "set", "setopt", "unsetopt", "emulate", "typeset", "declare", "local", "readonly",
+  "export", "integer", "float", "read", "vared", "zstyle", "getopts", "mapfile", "readarray", "zparseopts",
+  "builtin", "command", "exec",
+]);
+/** 代入だけのセグメント `NAME=<リテラル>`。リテラルは空白・クォート・`$`・括弧・glob 等を含まない */
+const LITERAL_ASSIGNMENT_SEGMENT = /^([A-Za-z_][A-Za-z0-9_]*)=([A-Za-z0-9_./~:@%+,=-]*)$/;
+/** 代入で始まる語 (`X=...`) */
+const ASSIGNMENT_WORD = /^[A-Za-z_][A-Za-z0-9_]*=/;
+/** セグメントの区切り (区切り自体をキャプチャする) */
+const LIST_SEPARATOR = /[ \t]*(&&|\|\||;|\||&)[ \t]*/;
 
 /**
  * クォートしない `-C $NAME` / `-C ${NAME}` を、値が 1 個のスカラーとして正規化してよいか。
- * 次を全て満たすときだけ true (配列を作る構文を列挙するのではなく、閉じた規則で判定する)。
- * 1. NAME は大文字・数字・`_` だけ。zsh の特殊配列と tied 配列は全て小文字の名前で、これで除外できる
- * 2. コマンド全体の `$` は、全て `-C` の引数のちょうど `$NAME` / `${NAME}` の参照である (クォートの中も
- *    含め、他の `$` が 1 つでもあれば外れる)。`${(A)R::=...}`・`${(P)x}`・`$(...)`・`$'...'`・`set -A $x` 等
- * 3. NAME が語として現れるのは (大小文字を区別せず、語の境界で区切る)、`-C` の参照と、セグメント先頭の
- *    `NAME=<リテラル>` (ASSIGNMENT_LITERAL) だけ。`typeset -T X R`・`zstyle -a ctx style R`・`read -A R`・
- *    `set -A R`・`R=(...)`・`"R=(x)"` (偽陽性だが安全側) 等
- * 4. `eval`・`source`・`.` コマンド・バッククォートを含まない
- * ユーザ自身の設定 (`~/.zshrc`・シェルスナップショット) で定義された配列・alias・tied 配列は防がない (ADR 0004)。
+ * 配列を作る構文を列挙するのではなく、受け入れる形を閉じた文法で絞る。次を全て満たすときだけ true。
+ * 1. コマンド全体が閉じた字句 (CLOSED_LEXICON) だけからなる。クォートの連結 (`R''R`)・ブレース展開
+ *    (`AB{C,}`)・glob (`set -A ? ...`)・`${(A)R::=...}`・リダイレクト (`read <<< ...`) などで名前や値を
+ *    組み立てる形を除外する
+ * 2. NAME は大文字で始まり大文字・数字・`_` だけ (`_` を除く)。シェルが暗黙に代入する名前 (IMPLICIT_NAMES)
+ *    でない
+ * 3. NAME は、それより前のセグメントで `NAME=<リテラル>` だけのセグメントとして代入され、その直後の区切りが
+ *    `;` か `&&` である (外の環境の値には頼らない)。代入だけのセグメントは NAME への代入に限り、他の変数への
+ *    代入 (`IFS=:` 等) や前置の代入 (`X=1 cmd`) があれば外れる
+ * 4. コマンド全体の `$` は、全て `-C` の引数のちょうど `$NAME` / `${NAME}` である
+ * 5. NAME (大小文字を区別する) が単独の語や `NAME=...` の語として現れるのは、代入の左辺と `-C` の参照だけ
+ *    (代入の右辺は走査しない)。`typeset -T X R`・`zstyle -a ctx style R`・`printf -v R` 等を除外する
+ * 6. FORBIDDEN_WORDS (`eval`・`source`・`.`・`set`・`setopt`・`emulate`・`typeset`・`read` 等) が単独の語として
+ *    どこにも現れない (位置は問わない。予約語の後の `.` 等も含む)
+ * ユーザ自身の設定 (`~/.zshrc`・シェルスナップショット) で定義された配列・alias・オプションは防がない (ADR 0004)。
  */
 export function isStaticScalarDirVariable(command: string, name: string): boolean {
-  if (!UPPERCASE_NAME.test(name)) return false;
-  if (EVAL_LIKE.test(command) || DOT_COMMAND.test(command)) return false;
+  if (!SCALAR_NAME.test(name) || IMPLICIT_NAMES.has(name)) return false;
+  const folded = command.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, "$$$1");
+  if (!CLOSED_LEXICON.test(folded)) return false;
 
-  const dollarCount = command.split("$").length - 1;
-  const references = command.match(
-    new RegExp(`(?<=(?:^|\\s)-C\\s+)(?:\\$${name}(?![A-Za-z0-9_])|\\$\\{${name}\\})(?=$|[\\s;&|])`, "g"),
-  );
-  if ((references?.length ?? 0) !== dollarCount) return false;
+  const dollarCount = folded.split("$").length - 1;
+  const references = folded.match(new RegExp(`(?<=(?:^|[ \\t])-C[ \\t]+)\\$${name}(?=$|[ \\t;&|])`, "g"));
+  if (dollarCount === 0 || (references?.length ?? 0) !== dollarCount) return false;
 
-  for (const m of command.matchAll(new RegExp(`(?<![A-Za-z0-9_])${name}(?![A-Za-z0-9_])`, "gi"))) {
-    const start = m.index;
-    const before = command.slice(0, start);
-    if (before.endsWith("$") || before.endsWith("${")) continue;
-    if (m[0] === name && SEGMENT_START.test(before) && command[start + name.length] === "=") {
-      const literal = /^[^\s;&|]*/.exec(command.slice(start + name.length + 1))?.[0] ?? "";
-      if (ASSIGNMENT_LITERAL.test(literal)) continue;
+  const parts = folded.split(LIST_SEPARATOR);
+  let assigned = false;
+  for (let k = 0; k < parts.length; k += 2) {
+    const segment = parts[k].trim();
+    const words = segment.split(/[ \t]+/).filter((word) => word !== "");
+    if (words.some((word) => FORBIDDEN_WORDS.has(word))) return false;
+    if (words.length > 0 && ASSIGNMENT_WORD.test(words[0])) {
+      if (LITERAL_ASSIGNMENT_SEGMENT.exec(segment)?.[1] !== name) return false;
+      if (parts[k + 1] === ";" || parts[k + 1] === "&&") assigned = true;
+      continue;
     }
-    return false;
+    if (words.includes(`$${name}`) && !assigned) return false;
+    if (words.some((word) => word === name || word.startsWith(`${name}=`))) return false;
   }
   return true;
 }
