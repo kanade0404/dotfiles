@@ -1512,6 +1512,13 @@ describe("統合テスト: settings.json ルールでの判定", () => {
       },
     );
 
+    test.each(['git -C /repo commit -m "ignore .env files"', 'git -C /repo log --grep "id_rsa"'])(
+      "%s は deny にしない",
+      (command) => {
+        expect(judgeCommand(command)).toBe("allow");
+      },
+    );
+
     test("sort /etc/shadow → deny", () => {
       expect(judgeCommand("sort /etc/shadow")).toBe("deny");
     });

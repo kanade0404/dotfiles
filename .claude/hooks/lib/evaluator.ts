@@ -1,5 +1,6 @@
 import {
   checkSensitiveFilePaths,
+  hasSensitivePathUnderGitCDir,
   matchCommand,
   SIDE_EFFECT_FREE_GIT_GLOBAL_OPTS,
   VARIABLE_REFERENCE_SOURCE,
@@ -79,6 +80,7 @@ function hookAllowSegments(command: string, rules: readonly Rule[]): boolean {
     if (GIT_C_GRAMMAR.test(text)) {
       const result = matchCommand(text, allowRules);
       if (result?.decision !== "allow" || result.gitCNormalized !== true || blockedUnquoted(text)) return false;
+      if (hasSensitivePathUnderGitCDir(text)) return false;
       hasGitC = true;
       continue;
     }

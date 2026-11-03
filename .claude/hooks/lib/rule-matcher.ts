@@ -1175,18 +1175,22 @@ function analyzeGitC(command: string, stripped: string): GitCAnalysis {
   }
   const normalized = `git ${stripped.slice(spans[i].start)}`;
   if (dirVariable === undefined) {
-    return { kind: "normalized", normalized, literalDir: dirs[0].replace(/^(["'])(.*)\1$/, "$2") };
+    return { kind: "normalized", normalized, literalDir: normalizeWord(dirs[0]) };
   }
   if (dirVariable.quoted) return { kind: "normalized", normalized };
   const vanishingDirCommand = `${stripped.slice(0, dirSpan.start)}${stripped.slice(dirSpan.end).trimStart()}`;
   return { kind: "normalized", normalized, vanishingDirCommand };
 }
 
-function hasSensitivePathUnderDir(dir: string, normalized: string): boolean {
-  const args = rawTokenSpans(normalized)
+export function hasSensitivePathUnderGitCDir(command: string): boolean {
+  const gitC = analyzeGitC(command, stripShellPrefixes(command));
+  if (gitC.kind !== "normalized" || gitC.literalDir === undefined) return false;
+  const dir = gitC.literalDir;
+  const args = rawTokenSpans(gitC.normalized)
     .slice(2)
-    .map((span) => normalized.slice(span.start, span.end).replace(/^(["'])(.*)\1$/, "$2"))
-    .filter((arg) => !arg.startsWith("-") && !arg.startsWith("/") && !arg.startsWith("~"));
+    .map((span) => normalizeWord(gitC.normalized.slice(span.start, span.end)))
+    .filter((arg) => !arg.startsWith("-") && !arg.startsWith("/") && !arg.startsWith("~"))
+    .flatMap((arg) => [arg, arg.replace(/^[^:/]*:(\.\/)?/, "")]);
   return [`${dir}/`, ...args.map((arg) => `${dir}/${arg}`)].some((path) => checkSensitiveFilePaths(`cat ${path}`));
 }
 
@@ -1238,9 +1242,6 @@ export function matchCommand(
   // evaluator が未定義コマンドを pass-through (allow) するようになったため、
   // ここで早期チェックしないと機密パス操作が hook をすり抜ける。
   if (checkSensitiveFilePaths(command)) {
-    return { decision: "deny", command, pattern: "sensitive-file-path" };
-  }
-  if (gitC.kind === "normalized" && gitC.literalDir !== undefined && hasSensitivePathUnderDir(gitC.literalDir, gitC.normalized)) {
     return { decision: "deny", command, pattern: "sensitive-file-path" };
   }
 
