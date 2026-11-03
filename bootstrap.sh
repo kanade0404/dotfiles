@@ -53,7 +53,7 @@ if brew help trust >/dev/null 2>&1; then
     "$DOTFILES_DIR/nix#darwinConfigurations.$FLAKE_ATTR.config.homebrew" \
     --apply 'hb: let
         qualified = e: builtins.match "[^/]+/[^/]+/[^/]+" e.name != null # user/repo/name
-          && builtins.match "homebrew/.*" e.name == null;
+          && builtins.match "[Hh]omebrew/.*" e.name == null;
         fmt = flag: es: map (e: "${flag} ${e.name}") es;
         # tap は明示 opt-in (== true)、完全修飾名の brews / casks は明示的に false でない限り対象
         # (nix-darwin の既定値が将来 null 等に変わっても漏れないように)。
@@ -68,10 +68,11 @@ if brew help trust >/dev/null 2>&1; then
     # JSON へ記録するだけなので通常は成功する。失敗しても中断せず警告に留める。
     # tap は "user/repo" から tap と推論されるので、種別フラグの無い初期の brew trust でも
     # 通るよう位置引数で渡す。
+    # stdin は here-string の残りの行なので、brew に読ませないよう /dev/null を渡す。
     case "$kind" in
-      --tap) brew trust "$name" ;;
-      *) brew trust "$kind" "$name" ;;
-    esac || warn "brew trust $kind $name が失敗 (tap 未取得の可能性。darwin-rebuild 後に再実行可)"
+      --tap) brew trust "$name" </dev/null ;;
+      *) brew trust "$kind" "$name" </dev/null ;;
+    esac || warn "brew trust $kind $name が失敗 (上の brew のエラーを確認。種別フラグ非対応の古い brew なら brew update 後に再実行)"
   done <<< "$trust_targets"
 else
   warn "この Homebrew では 'brew trust' が無いため tap / formula / cask の trust 事前登録をスキップします。"
