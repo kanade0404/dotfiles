@@ -157,10 +157,16 @@ brews = [
 
 ```nix
 taps = [
-  "ariga/tap"
-  "新しい/tap"  # ← 追加
+  { name = "ariga/tap"; trusted = true; }  # tap 全体を信頼する
+  "新しい/tap"  # ← 追加 (tap 自体は信頼しない)
+];
+
+casks = [
+  { name = "新しい/tap/アプリ"; trusted = true; }  # ← この cask だけを信頼する
 ];
 ```
+
+Homebrew 5.1+ (`HOMEBREW_REQUIRE_TAP_TRUST`) は、非公式 tap の formula / cask を読み込む前に信頼を要求する。未信頼だと `darwin-rebuild switch` が `Refusing to load ... from untrusted tap` で失敗する。`trusted = true` は Brewfile の `trusted: true` として出力され、`brew bundle` が trust に登録する。第三者の tap は tap 全体ではなく、使う formula / cask 単位で信頼する。`bootstrap.sh` は、taps のうち `trusted = true` のものだけを事前に `brew trust` する。
 
 > `homebrew.onActivation.cleanup = "zap"` により、**リストに無いパッケージは自動削除**される。手動で `brew install` したものも次の `darwin-rebuild switch` で消える。
 
