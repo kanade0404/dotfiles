@@ -305,10 +305,9 @@ export function isAssignmentOnly(command: string): boolean {
  * ので、pass-through 経路でも安全性は維持される。
  *
  * `git -C <dir> <sub>` は rule-matcher が `git <sub>` に正規化して判定する (ADR 0004)。
- * `-C` の引数がクォートしない変数参照 (`$R`) のときは、値が 1 個のスカラーだと静的に言えなければ
- * ask にする (rule-matcher の isStaticScalarDirVariable)。zsh では配列の要素ごとに複数語へ展開され、
- * 正規化した `git <sub>` と実際に実行されるサブコマンドがずれるため。判定に使うコマンド全体は
- * rawCommand (無ければサブコマンドを繋いだもの)。
+ * `-C` の引数がクォートしない変数参照 (`$R`) のときは、正規化した形と語が消えた形で deny を
+ * 照合したうえで ask にする。zsh の配列や bash の単語分割で、展開後の語数を静的に決められないため。
+ * `"$R"` とクォートした参照は 1 語に決まるので、リテラルの dir と同じく正規化する。
  *
  * settings.json に `-C` 版ルールを置かない (rule-matcher の analyzeGitC 参照) ため、本体は
  * `git -C` を自力で allow しない。生コマンド (rawCommand) 全体が hookAllowSegments の条件
@@ -325,12 +324,11 @@ export function evaluateCommand(
 ): EvaluationResult {
   const denyReasons: { command: string; pattern: string }[] = [];
   const askReasons: string[] = [];
-  const whole = rawCommand ?? subCommands.join("; ");
 
   for (const sub of subCommands) {
     if (isAssignmentOnly(sub)) continue;
 
-    const result = matchCommand(sub, rules, whole);
+    const result = matchCommand(sub, rules);
     if (result?.decision === "deny") denyReasons.push({ command: sub, pattern: result.pattern });
     else if (result?.decision === "ask") askReasons.push(sub);
   }

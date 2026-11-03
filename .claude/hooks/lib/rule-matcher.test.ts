@@ -7,7 +7,6 @@ import {
   stripShellPrefixes,
   checkDangerousGitFlags,
   extractBashPattern,
-  isStaticScalarDirVariable,
   patternToRegex,
 } from "./rule-matcher.ts";
 import { loadRules } from "./rules.ts";
@@ -1262,144 +1261,36 @@ describe("統合テスト: settings.json ルールでの判定", () => {
     test("git -C /a status && git -C $(echo /b) status は ask", () => {
       expect(judgeCommand("git -C /a status && git -C $(echo /b) status")).toBe("ask");
     });
-    test("R=/b; git -C $R diff --stat は ask にならない", () => {
-      expect(judgeCommand("R=/b; git -C $R diff --stat")).toBe("allow");
-    });
-    // クォートしない参照は、同じコマンド内でリテラルを代入したときだけ正規化して通す
-    test.each([
-      ["R=/b; git -C $R diff --stat", "git -C $R diff --stat", "Bash(git diff *)"],
-      ["R=/b && git -C ${R} log --oneline", "git -C ${R} log --oneline", "Bash(git log *)"],
-    ])("%s の %s は %s で allow", (whole, command, pattern) => {
-      expect(matchCommand(command, settingsRules, whole)).toEqual({
-        decision: "allow",
-        command,
-        pattern,
-        gitCNormalized: true,
-      });
-    });
-    test("代入の無い git -C $R diff --stat は ask", () => {
-      expect(judgeCommand("git -C $R diff --stat")).toBe("ask");
-    });
+    // クォートしない参照は展開後の語数を静的に決められないので、代入の有無によらず ask
+    test.each(["R=/b; git -C $R diff --stat", "git -C $R diff --stat", "R=/b && git -C ${R} log --oneline"])(
+      "%s は ask",
+      (command) => {
+        expect(judgeCommand(command)).toBe("ask");
+      },
+    );
     test("R=/b; git -C $R push --force は deny", () => {
       expect(judgeCommand("R=/b; git -C $R push --force")).toBe("deny");
     });
   });
 
-  // クォート無しの `$EMPTY` が空だと `-C` は次の語を取る。語が消えた形が ask ルールに当たれば ask
-  describe("git -C: 語が消えた形の ask", () => {
-    const askRule = (p: string): Rule => ({ category: "ask", pattern: `Bash(${p})`, regex: patternToRegex(p) });
-    const rules = [...settingsRules, askRule("git push *")];
+  // クォートしない参照は ask にし、正規化した形と語が消えた形で deny を先に照合する
+  describe("git -C: クォートしない変数参照", () => {
+    test.each(["git -C $R diff --stat", "git -C ${R} log --oneline", "git -C $EMPTY status push origin main"])(
+      "%s は ask",
+      (command) => {
+        expect(matchCommand(command, settingsRules)?.decision).toBe("ask");
+      },
+    );
 
+    // クォートした参照は語が消えないので、リテラルの dir と同じく正規化する
     test.each([
-      "git -C $EMPTY status push origin main",
-      "git -C ${EMPTY} diff push origin main",
-    ])("EMPTY= の後の %s は ask", (command) => {
-      expect(matchCommand(command, rules, `EMPTY=; ${command}`)).toEqual({
-        decision: "ask",
-        command,
-        pattern: "Bash(git push *)",
-      });
-    });
-
-    // 語が消えた形が正規化できない (`git -C diff --stat`) ことは ask の理由にしない
-    test.each([
-      ["git -C $R diff --stat", "Bash(git diff *)"],
-      ["git -C $R status", "Bash(git status *)"],
-    ])("R=/x の後の %s は %s で allow", (command, pattern) => {
-      expect(matchCommand(command, rules, `R=/x; ${command}`)).toEqual({
-        decision: "allow",
-        command,
-        pattern,
-        gitCNormalized: true,
-      });
-    });
-
-    // クォートした参照は語が消えない
-    test('git -C "$EMPTY" status push origin main は ask にならない', () => {
-      expect(matchCommand('git -C "$EMPTY" status push origin main', rules)?.decision).toBe("allow");
+      ['git -C "$R" diff --stat', "Bash(git diff *)"],
+      ['git -C "${R}" log --oneline', "Bash(git log *)"],
+    ])("%s は %s で allow", (command, pattern) => {
+      expect(matchCommand(command, settingsRules)).toEqual({ decision: "allow", command, pattern, gitCNormalized: true });
     });
   });
 
-  // クォートしない `-C $NAME` を値が 1 個のスカラーとして正規化してよいかの閉じた規則
-  describe("isStaticScalarDirVariable", () => {
-    test.each([
-      "R=/x; git -C $R diff --stat",
-      "R=/x; git -C $R branch -r",
-      "R=/x; git -C $R diff -R",
-      "R=/src/r/app; git -C $R status",
-      "R=/x && git -C $R status",
-      "R=/x && git -C ${R} log",
-      "R=~/x; git -C $R status",
-      "R=/a/b.c-d_e:f@g%h+i,j=k; git -C $R status",
-      "R=; git -C $R status",
-      "R=/x; git -C $R status; git -C ${R} log",
-      "R=/x; git -C $R log | head -5",
-      "R=/x; R=/y; git -C $R status",
-      "R=/x; echo R-1; git -C $R status",
-    ])("%j は true", (command) => {
-      expect(isStaticScalarDirVariable(command, "R")).toBe(true);
-    });
-
-    test.each([
-      // 規則 1: 閉じた字句の外 (クォート・ブレース・glob・括弧・リダイレクト・`!`・`#`・改行)
-      "set -A R''R . push --force origin; RR=/x; git -C $RR main",
-      "set -A AB{C,} x push; R=/x; git -C $R status",
-      "R=/x; set -A ? x push; git -C $R status",
-      "R=/x; git -C $R commit -m \"fix\"",
-      "R=/x; git -C $R log > /tmp/out",
-      "R=/x; read <<< x; git -C $R status",
-      "R=/x; ! true; git -C $R status",
-      "R=/x; git -C $R status # c",
-      "R=/x\ngit -C $R status",
-      "R=(x push); git -C $R status",
-      "R=/x; git -C $R log `x`",
-      // 規則 2: 名前
-      "_=/x; git -C $_ status",
-      "REPLY=/x; git -C $REPLY status",
-      "IFS=/x; git -C $IFS status",
-      "PWD=/x; git -C $PWD status",
-      // 規則 3: 前のセグメントでのリテラルの代入が無い / 代入が後 / 代入の後の区切りが `;` `&&` 以外
-      "git -C $R status",
-      "git -C $R status; R=/x",
-      "R=/x | git -C $R status",
-      "R=/x || git -C $R status",
-      "R=/x & git -C $R status",
-      "R=/x git -C $R status",
-      // 規則 3: NAME 以外への代入
-      "IFS=:; R=/x:clean:-fdx:.; git -C $R status",
-      "X=/a; R=/x; git -C $R status",
-      // 規則 4: -C の参照以外の `$`
-      "R=/x; echo $R; git -C $R status",
-      "R=/x; git -C $R log $X",
-      "R=/x; S=/y; git -C $S status; git -C $R log",
-      "R=/x; git -C $R:e status",
-      // 規則 5: NAME が代入の左辺と -C の参照以外の語として現れる
-      "R=/x; printf -v R x; git -C $R status",
-      "R=/x; zstyle -a ctx style R; git -C $R main",
-      "R=/x; echo R=y; git -C $R status",
-      // 規則 6: FORBIDDEN_WORDS が単独の語として現れる
-      "setopt shwordsplit; IFS=:; R=/x:clean:-fdx:.; git -C $R status",
-      "R=/x; setopt shwordsplit; git -C $R status",
-      "R=/x; emulate sh; git -C $R status",
-      "R=/x; typeset -T X R; git -C $R main",
-      "R=/x; if . ./env.sh; then git -C $R status; fi",
-      "R=/x; time . ./env.sh; git -C $R status",
-      "R=/x; . ./env.sh; git -C $R status",
-      "R=/x; eval x; git -C $R status",
-      "R=/x; source ./env.sh; git -C $R status",
-      "R=/x; set -A R x push; git -C $R status",
-      "R=/x; read -A R; git -C $R status",
-      "R=/x; builtin echo; git -C $R status",
-      "R=/x; git -C $R add .",
-    ])("%j は false", (command) => {
-      expect(isStaticScalarDirVariable(command, command.includes("$RR") ? "RR" : command.match(/\$\{?([A-Za-z_][A-Za-z0-9_]*)/)?.[1] ?? "R")).toBe(false);
-    });
-
-    // 規則 2: 大文字で始まり大文字・数字・`_` だけの名前に限る (zsh の特殊配列・tied 配列は全て小文字)
-    test.each(["argv", "cdpath", "path", "fpath", "pipestatus", "dir", "Repo", "_", "_R"])("名前 %j は false", (name) => {
-      expect(isStaticScalarDirVariable(`${name}=/x; git -C $${name} status`, name)).toBe(false);
-    });
-  });
 
   describe("allow 系: パイプ後段フィルタ", () => {
     test("head -5", () => expect(judgeCommand("head -5")).toBe("allow"));

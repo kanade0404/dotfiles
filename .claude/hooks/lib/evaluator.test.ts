@@ -299,9 +299,9 @@ describe("evaluateCommand - git -C の hook allow (hookApproved)", () => {
     });
   });
 
-  // -C の引数の変数参照。hook allow はダブルクォートした `"$R"` / `"${R}"` だけ (値によらず 1 語)。
-  // クォートしない参照は zsh の配列・修飾子や bash の単語分割で語数が静的に決まらないので hook allow
-  // しない。同じコマンド内でリテラルを代入した場合だけ正規化し、ask にもしない (pass-through)。
+  // -C の引数の変数参照。正規化して hook allow の対象にするのは、ダブルクォートした `"$R"` / `"${R}"`
+  // だけ (値によらず 1 語)。クォートしない参照は zsh の配列・修飾子や bash の単語分割で語数が静的に
+  // 決まらないので、正規化した形と語が消えた形で deny を照合したうえで ask にする。
   describe("-C の変数参照", () => {
     test.each([
       'git -C "$R" diff --stat',
@@ -314,10 +314,6 @@ describe("evaluateCommand - git -C の hook allow (hookApproved)", () => {
     // 代入のセグメントがあれば hook allow しない。代入は export 済みの変数を書き換えて、後続の
     // セグメントや git 自身の動作を変えうる (hook からは Bash tool のシェルの export を確かめきれない)
     test.each([
-      "R=/x; git -C $R diff --stat",
-      "R=/x; git -C ${R} status",
-      "R=/x && git -C $R --no-pager log",
-      "R=/x; git -C /a status && git -C $R diff",
       'R=/x; git -C "$R" diff --stat',
       "DOCKER_HOST=ssh://x; git -C \"$DOCKER_HOST\" --no-pager log; docker build .",
       "TFE_ADDRESS=https://evil.example; git -C . status && make plan",
@@ -327,11 +323,31 @@ describe("evaluateCommand - git -C の hook allow (hookApproved)", () => {
       expect(evaluate(command)).toEqual(passThrough);
     });
 
-    // 語全体が変数参照 1 個でない形 (zsh の修飾子・添字・連結・既定値付き・特殊パラメータ) は
-    // 正規化せず ask
+    // クォートしない参照は、代入の有無や名前によらず ask
     test.each([
+      "git -C $R status",
+      "git -C $R diff --stat",
+      "git -C ${R} status",
+      "R=/x; git -C $R diff --stat",
+      "R=/x; git -C $R branch -r",
+      "git -C /a status && git -C $R diff",
+      // 指摘で挙がった、配列や語分割で実行内容がずれる形
+      "set -- . push --force origin; git -C $argv main",
+      "CDPATH=.:push:--force:origin; git -C $cdpath main",
+      "a=(x push --force origin main); git -C $a status",
+      "set -A R''R . push --force origin; git -C $RR main",
+      "set -A AB{C,} x push; git -C $ABC status",
+      ": ${(A)R::=. push --force origin}; git -C $R main",
+      "setopt shwordsplit; IFS=:; R=/x:clean:-fdx:.; git -C $R status",
+      "R=a:push:--force; printf -vIFS %s :; git -C $R status",
+      "if . ./env.sh; then git -C $R status; fi",
+      "echo \"/x clean -fdx .\"; git -C $_ status",
+      "read <<< \"/x clean -fdx .\"; git -C $REPLY status",
+      "typeset -T X R; X=.:push; git -C $R main",
+      "eval 'R=(x push)'; git -C $R status",
+      // 語全体が変数参照 1 個でない形 (zsh の修飾子・添字・連結・既定値付き・特殊パラメータ)
       "git -C $R:e status",
-      "git -C $R:t status",
+      "git -C $R:e status push --force origin main",
       "git -C $R[1] status",
       "git -C $R/sub status",
       'git -C "${R}/sub" log --oneline',
@@ -342,74 +358,23 @@ describe("evaluateCommand - git -C の hook allow (hookApproved)", () => {
       expect(evaluate(command).decision).toBe("ask");
     });
 
-    // zsh では R=/x のとき `$R:e` は空になり語ごと消え、`git -C status push --force origin main`
-    // (status ディレクトリでの push --force) として実行される
-    test("git -C $R:e status push --force origin main は ask", () => {
-      expect(evaluate("git -C $R:e status push --force origin main").decision).toBe("ask");
-    });
-
-    // クォートしない `-C $NAME` は、値が 1 個のスカラーだと静的に言える場合 (rule-matcher の
-    // isStaticScalarDirVariable) だけ正規化し、それ以外は ask。zsh では配列の参照は要素ごとに
-    // 複数語へ展開される (`git -C x push --force origin main status` として実行される)
-    test.each([
-      // 代入が無い (外の環境の値に頼る)
-      "git -C $R status",
-      "git -C $R diff --stat",
-      "git -C ${R} status",
-      "git -C /a status && git -C $R diff",
-      // 特殊配列・tied 配列 (小文字の名前)
-      "set -- . push --force origin; git -C $argv main",
-      "CDPATH=.:push:--force:origin; git -C $cdpath main",
-      "git -C $dir status",
-      "a=(x push --force origin main); git -C $a status",
-      // クォートの連結・ブレース展開・glob で名前を組み立てる
-      "set -A R''R . push --force origin; git -C $RR main",
-      "set -A AB{C,} x push; git -C $ABC status",
-      "set -A ? /x clean -fdx .; git -C $R status",
-      // -C の参照以外の `$`
-      ": ${(A)R::=. push --force origin}; git -C $R main",
-      "printf -v x R; set -A $x . push; git -C $R status",
-      // 語分割を有効にする設定
-      "setopt shwordsplit; IFS=:; R=/x:clean:-fdx:.; git -C $R status",
-      "IFS=:; R=/x:clean:-fdx:.; git -C $R status",
-      // 予約語などの後の `.`
-      "if . ./env.sh; then git -C $R status; fi",
-      "! . ./env.sh; git -C $R status",
-      "time . ./env.sh; git -C $R status",
-      // シェルが暗黙に代入する変数
-      "echo \"/x clean -fdx .\"; git -C $_ status",
-      "read <<< \"/x clean -fdx .\"; git -C $REPLY status",
-      // NAME が代入の左辺と -C の参照以外に現れる
-      "typeset -T X R; X=.:push; git -C $R main",
-      "zstyle -a ctx style R; git -C $R main",
-      "R=(x push --force origin main) && git -C ${R} status",
-      "read -rA R; git -C $R status",
-      // eval / source / `.` / バッククォート
-      "eval 'R=(x push)'; git -C $R status",
-      ". ./env.sh; git -C $R status",
-    ])("%j は ask", (command) => {
-      expect(evaluate(command).decision).toBe("ask");
-    });
-
     test.each([
       // クォートした参照は zsh の配列でも要素を空白で繋いだ 1 語になる
       'a=(x push); git -C "$a" status',
       'git -C "$R" diff --stat',
-      "R=/x; git -C $R diff --stat",
-      "R=/x; git -C $R branch -r",
-      "R=/x; git -C $R diff -R",
-      "R=/src/r/app; git -C $R status",
     ])("%j は ask にしない", (command) => {
       expect(evaluate(command).decision).toBe("allow");
     });
 
-    // ask にする場合も、正規化後の deny は効く
-    test.each(["git -C $dir push --force", "git -C $R push --force", "git -C $R reset --hard"])(
-      "%j は deny",
-      (command) => {
-        expect(evaluate(command).decision).toBe("deny");
-      },
-    );
+    // ask にする場合も、正規化した形と語が消えた形の deny は効く
+    test.each([
+      "git -C $dir push --force",
+      "git -C $R push --force",
+      "git -C $R reset --hard",
+      "git -C $EMPTY status rm -r .",
+    ])("%j は deny", (command) => {
+      expect(evaluate(command).decision).toBe("deny");
+    });
   });
 
   // 複合コマンドは、生コマンド全体が「単純コマンド・代入を ; && || | で繋いだもの」の正の文法に
@@ -615,7 +580,7 @@ describe("evaluateCommand - git -C の hook allow (hookApproved)", () => {
     "FOO=1 git -C . status",
     "git -C . log $(echo HEAD)",
     "PATH=/tmp/evil; git -C . status",
-    "R=/x; git -C $R diff --stat",
+    'R=/x; git -C "$R" diff --stat',
   ])("%j は allow だが hookApproved ではない", (command) => {
     expect(evaluate(command)).toEqual({ decision: "allow", hookApproved: false });
   });
