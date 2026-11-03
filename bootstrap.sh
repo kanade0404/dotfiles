@@ -39,23 +39,32 @@ eval "$(/opt/homebrew/bin/brew shellenv)"
 # ---- サードパーティ tap の信頼 (Homebrew 5.1+) ----
 # 新しい Homebrew は非公式 tap の formula/cask を読み込む前に明示的な信頼を要求する
 # (HOMEBREW_REQUIRE_TAP_TRUST)。未信頼だと darwin-rebuild の brew bundle が
-# "Refusing to load formula ... from untrusted tap" で失敗する。信頼対象は
-# nix/modules/homebrew.nix の taps のうち trusted = true のものを nix eval で動的取得し、
-# 二重管理を避ける。cask/formula 単位の trusted は darwin-rebuild の brew bundle が
-# 自分で trust.json に登録するので、ここでは扱わない (tap 全体を信頼してしまうため)。
+# "Refusing to load formula ... from untrusted tap" で失敗する。
+# Brewfile の trusted: true は brew bundle 自身も登録するが、Homebrew 5.1.x には
+# 読み込みより前に登録しない経路があった (Homebrew/brew#22631) ため、ここで事前に登録する。
+# 対象は nix/modules/homebrew.nix の trusted = true な tap と、完全修飾名 (tap/name) の
+# brews / casks (nix-darwin は casks の trusted を既定 true にするが、公式 tap の短縮名は
+# trust 不要なので除く)。nix eval で動的取得して二重管理を避ける。
 if brew help trust >/dev/null 2>&1; then
-  log "サードパーティ tap を信頼登録"
-  taps=$(nix eval --raw \
-    "$DOTFILES_DIR/nix#darwinConfigurations.$FLAKE_ATTR.config.homebrew.taps" \
-    --apply 'ts: builtins.concatStringsSep "\n" (map (t: t.name) (builtins.filter (t: t.trusted == true) ts))') \
-    || die "homebrew.nix の taps 取得に失敗しました (nix eval)"
-  while IFS= read -r tap; do
-    [ -n "$tap" ] || continue
-    # darwin-rebuild より前に呼ぶため tap 未取得で失敗しうるが、trust は名前を
+  log "サードパーティ tap / formula / cask を信頼登録"
+  # shellcheck disable=SC2016 # ${flag} などは Nix の補間でシェル展開しない
+  trust_targets=$(nix eval --raw \
+    "$DOTFILES_DIR/nix#darwinConfigurations.$FLAKE_ATTR.config.homebrew" \
+    --apply 'hb: let
+        qualified = e: builtins.length (builtins.split "/" e.name) == 5; # "a/b/c" -> 2 区切り
+        pick = flag: es: map (e: "${flag} ${e.name}") (builtins.filter (e: e.trusted) es);
+      in builtins.concatStringsSep "\n" (
+        pick "--tap" hb.taps
+        ++ pick "--formula" (builtins.filter qualified hb.brews)
+        ++ pick "--cask" (builtins.filter qualified hb.casks))') \
+    || die "homebrew.nix の trust 対象取得に失敗しました (nix eval)"
+  while read -r kind name; do
+    [ -n "${name:-}" ] || continue
+    # darwin-rebuild より前に呼ぶため tap 未取得でも、種別を明示すれば trust は名前を
     # JSON へ記録するだけなので通常は成功する。失敗しても中断せず警告に留める。
-    brew trust "$tap" \
-      || warn "brew trust $tap が失敗 (tap 未取得の可能性。darwin-rebuild 後に再実行可)"
-  done <<< "$taps"
+    brew trust "$kind" "$name" \
+      || warn "brew trust $kind $name が失敗 (tap 未取得の可能性。darwin-rebuild 後に再実行可)"
+  done <<< "$trust_targets"
 else
   warn "この Homebrew では 'brew trust' が無いため tap trust 登録をスキップします。"
   warn "Homebrew 5.1+ では後続の darwin-rebuild が untrusted tap エラーで失敗する可能性があります。"

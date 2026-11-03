@@ -63,15 +63,14 @@
       # mutableTaps = false で tap を flake.lock に固定すればこれは防げるが、Homebrew の
       # 管理方式ごと移行することになるので、今回は採らずにこのリスクを受け入れる。
       # 更新: daemon (brews の "herdr", homebrew-core) とは配布元もリリース周期も別で、
-      # cask に daemon のバージョン制約 (depends_on) は無い。2026-11 時点の cask は
-      # auto_updates を宣言していないので upgrade = true で GUI も上がる (宣言されると
-      # --greedy なしでは上がらなくなる。確認は
-      # `brew info --cask --json=v2 penso/tap/herdr-gpui | jq '.casks[0].auto_updates'`)。
+      # cask に daemon のバージョン制約 (depends_on) は無い。アプリ内 updater があるので
+      # 作者が将来 auto_updates を宣言しても upgrade = true で GUI が上がり続けるよう
+      # greedy = true にしておく。それでも daemon と同時に上がるとは限らないので、
       # GUI が daemon に繋がらなくなったら、まず `herdr --version` と GUI のバージョンの
       # 組み合わせを疑う。アプリ内 updater も `brew upgrade --cask` を実行するが、ここでは
       # cask 名だけを宣言してバージョンを pin していないので、darwin-rebuild の宣言とは
       # 食い違わない。
-      { name = "penso/tap/herdr-gpui"; trusted = true; }
+      { name = "penso/tap/herdr-gpui"; greedy = true; trusted = true; }
       "postman"
       "raycast"
       "secretive"
