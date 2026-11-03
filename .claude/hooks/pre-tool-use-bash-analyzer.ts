@@ -103,7 +103,7 @@ function main(): void {
           // Codex は bare な permissionDecision:"allow" を unsupported として hook 失敗扱いにするので、それ以外は従来どおり
           // 何も返さず終了し (exit 0 + 無出力 = pass-through)、本体の判定に委ねる。
           if (shouldEmitAllow(result, parseHookClient(process.argv), hookInput.permission_mode)) {
-            respond("allow", "git -C <dir> を正規化し、~/.claude/settings.json の allow ルールに一致");
+            respond("allow", "git -C を含む git だけのコマンドで、全セグメントが ~/.claude/settings.json の allow ルールに一致");
           }
           process.exit(0);
       }

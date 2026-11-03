@@ -976,7 +976,7 @@ export function checkDangerousGitFlags(command: string): boolean {
  */
 const SENSITIVE_PATH_PATTERNS: readonly RegExp[] = [
   // SSH鍵・設定
-  /[/~:]\.ssh\//,
+  /(^|[\s/~:])\.ssh\//,
   /id_(rsa|ed25519|ecdsa|dsa)/,
   /authorized_keys/,
   /known_hosts/,
@@ -1051,6 +1051,7 @@ type GitCAnalysis =
   | {
       readonly kind: "normalized";
       readonly normalized: string;
+      readonly literalDir?: string;
       readonly vanishingDirCommand?: string;
     };
 
@@ -1173,9 +1174,20 @@ function analyzeGitC(command: string, stripped: string): GitCAnalysis {
     return { kind: "none" };
   }
   const normalized = `git ${stripped.slice(spans[i].start)}`;
-  if (dirVariable === undefined || dirVariable.quoted) return { kind: "normalized", normalized };
+  if (dirVariable === undefined) {
+    return { kind: "normalized", normalized, literalDir: dirs[0].replace(/^(["'])(.*)\1$/, "$2") };
+  }
+  if (dirVariable.quoted) return { kind: "normalized", normalized };
   const vanishingDirCommand = `${stripped.slice(0, dirSpan.start)}${stripped.slice(dirSpan.end).trimStart()}`;
   return { kind: "normalized", normalized, vanishingDirCommand };
+}
+
+function hasSensitivePathUnderDir(dir: string, normalized: string): boolean {
+  const args = rawTokenSpans(normalized)
+    .slice(2)
+    .map((span) => normalized.slice(span.start, span.end).replace(/^(["'])(.*)\1$/, "$2"))
+    .filter((arg) => !arg.startsWith("-") && !arg.startsWith("/") && !arg.startsWith("~"));
+  return [`${dir}/`, ...args.map((arg) => `${dir}/${arg}`)].some((path) => checkSensitiveFilePaths(`cat ${path}`));
 }
 
 /**
@@ -1226,6 +1238,9 @@ export function matchCommand(
   // evaluator が未定義コマンドを pass-through (allow) するようになったため、
   // ここで早期チェックしないと機密パス操作が hook をすり抜ける。
   if (checkSensitiveFilePaths(command)) {
+    return { decision: "deny", command, pattern: "sensitive-file-path" };
+  }
+  if (gitC.kind === "normalized" && gitC.literalDir !== undefined && hasSensitivePathUnderDir(gitC.literalDir, gitC.normalized)) {
     return { decision: "deny", command, pattern: "sensitive-file-path" };
   }
 

@@ -33,9 +33,8 @@ const GIT_C_GRAMMAR = new RegExp(
   `^git(?: +${GLOBAL_OPT})* +-C +${DIR_WORD}(?: +${GLOBAL_OPT})* +${SUBCOMMAND}(?: +${WORD})*$`,
 );
 const PLAIN_GIT_GRAMMAR = new RegExp(`^git +${SUBCOMMAND}(?: +${WORD})*$`);
-const SEPARATOR = " *(?:;|&&|\\|\\||\\|) *";
-const SEGMENT = `git(?: +${DIR_WORD})*`;
-const LIST_GRAMMAR = new RegExp(`^${SEGMENT}(?:${SEPARATOR}${SEGMENT})*$`);
+const SEPARATOR = / *(?:;|&&|\|\||\|) */;
+const OUTPUT_OPTION = /(^| )["']?--output/;
 
 /**
  * `Bash(...)` の中身が `git <リテラルのサブコマンド>` で始まり、サブコマンドの直後が
@@ -63,7 +62,7 @@ function rulesForHookAllow(rules: readonly Rule[]): readonly Rule[] {
 }
 
 function hookAllowSegments(command: string, rules: readonly Rule[]): boolean {
-  if (!LIST_GRAMMAR.test(command)) return false;
+  if (OUTPUT_OPTION.test(command)) return false;
   const allowRules = rulesForHookAllow(rules);
   const blockingRules = rules.filter((rule) => rule.category !== "allow");
   const denyRules = blockingRules.filter((rule) => rule.category === "deny");
@@ -76,7 +75,7 @@ function hookAllowSegments(command: string, rules: readonly Rule[]): boolean {
   };
   let hasGitC = false;
 
-  for (const text of command.split(new RegExp(SEPARATOR))) {
+  for (const text of command.split(SEPARATOR)) {
     if (GIT_C_GRAMMAR.test(text)) {
       const result = matchCommand(text, allowRules);
       if (result?.decision !== "allow" || result.gitCNormalized !== true || blockedUnquoted(text)) return false;
