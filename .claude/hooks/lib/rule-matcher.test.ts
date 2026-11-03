@@ -1142,7 +1142,6 @@ describe("統合テスト: settings.json ルールでの判定", () => {
       "git -C $(echo /x) reset --hard",
       'git -C "$HOME/x" status',
       "git -C `pwd` status",
-      "git -C $EMPTY status rm -r .",
       "git -C $(echo status >/dev/null; echo /other) rm -r .",
       "git -C {x,rm} status",
       "git -C * status",
@@ -1227,6 +1226,85 @@ describe("統合テスト: settings.json ルールでの判定", () => {
       "git --namespace -C /r status",
     ])("%s は null", (command) => {
       expect(matchCommand(command, settingsRules)).toBeNull();
+    });
+  });
+
+  describe("git -C: 引数が単純な変数参照のときは deny だけ照合する", () => {
+    test.each([
+      "git -C $R diff --stat",
+      "git -C ${R} diff --stat",
+      'git -C "$R" log',
+      'git -C "${R}" log',
+      "git -C $R status",
+      "git -C $R x status",
+    ])("%s は ask にならず null", (command) => {
+      expect(matchCommand(command, settingsRules)).toBeNull();
+    });
+
+    test("R=/x; git -C $R diff --stat は ask にならない", () => {
+      expect(judgeCommand("R=/x; git -C $R diff --stat")).toBe("allow");
+    });
+
+    test.each([
+      ["git -C $R push --force", "Bash(git push --force *)"],
+      ['git -C "$R" reset --hard', "Bash(git reset *)"],
+      ["git -C ${R} rebase main", "Bash(git rebase *)"],
+      ["git -C $R reset --hard", "Bash(git reset *)"],
+      ["git -C $R stash", "dangerous-git-flags"],
+      ["git -C $R branch -D x", "dangerous-git-flags"],
+      ["git -C $R --no-pager reset --hard", "Bash(git reset *)"],
+    ])("%s は %s で deny", (command, pattern) => {
+      expect(matchCommand(command, settingsRules)).toEqual({ decision: "deny", command, pattern });
+    });
+
+    test.each([
+      ["git -C $R x push --force", "Bash(git push --force *)"],
+      ['git -C "$R" x reset --hard', "Bash(git reset *)"],
+      ["git -C $R status rm -r .", "dangerous-git-flags"],
+      ["git -C $R x rebase main", "Bash(git rebase *)"],
+    ])("変数が空で語が消えた形 %s は %s で deny", (command, pattern) => {
+      expect(matchCommand(command, settingsRules)).toEqual({ decision: "deny", command, pattern });
+    });
+
+    test("ask ルールは広い allow より先に、取り除いた形と語が消えた形にも当てる", () => {
+      const rules: Rule[] = [
+        { category: "allow", pattern: "Bash(git *)", regex: patternToRegex("git *") },
+        { category: "ask", pattern: "Bash(git push *)", regex: patternToRegex("git push *") },
+      ];
+      for (const command of ["git -C $R push origin main", "git -C $R x push origin main"]) {
+        expect(matchCommand(command, rules)).toEqual({
+          decision: "ask",
+          command,
+          pattern: "Bash(git push *)",
+        });
+      }
+    });
+
+    test("変数が空で語が消えた形の機密パスは deny", () => {
+      expect(matchCommand("git -C $R /etc/shadow log", settingsRules)).toEqual({
+        decision: "deny",
+        command: "git -C $R /etc/shadow log",
+        pattern: "sensitive-file-path",
+      });
+    });
+
+    test.each([
+      "git -C $(pwd) status",
+      "git -C $R:e status",
+      "git -C ${R:-.} status",
+      "git -C $R/sub status",
+      'git -C "$R/sub" status',
+      "git -C `pwd` status",
+      "git -C $R* status",
+      "git -C {$R,x} status",
+      "git -C $R $(echo x) status",
+      "git -C $R `pwd` status",
+      "git -C $R -C /x status",
+      "git -C $R -c x=y status",
+      "git -C $R --namespace ns status",
+      "GIT_DIR=/y/.git git -C $R status",
+    ])("%s は ask のまま", (command) => {
+      expect(matchCommand(command, settingsRules)?.decision).toBe("ask");
     });
   });
 

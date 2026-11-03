@@ -1048,7 +1048,8 @@ function normalizeCommandName(command: string): string {
 type GitCAnalysis =
   | { readonly kind: "none" }
   | { readonly kind: "ask"; readonly reason: string }
-  | { readonly kind: "normalized"; readonly normalized: string };
+  | { readonly kind: "normalized"; readonly normalized: string }
+  | { readonly kind: "varDir"; readonly probes: readonly string[] };
 
 /**
  * `-C` の引数に含まれるとシェル展開になる文字。展開後の語数が変わると実サブコマンドの
@@ -1063,6 +1064,8 @@ type GitCAnalysis =
  * ワイルドカードを伴わないので、EXTENDED_GLOB でも複数語には展開されない)。
  */
 const SHELL_EXPANSION_IN_WORD = /`|\$(?!')|[*?[{]/;
+
+const SIMPLE_VARIABLE_WORD = /^(?:\$[A-Za-z_]\w*|\$\{[A-Za-z_]\w*\}|"\$[A-Za-z_]\w*"|"\$\{[A-Za-z_]\w*\}")$/;
 
 /**
  * analyzeGitC が値トークンを 1 つ読み飛ばす global option。findGitSubcommand と同じ
@@ -1112,12 +1115,14 @@ function analyzeGitC(command: string, stripped: string): GitCAnalysis {
   if (spans.length === 0 || commandBaseName(raw(0)) !== "git") return { kind: "none" };
 
   const dirs: string[] = [];
+  const dirSpans: number[] = [];
   let otherOption: string | null = null;
   let i = 1;
   while (i < spans.length) {
     const word = normalizeWord(raw(i));
     if (word === "-C" && i + 1 < spans.length) {
       dirs.push(raw(i + 1));
+      dirSpans.push(i + 1);
       i += 2;
       continue;
     }
@@ -1130,7 +1135,8 @@ function analyzeGitC(command: string, stripped: string): GitCAnalysis {
   }
   if (dirs.length === 0) return { kind: "none" };
 
-  if (dirs.some((dir) => SHELL_EXPANSION_IN_WORD.test(dir))) {
+  const expanding = dirs.filter((dir) => SHELL_EXPANSION_IN_WORD.test(dir));
+  if (expanding.some((dir) => !SIMPLE_VARIABLE_WORD.test(dir))) {
     return { kind: "ask", reason: "-C の引数にシェル展開を含む" };
   }
   if (dirs.length > 1) return { kind: "ask", reason: "-C を複数指定している" };
@@ -1141,7 +1147,22 @@ function analyzeGitC(command: string, stripped: string): GitCAnalysis {
     return { kind: "ask", reason: "-C と環境変数によるリポジトリ付け替えを併用している" };
   }
   if (i >= spans.length) return { kind: "none" };
-  return { kind: "normalized", normalized: `git ${stripped.slice(spans[i].start)}` };
+  const normalized = `git ${stripped.slice(spans[i].start)}`;
+  if (expanding.length === 0) return { kind: "normalized", normalized };
+
+  const varIndex = dirSpans[0];
+  const next = varIndex + 1 < spans.length ? raw(varIndex + 1) : "";
+  if (SHELL_EXPANSION_IN_WORD.test(next) && !SIMPLE_VARIABLE_WORD.test(next)) {
+    return { kind: "ask", reason: "-C の引数にシェル展開を含む" };
+  }
+  const dropped =
+    stripped.slice(0, spans[varIndex].start) +
+    (varIndex + 1 < spans.length ? stripped.slice(spans[varIndex + 1].start) : "");
+  const wordless = analyzeGitC(command, dropped);
+  const probes = [normalized, dropped];
+  if (wordless.kind === "normalized") probes.push(wordless.normalized);
+  if (wordless.kind === "varDir") probes.push(...wordless.probes);
+  return { kind: "varDir", probes };
 }
 
 /**
@@ -1169,7 +1190,9 @@ export function matchCommand(
 
   // `git -C <dir> <sub> ...` は `git <sub> ...` に正規化した候補でも deny を照合する
   const gitC = analyzeGitC(command, stripped);
-  const denyCandidates = gitC.kind === "normalized" ? [...candidates, gitC.normalized] : candidates;
+  const probes = gitC.kind === "varDir" ? gitC.probes : [];
+  const denyCandidates =
+    gitC.kind === "normalized" ? [...candidates, gitC.normalized] : [...candidates, ...probes];
 
   // クォート内を除去した候補も用意（コミットメッセージ等の文字列リテラル内の
   // 機密パス名がワイルドカードパターンに誤マッチしないため）
@@ -1184,20 +1207,29 @@ export function matchCommand(
   }
 
   // 危険 git フラグの位置非依存チェック
-  if (checkDangerousGitFlags(command)) {
+  if ([command, ...probes].some(checkDangerousGitFlags)) {
     return { decision: "deny", command, pattern: "dangerous-git-flags" };
   }
 
   // 機密ファイルパスは allow ルールの有無に関わらず deny に昇格。
   // evaluator が未定義コマンドを pass-through (allow) するようになったため、
   // ここで早期チェックしないと機密パス操作が hook をすり抜ける。
-  if (checkSensitiveFilePaths(command)) {
+  if ([command, ...probes].some(checkSensitiveFilePaths)) {
     return { decision: "deny", command, pattern: "sensitive-file-path" };
   }
 
   // `git -C` 形だが正規化できない (展開を含む dir / 付け替えの併用等)
   if (gitC.kind === "ask") {
     return { decision: "ask", command, pattern: `git -C (${gitC.reason})` };
+  }
+
+  if (gitC.kind === "varDir") {
+    for (const rule of rules) {
+      if (rule.category !== "ask") continue;
+      if ([...candidates, ...probes].some((cmd) => rule.regex.test(cmd))) {
+        return { decision: "ask", command, pattern: rule.pattern };
+      }
+    }
   }
 
   // 正規化した `git <sub> ...` が非 -C allow ルールにサブコマンド位置で一致した。
