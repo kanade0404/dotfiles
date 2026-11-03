@@ -39,8 +39,8 @@ const HOOK_ALLOW_PERMISSION_MODES: ReadonlySet<string> = new Set(["default", "ac
  * ルールは hook の allow 後も評価されるが、プレフィックス一致なので `git -C <dir> ...`
  * には一致しない。そのため -C 版の deny / ask は hook (rule-matcher の matchCommand) が
  * 正規化した `git <sub> ...` に deny > ask > allow の順で当て、ask に一致すれば
- * allow ではなく ask を返す。対象は evaluator が hookApproved を立てたコマンド
- * (hookAllowSegments。ADR 0004 参照) だけで、それ以外の allow は無出力 (pass-through) で
+ * allow ではなく ask を返す。対象は evaluator が hookApproved を立てた `git -C`
+ * 正規化済みコマンドだけで、それ以外の allow は従来どおり無出力 (pass-through) で
  * 本体の判定に委ねる。
  *
  * permissionMode は hook 入力 JSON の `permission_mode`

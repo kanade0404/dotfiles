@@ -100,12 +100,10 @@ function main(): void {
           respond("ask", result.reason);
           break;
         case "allow":
-          // hookApproved で、Claude Code から起動され、permission_mode が default / acceptEdits のときだけ
-          // allow を返す (evaluator.ts の hookAllowSegments、hook-response.ts の shouldEmitAllow 参照)。Codex は bare な
-          // permissionDecision:"allow" を unsupported として hook 失敗扱いにするので、それ以外は従来どおり
+          // Codex は bare な permissionDecision:"allow" を unsupported として hook 失敗扱いにするので、それ以外は従来どおり
           // 何も返さず終了し (exit 0 + 無出力 = pass-through)、本体の判定に委ねる。
           if (shouldEmitAllow(result, parseHookClient(process.argv), hookInput.permission_mode)) {
-            respond("allow", "git -C <dir> を git <sub> に正規化し、全セグメントが ~/.claude/settings.json の allow ルールに一致");
+            respond("allow", "git -C <dir> を正規化し、~/.claude/settings.json の allow ルールに一致");
           }
           process.exit(0);
       }

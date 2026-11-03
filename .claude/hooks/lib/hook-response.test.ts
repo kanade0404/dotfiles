@@ -166,7 +166,6 @@ describe("pre-tool-use-bash-analyzer (プロセス)", () => {
     expect(JSON.parse(r.stdout).hookSpecificOutput.permissionDecision).toBe("deny");
   });
 
-  // hook allow の条件は evaluator.ts の hookAllowSegments (ADR 0004 参照)
   test.each([
     "git -C sub status",
     "git -C sub log --oneline -5",
@@ -178,12 +177,11 @@ describe("pre-tool-use-bash-analyzer (プロセス)", () => {
     "git -C ../wt status",
     'git -C "$R" diff --stat',
     "git -C sub status && git -C sub diff",
-    "git -C sub log --oneline | head -5",
+    "git -C . status && git log",
   ])("Claude Code: %j は allow を返す", (command) => {
     expect(env.decisionOf(command)).toBe("allow");
   });
 
-  // 代入は hook allow の対象外なので pass-through
   test.each([
     'R=/Users/kanade0404/orca/workspaces/skills/pinniped; git -C "$R" diff --stat',
     "/usr/bin/python3 - <<'EOF'\nprint(1)\nEOF\nR=/Users/kanade0404/orca/workspaces/skills/pinniped; git -C \"$R\" diff --stat",
@@ -191,7 +189,6 @@ describe("pre-tool-use-bash-analyzer (プロセス)", () => {
     expect(env.decisionOf(command)).toBeNull();
   });
 
-  // クォートしない $R は展開後の語数を静的に決められないので ask (deny は先に照合する)
   test.each([
     "git -C $R diff --stat",
     "R=/Users/kanade0404/orca/workspaces/skills/pinniped; git -C $R diff --stat",
@@ -207,7 +204,6 @@ describe("pre-tool-use-bash-analyzer (プロセス)", () => {
     },
   );
 
-  // Codex には allow を返さない。クォートした -C の変数参照は ask ではなく pass-through になる
   test.each([
     'git -C "$R" diff --stat',
     'R=/x; git -C "$R" diff --stat',
@@ -260,7 +256,6 @@ describe("pre-tool-use-bash-analyzer (プロセス)", () => {
     expect(env.decisionOf(command)).not.toBe("allow");
   });
 
-  // -C の対象が cwd と別のリポジトリでも allow を返す (ADR 0004 参照)
   test.each([
     ["無関係なリポジトリ", (f: GitFixture) => `git -C ${f.other} status`],
     ["submodule 相当", () => "git -C sm status"],

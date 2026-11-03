@@ -82,18 +82,6 @@ const ALLOWED_WORKTREE_CONFIG: Readonly<Record<string, ReadonlySet<string>>> = {
   index: new Set(["sparse"]),
 };
 
-/**
- * gitdir の config.worktree が無いか、sparse-checkout の真偽値設定だけか。
- *
- * extensions.worktreeConfig が有効だと git は gitdir の config.worktree も読むので、
- * core.fsmonitor / core.hooksPath / core.sshCommand / core.pager / alias.* / diff.external /
- * include 等、実行やファイル参照につながるキーを書かれうる。キーの denylist は網羅できないので、
- * sparse-checkout が書く `[core] sparseCheckout*` / `[index] sparse` の真偽値だけを許す
- * allowlist にし、それ以外 (サブセクション、同じ行の複数要素、継続行、コメント付きの値等) は
- * 解決不能として扱う。common config の extensions.worktreeConfig の有無は判定に使わない
- * (キー名の大小文字・真偽値の表記揺れを解析する必要があり、無効なら git は読まないので
- * 余分に拒否するだけで安全側)。
- */
 function assertSparseOnlyWorktreeConfig(path: string): void {
   const st = lstatOrNull(path);
   if (st === null) return;

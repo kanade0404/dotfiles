@@ -1,8 +1,6 @@
 import {
   checkSensitiveFilePaths,
-  COMMAND_PREFIXES,
   matchCommand,
-  SHELL_KEYWORD_PREFIXES,
   SIDE_EFFECT_FREE_GIT_GLOBAL_OPTS,
   VARIABLE_REFERENCE_SOURCE,
 } from "./rule-matcher.ts";
@@ -25,58 +23,19 @@ const PLAIN_WORD = `[${PLAIN_CHARS}](?:[${PLAIN_CHARS}]|(?<=[A-Za-z0-9_-])=|(?<=
 /** シングル / ダブルクォートの word。中身は PLAIN_CHARS と半角スペースだけ (連結は不可) */
 const QUOTED_WORD = `'[ ${PLAIN_CHARS}]*'|"[ ${PLAIN_CHARS}]*"`;
 const WORD = `(?:${PLAIN_WORD}|${QUOTED_WORD})`;
-/** `-C` の引数は WORD か、ダブルクォートした変数参照 1 個 (値によらず 1 語)。ADR 0004 参照 */
 const DIR_WORD = `(?:${PLAIN_WORD}|${QUOTED_WORD}|"${VARIABLE_REFERENCE_SOURCE}")`;
 /** サブコマンド: `-` で始まらないクォート無しの word */
 const SUBCOMMAND = `(?!-)[${PLAIN_CHARS}]+`;
 const GLOBAL_OPT = `(?:${[...SIDE_EFFECT_FREE_GIT_GLOBAL_OPTS]
   .map((opt) => opt.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
   .join("|")})`;
-/**
- * どのシェルでも単純コマンド 1 つとしか読めない字句だけを許す正の文法 (ADR 0003 / 0004 参照)。
- * shell-parser のトークナイザは使わない (パーサの解釈とのずれを許可判定に入れないため)。
- */
 const GIT_C_GRAMMAR = new RegExp(
   `^git(?: +${GLOBAL_OPT})* +-C +${DIR_WORD}(?: +${GLOBAL_OPT})* +${SUBCOMMAND}(?: +${WORD})*$`,
 );
-/** allow ルールは生のセグメントで照合するので、global option 付きの形は受け付けない */
 const PLAIN_GIT_GRAMMAR = new RegExp(`^git +${SUBCOMMAND}(?: +${WORD})*$`);
-const COMMAND_NAME = "[A-Za-z0-9_][A-Za-z0-9_.+-]*";
-const SIMPLE_COMMAND_GRAMMAR = new RegExp(`^(${COMMAND_NAME})(?: +${WORD})*$`);
-/** 改行・`&`・`|&` は区切りに含めない */
-const SEPARATOR_OPERATOR = "(?:;|&&|\\|\\||\\|)";
-const SEPARATOR = ` *${SEPARATOR_OPERATOR} *`;
-const SEPARATOR_SPLIT = new RegExp(SEPARATOR);
-/** 代入は含まない (COMMAND_NAME は `=` を含まない)。セグメントごとの文法は hookAllowSegments が当てる */
-const SEGMENT = `${COMMAND_NAME}(?: +${DIR_WORD})*`;
+const SEPARATOR = " *(?:;|&&|\\|\\||\\|) *";
+const SEGMENT = `git(?: +${DIR_WORD})*`;
 const LIST_GRAMMAR = new RegExp(`^${SEGMENT}(?:${SEPARATOR}${SEGMENT})*$`);
-
-/**
- * hook allow の根拠にしないコマンド名。組み込みはシェルの状態を変えて後続のセグメントの意味を変えうる。
- * ラッパーは allow の照合に使う名前と実際に実行されるコマンドがずれる。
- */
-const NON_ALLOWABLE_COMMANDS: ReadonlySet<string> = new Set([
-  ...SHELL_KEYWORD_PREFIXES,
-  ...COMMAND_PREFIXES,
-  // 予約語
-  "if", "fi", "case", "esac", "for", "select", "while", "until", "done",
-  "function", "coproc", "repeat", "foreach", "end", "nocorrect", "noglob",
-  // zsh / bash の組み込みコマンド
-  "alias", "autoload", "bg", "bind", "bindkey", "break", "builtin", "bye", "caller", "cap", "cd", "chdir",
-  "clone", "compgen", "complete", "compopt", "continue", "declare", "dirs", "disable", "disown",
-  "echotc", "echoti", "emulate", "enable", "eval", "exit", "export", "fc", "fg", "float",
-  "functions", "getcap", "getln", "getopts", "hash", "help", "history", "integer", "jobs", "kill", "let",
-  "limit", "local", "log", "logout", "mapfile", "popd", "print", "printf", "pushd", "pushln", "r", "read",
-  "readarray", "readonly", "rehash", "return", "sched", "set", "setcap", "setopt", "shift", "shopt",
-  "source", "stat", "strftime", "suspend", "times", "trap", "ttyctl", "type", "typeset", "ulimit", "umask", "unalias",
-  "unfunction", "unhash", "unlimit", "unset", "unsetopt", "vared", "wait", "whence", "where", "which",
-  "zcompile", "zformat", "zle", "zmodload", "zparseopts", "zprof", "zpty", "zregexparse", "zstyle",
-  // ラッパー
-  "sudo", "doas", "xargs", "timeout", "gtimeout", "stdbuf", "caffeinate", "arch",
-  "script", "watch", "chroot", "setsid", "unbuffer", "ionice", "taskset", "flock",
-  // zsh のモジュールの組み込み
-  "zsystem", "sysopen", "sysread", "syswrite", "sysseek", "ztcp", "zsocket", "zftp", "private", "compctl", "compadd",
-]);
 
 /**
  * `Bash(...)` の中身が `git <リテラルのサブコマンド>` で始まり、サブコマンドの直後が
@@ -86,66 +45,47 @@ const NON_ALLOWABLE_COMMANDS: ReadonlySet<string> = new Set([
  */
 const SUBCOMMAND_ANCHORED_GIT_PATTERN = /^Bash\(git [A-Za-z0-9][A-Za-z0-9._-]*(?:\)$| |:\*\)$)/;
 
-/** `Bash(...)` の中身がリテラルのコマンド名で始まる (コマンド名の位置に anchor される) */
-const COMMAND_ANCHORED_PATTERN = new RegExp(`^Bash\\((${COMMAND_NAME})(?:\\)$| |:\\*\\)$)`);
-
 /**
- * hook allow の判定に使うルール。deny / ask は出自を問わず残す。allow はユーザ設定由来 (readByClaudeCode) で、
- * サブコマンドかコマンド名をリテラルで固定したものに限る (広い allow は auto mode で本体が落とすため)。
+ * hook allow の判定に使うルール。deny / ask は出自を問わず残す (判定を厳しくする方向のため)。
+ * allow は次の両方を満たすものだけに絞る。
+ * - 本体が通常適用するユーザ設定由来 (readByClaudeCode。例外は ADR 0003 の既知の制約:
+ *   `--setting-sources` / SDK の `settingSources` でユーザ設定を除いた構成)
+ * - サブコマンドをリテラルで固定した git の allow (SUBCOMMAND_ANCHORED_GIT_PATTERN)。
+ *   本体は auto mode で `Bash(*)` などの広い allow を落として classifier に回すので、
+ *   広い allow は hook allow の根拠にしない
  */
 function rulesForHookAllow(rules: readonly Rule[]): readonly Rule[] {
-  return rules.filter((rule) => {
-    if (rule.category !== "allow") return true;
-    if (rule.readByClaudeCode !== true) return false;
-    if (SUBCOMMAND_ANCHORED_GIT_PATTERN.test(rule.pattern)) return true;
-    const name = COMMAND_ANCHORED_PATTERN.exec(rule.pattern)?.[1];
-    return name !== undefined && isAllowableCommandName(name);
-  });
+  return rules.filter(
+    (rule) =>
+      rule.category !== "allow" ||
+      (rule.readByClaudeCode === true && SUBCOMMAND_ANCHORED_GIT_PATTERN.test(rule.pattern)),
+  );
 }
 
-function isAllowableCommandName(name: string): boolean {
-  return name !== "git" && !NON_ALLOWABLE_COMMANDS.has(name);
-}
-
-/**
- * 生コマンド全体を hook allow してよいか (条件は ADR 0004 参照)。
- * `-C` の無いセグメントでは matchCommand が allow を ask より先に見るので、deny / ask だけで改めて照合する。
- */
 function hookAllowSegments(command: string, rules: readonly Rule[]): boolean {
   if (!LIST_GRAMMAR.test(command)) return false;
-  const segments = command.split(SEPARATOR_SPLIT);
   const allowRules = rulesForHookAllow(rules);
   const blockingRules = rules.filter((rule) => rule.category !== "allow");
-  const positiveRules = allowRules.filter((rule) => rule.category === "allow");
-  const positivelyAllowed = (text: string) => positiveRules.some((rule) => rule.regex.test(text));
-  // deny と機密パスの照合はクォートの中を消してから行うので (`head '.env'` が見えない)、クォートを外した形でも
-  // 照合する。空白を含む語は外すと語が分かれて危険フラグを誤検知するので、deny と機密パスだけに使う
-  const denyRules = rules.filter((rule) => rule.category === "deny");
+  const denyRules = blockingRules.filter((rule) => rule.category === "deny");
   const blockedUnquoted = (text: string) => {
-    const withoutSpaceFreeQuotes = text.replace(/(?<=^| )(["'])([^"'$ ]*)\1(?= |$)/g, "$2");
+    const withoutSpaceFreeQuotes = text.replace(/(?<=^| )(["'])([^"'$ ]+)\1(?= |$)/g, "$2");
     if (withoutSpaceFreeQuotes !== text && matchCommand(withoutSpaceFreeQuotes, blockingRules) !== null) return true;
-    const withoutQuotes = text.replace(/(?<=^| )(["'])([^"'$]*)\1(?= |$)/g, "$2");
+    const withoutQuotes = text.replace(/(?<=^| )(["'])([^"'$]+)\1(?= |$)/g, "$2");
     if (withoutQuotes === withoutSpaceFreeQuotes) return false;
     return checkSensitiveFilePaths(withoutQuotes) || denyRules.some((rule) => rule.regex.test(withoutQuotes));
   };
   let hasGitC = false;
 
-  for (const text of segments) {
+  for (const text of command.split(new RegExp(SEPARATOR))) {
     if (GIT_C_GRAMMAR.test(text)) {
       const result = matchCommand(text, allowRules);
       if (result?.decision !== "allow" || result.gitCNormalized !== true || blockedUnquoted(text)) return false;
       hasGitC = true;
       continue;
     }
+    if (!PLAIN_GIT_GRAMMAR.test(text)) return false;
     if (matchCommand(text, blockingRules) !== null || blockedUnquoted(text)) return false;
-    if (PLAIN_GIT_GRAMMAR.test(text)) {
-      if (!positivelyAllowed(text)) return false;
-      continue;
-    }
-    const name = SIMPLE_COMMAND_GRAMMAR.exec(text)?.[1];
-    if (name === undefined || !isAllowableCommandName(name) || !positivelyAllowed(text)) {
-      return false;
-    }
+    if (!allowRules.some((rule) => rule.category === "allow" && rule.regex.test(text))) return false;
   }
   return hasGitC;
 }
@@ -256,9 +196,6 @@ export function isAssignmentOnly(command: string): boolean {
  *
  * 機密ファイルパスや危険な git フラグは rule-matcher 側で deny に昇格する
  * ので、pass-through 経路でも安全性は維持される。
- *
- * `git -C` は settings.json に `-C` 版ルールが無く本体が自力で allow しないので、hookAllowSegments を
- * 満たすときだけ hookApproved を立てる (ADR 0004 参照)。rawCommand が無い呼び出しは検査できないので立てない。
  */
 export function evaluateCommand(
   subCommands: readonly string[],

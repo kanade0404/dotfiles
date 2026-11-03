@@ -5,9 +5,6 @@ import { join } from "node:path";
 import { createGitFixture, envWithoutGit, type GitFixture } from "./git-fixture.ts";
 import { localSettingsRootsOf } from "./git-repository.ts";
 
-// 本体が .claude/settings.local.json を読むリポジトリのルート (worktree では main checkout のルート)。
-// hook は git を実行せずファイルシステムだけで解決し、git の解釈と一致する保証の無い形は
-// null (特定できない。rules.ts の loadRules はそのセッションで hook allow しない) にする。
 describe("localSettingsRootsOf: リポジトリの形", () => {
   let fx: GitFixture;
   beforeAll(() => { fx = createGitFixture(); });
@@ -16,7 +13,6 @@ describe("localSettingsRootsOf: リポジトリの形", () => {
   test.each([
     ["submodule 相当 (別 common dir)", (f: GitFixture) => join(f.main, "sm"), (f: GitFixture) => [join(f.main, "sm")]],
     ["main 内に git init した別リポジトリ", (f: GitFixture) => join(f.main, "nested"), (f: GitFixture) => [join(f.main, "nested")]],
-    // 相対パスは .git ファイルのあるディレクトリ基準で解決する
     ["相対パスの .git ファイル", (f: GitFixture) => join(f.main, "rel"), (f: GitFixture) => [join(f.main, "rel"), f.main]],
     ["相対パスの .git ファイルがある階層の下", (f: GitFixture) => join(f.main, "rel", "inner"), (f: GitFixture) => [join(f.main, "rel"), f.main]],
     ["同一リポジトリ内へのシンボリックリンク", (f: GitFixture) => join(f.main, "link-sub"), (f: GitFixture) => [f.main]],
@@ -32,18 +28,12 @@ describe("localSettingsRootsOf: リポジトリの形", () => {
     ["main 内の bare リポジトリ", (f: GitFixture) => join(f.main, "bare.git")],
     ["main の .git ディレクトリ配下", (f: GitFixture) => join(f.main, ".git", "hooks")],
     ["不正な内容の .git ファイル", (f: GitFixture) => join(f.main, "badgit")],
-    // .git がシンボリックリンクの場合は解決しない (安全側)
     [".git がシンボリックリンク", (f: GitFixture) => join(f.main, "symgit")],
     ["手で作った gitdir の config.worktree に core.worktree", (f: GitFixture) => join(f.main, "crafted-wtconfig")],
-    // git が作った worktree だけを認める: gitdir は common dir 自身か <common>/worktrees/<name>
-    // で、<common>/worktrees/<name>/gitdir が対象の .git ファイルを指し返していること
     ["commondir は main だが gitdir が worktrees/<name> 配下でない", (f: GitFixture) => join(f.main, "notwt")],
     ["正規の worktree の gitdir を指すが逆リンクが一致しない", (f: GitFixture) => join(f.main, "hijack")],
-    // 位置 (<common>/worktrees/<name>) と逆リンクの条件を満たしても、`.git` がディレクトリなら
-    // commondir を持つ時点で linked worktree とは認めない
     ["<common>/worktrees/.git に置いた commondir 付きの .git ディレクトリ", (f: GitFixture) => join(f.main, ".git", "worktrees")],
     ["worktreeConfig 有効 + 手で作った gitdir の config.worktree に core.fsmonitor", (f: GitFixture) => join(f.worktreeConfig, "crafted")],
-    // 防御として、正規の worktree でも config.worktree に sparse-checkout 以外の設定があれば null
     ["正規の worktree の config.worktree に core.fsmonitor", (f: GitFixture) => join(f.base, "wtc-evil")],
   ] as const)("%s は null (特定できない)", (_, dir) => {
     expect(localSettingsRootsOf(dir(fx), {})).toBeNull();
@@ -125,7 +115,6 @@ describe("localSettingsRootsOf: config.worktree の allowlist の境界", () => 
   afterAll(() => { fx.cleanup(); });
   afterEach(() => { rmSync(configWorktree, { recursive: true, force: true }); });
 
-  /** worktree wtc-wt の config.worktree を content にしたとき、ルートを特定できるか */
   const resolvable = () => localSettingsRootsOf(join(fx.base, "wtc-wt"), {}) !== null;
   const sameWith = (content: string) => {
     writeFileSync(configWorktree, content);
@@ -202,7 +191,6 @@ describe("localSettingsRootsOf: common config の境界", () => {
   afterAll(() => { fx.cleanup(); });
   afterEach(() => { writeFileSync(config, original); });
 
-  /** common config を content にしたとき、サブディレクトリ sub からルートを特定できるか */
   const sameWith = (content: string) => {
     writeFileSync(config, content);
     return localSettingsRootsOf(join(fx.main, "sub"), {}) !== null;

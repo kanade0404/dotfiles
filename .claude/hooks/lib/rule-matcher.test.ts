@@ -1079,7 +1079,6 @@ describe("統合テスト: settings.json ルールでの判定", () => {
       ["git -C /repo log --grep rebase", "Bash(git log *)"],
       ["git -C /repo diff -- reset", "Bash(git diff *)"],
       ['git -C /repo commit -m "fix: reset handler"', "Bash(git commit *)"],
-      // -C の引数の語全体が変数参照 1 個の形 (ADR 0004)。`${` はブレース展開より先に変数参照として扱う
       ['git -C "$R" status', "Bash(git status *)"],
       ['git -C "${R}" status', "Bash(git status *)"],
     ])("%s は %s で allow", (command, pattern) => {
@@ -1091,8 +1090,7 @@ describe("統合テスト: settings.json ルールでの判定", () => {
       });
     });
 
-    // コマンド名のフルパス・クォートもベース名で正規化して判定する (hook 自身の allow は
-    // evaluator の hookAllowSegments が素の `git` 始まりに限るので、ここでは対象外)。
+    // コマンド名のフルパス・クォートもベース名で正規化して判定する。
     test.each([
       "/usr/bin/git -C /repo status",
       "./git -C . status",
@@ -1128,12 +1126,9 @@ describe("統合テスト: settings.json ルールでの判定", () => {
       ["git -C /repo rm -r .", "dangerous-git-flags"],
       // 曖昧な付け替え (正規化しない形) でも破壊的なら backstop の deny が ask より先
       ["git -C /a -C /b reset --hard", "dangerous-git-flags"],
-      // -C の引数が変数参照でも正規化後の deny / backstop は同じ
       ["git -C $R push --force", "Bash(git push --force *)"],
       ['git -C "${R}" reset --hard', "Bash(git reset *)"],
       ["git -C $R rm -r .", "dangerous-git-flags"],
-      // クォート無しの $EMPTY が空だと `git -C status rm -r .` (status で rm) として実行される。
-      // 語が消えた形にも deny を照合する
       ["git -C $EMPTY status rm -r .", "dangerous-git-flags"],
       ["git -C ${EMPTY} log reset --hard", "Bash(git reset *)"],
     ])("%s は %s で deny", (command, pattern) => {
@@ -1143,8 +1138,6 @@ describe("統合テスト: settings.json ルールでの判定", () => {
 
   describe("git -C: 正規化できない形は ask", () => {
     test.each([
-      // `-C` の引数に単純な変数参照以外のシェル展開があると、展開後の語数が変わって
-      // 実サブコマンドの位置がずれうる (`$(echo)` は語ごと消え、`{x,rm}` は 2 語になる)
       "git -C $(echo /x) status",
       // backstop の tokenize は $(...) を 1 語として扱えずサブコマンドを取り違えるため、
       // 破壊的サブコマンドでも deny ではなく ask で止める
@@ -1154,7 +1147,6 @@ describe("統合テスト: settings.json ルールでの判定", () => {
       "git -C {x,rm} status",
       "git -C * status",
       'git -C "$(git rev-parse --show-toplevel)" status',
-      // 語全体が変数参照 1 個でない形 (R=/x なら `$R:e` は空になり語ごと消える)
       "git -C ${R:-/x} status",
       "git -C $1 status",
       'git -C "$@" status',
@@ -1260,7 +1252,6 @@ describe("統合テスト: settings.json ルールでの判定", () => {
     test("git -C /a status && git -C $(echo /b) status は ask", () => {
       expect(judgeCommand("git -C /a status && git -C $(echo /b) status")).toBe("ask");
     });
-    // クォートしない参照は展開後の語数を静的に決められないので、代入の有無によらず ask
     test.each(["R=/b; git -C $R diff --stat", "git -C $R diff --stat", "R=/b && git -C ${R} log --oneline"])(
       "%s は ask",
       (command) => {
@@ -1272,7 +1263,6 @@ describe("統合テスト: settings.json ルールでの判定", () => {
     });
   });
 
-  // クォートしない参照は ask にし、正規化した形と語が消えた形で deny を先に照合する
   describe("git -C: クォートしない変数参照", () => {
     test.each(["git -C $R diff --stat", "git -C ${R} log --oneline", "git -C $EMPTY status push origin main"])(
       "%s は ask",
@@ -1281,7 +1271,6 @@ describe("統合テスト: settings.json ルールでの判定", () => {
       },
     );
 
-    // クォートした参照は語が消えないので、リテラルの dir と同じく正規化する
     test.each([
       ['git -C "$R" diff --stat', "Bash(git diff *)"],
       ['git -C "${R}" log --oneline', "Bash(git log *)"],
@@ -1515,6 +1504,13 @@ describe("統合テスト: settings.json ルールでの判定", () => {
     test("cut -d= -f2 .env.local → deny", () => {
       expect(judgeCommand("cut -d= -f2 .env.local")).toBe("deny");
     });
+
+    test.each(["git show HEAD:.env", "git -C x show HEAD:.env", "git show main:.env.production", "git show HEAD:.ssh/config"])(
+      "%s → deny",
+      (command) => {
+        expect(judgeCommand(command)).toBe("deny");
+      },
+    );
 
     test("sort /etc/shadow → deny", () => {
       expect(judgeCommand("sort /etc/shadow")).toBe("deny");

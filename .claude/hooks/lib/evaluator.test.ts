@@ -191,7 +191,6 @@ describe("evaluateCommand - 変数代入", () => {
 });
 
 // git -C <dir> <sub> は settings.json にルールが無く Claude Code 本体は自力で allow しない。
-// hook allow の文法の字句単位の性質。PLAIN_CHARS 以外の文字は、クォートの内外を問わず文法外になる。
 describe("hook allow の文法 (字句)", () => {
   const rules = loadRepoRules();
   const approved = (command: string) => {
@@ -237,13 +236,10 @@ describe("hook allow の文法 (字句)", () => {
     expect(approved("git -C /r --git-dir=/x log")).toBe(false);
   });
 
-  // -C の位置だけは、ダブルクォートした変数参照 1 個だけの word を許す (値によらず 1 語)
   test.each(['"$R"', '"${R}"'])("-C の %j は文法内", (dir) => {
     expect(approved(`git -C ${dir} status`)).toBe(true);
   });
 
-  // クォートしない参照は zsh の配列・修飾子や bash の単語分割で語数が静的に決まらない。
-  // 連結・修飾子・添字・既定値付きは正規化の側でも ask になる
   test.each([
     "$R", "${R}", '"${R}/sub"', '"$HOME/x y"', "$R/sub", "${R}x", "$R$S", "$R:e", "$R[1]", "${R:-x}",
     "$1", "$@", '"$1"', "'$R'", "$(pwd)", '"$(pwd)"', "${R}{a,b}",
@@ -251,7 +247,6 @@ describe("hook allow の文法 (字句)", () => {
     expect(approved(`git -C ${dir} status`)).toBe(false);
   });
 
-  // 正規化側の変更で hook allow の文法 (`-C "$R"`) が黙って広がらないよう、共有する断片を固定する
   test.each([
     ["$R", true], ["${R}", true], ["$R_x1", true], ["$_", true],
     ["$1", false], ["$@", false], ["$?", false], ["$R:e", false], ["$R[1]", false], ["${R:-x}", false],
@@ -287,7 +282,6 @@ describe("evaluateCommand - git -C の hook allow (hookApproved)", () => {
   const hookApproved = { decision: "allow", hookApproved: true } as const;
   const passThrough = { decision: "allow", hookApproved: false } as const;
 
-  // -C の対象ディレクトリは判定に使わない (ADR 0004 参照)
   describe("-C の対象ディレクトリによらず hookApproved", () => {
     test.each([
       "git -C /Users/kanade0404/orca/workspaces/skills/pinniped diff --stat",
@@ -299,7 +293,6 @@ describe("evaluateCommand - git -C の hook allow (hookApproved)", () => {
     });
   });
 
-  // クォートしない参照は ask、クォートした参照は正規化する (ADR 0004 参照)
   describe("-C の変数参照", () => {
     test.each([
       'git -C "$R" diff --stat',
@@ -312,7 +305,6 @@ describe("evaluateCommand - git -C の hook allow (hookApproved)", () => {
       expect(evaluate(command)).toEqual(hookApproved);
     });
 
-    // 代入は export 済みの変数を書き換えうるので hook allow しない
     test.each([
       'R=/x; git -C "$R" diff --stat',
       "DOCKER_HOST=ssh://x; git -C \"$DOCKER_HOST\" --no-pager log; docker build .",
@@ -323,7 +315,6 @@ describe("evaluateCommand - git -C の hook allow (hookApproved)", () => {
       expect(evaluate(command)).toEqual(passThrough);
     });
 
-    // クォートしない参照は、代入の有無や名前によらず ask
     test.each([
       "git -C $R status",
       "git -C $R diff --stat",
@@ -331,12 +322,10 @@ describe("evaluateCommand - git -C の hook allow (hookApproved)", () => {
       "R=/x; git -C $R diff --stat",
       "R=/x; git -C $R branch -r",
       "git -C /a status && git -C $R diff",
-      // サブコマンドが無い形 (zsh で a が配列なら `git -C x push --force origin main` として実行される)
       "git -C $a",
       "git -C ${R}",
       "git -C $R --no-pager",
       "a=(x push --force origin main); git -C $a",
-      // 配列や語分割で実行内容がずれる形
       "set -- . push --force origin; git -C $argv main",
       "CDPATH=.:push:--force:origin; git -C $cdpath main",
       "a=(x push --force origin main); git -C $a status",
@@ -350,7 +339,6 @@ describe("evaluateCommand - git -C の hook allow (hookApproved)", () => {
       "read <<< \"/x clean -fdx .\"; git -C $REPLY status",
       "typeset -T X R; X=.:push; git -C $R main",
       "eval 'R=(x push)'; git -C $R status",
-      // 語全体が変数参照 1 個でない形 (zsh の修飾子・添字・連結・既定値付き・特殊パラメータ)
       "git -C $R:e status",
       "git -C $R:e status push --force origin main",
       "git -C $R[1] status",
@@ -364,14 +352,12 @@ describe("evaluateCommand - git -C の hook allow (hookApproved)", () => {
     });
 
     test.each([
-      // クォートした参照は zsh の配列でも要素を空白で繋いだ 1 語になる
       'a=(x push); git -C "$a" status',
       'git -C "$R" diff --stat',
     ])("%j は ask にしない", (command) => {
       expect(evaluate(command).decision).toBe("allow");
     });
 
-    // ask にする場合も、正規化した形と語が消えた形の deny は効く
     test.each([
       "git -C $dir push --force",
       "git -C $R push --force",
@@ -386,43 +372,45 @@ describe("evaluateCommand - git -C の hook allow (hookApproved)", () => {
     test.each([
       "git -C /a status && git -C /b diff",
       "git -C sub status; git -C sub diff",
-      "git -C sub log --oneline | head -5",
-      "git -C sub log --oneline|head -5",
       "git status && git -C /b diff",
-      "git -C /a status; echo done",
-      "git -C /a status || true",
-      "git -C /a diff --stat | wc -l",
-      "pwd; git -C /a status",
-      "git -C /a status && sleep 1 && git -C /a log -1",
+      "git -C . status && git log",
+      "git -C /a status||git -C /a log -1",
+      'git -C "" log -n 5',
+      "git -C '' diff --stat",
     ])("%j は hookApproved", (command) => {
       expect(evaluate(command)).toEqual(hookApproved);
     });
 
     test.each([
-      // どのルールにも一致しないセグメント (matchCommand が null) を含む
+      "git -C sub log --oneline | head -5",
+      "git -C /a status; echo done",
+      "git -C /a status || true",
+      "pwd; git -C /a status",
+      "git -C . show HEAD:evil.sh | uniq - /Users/me/.zshenv",
+      "git -C . status && sort -o /abs x",
+    ])("git 以外のセグメントを含む %j は pass-through", (command) => {
+      expect(evaluate(command)).toEqual(passThrough);
+    });
+
+    test.each([
       "git -C /a status; some-undefined-cmd",
       "git -C /a status && python3 script.py",
       "git -C . status && git -C . submodule foreach touch x",
-      // -C の無いコマンドだけなら本体が自分で判定できるので hook allow しない
       "git status && git diff",
       "echo a; echo b",
-      // 組み込みコマンド (シェルの状態を変えうる) とラッパー
       "git -C /a status; printf x",
       "printf -v PATH /tmp/evil; git -C . status",
       "git -C /a status; command touch x",
       "git -C /a status; nice make",
       "git -C /a status; time make",
       "git -C /a status; exec make",
-      // 危険な変数への代入
       "PATH=/tmp/evil; git -C . status",
       "path=/tmp/evil; git -C . status",
       "HOME=/tmp/x; git -C . status",
       "IFS=/; git -C . status",
       "GIT_CONFIG_GLOBAL=/tmp/x; git -C . status",
       "LD_PRELOAD=/tmp/x.so; git -C . status",
-      // 代入の前置 (一時環境変数)
       "R=/x git -C . status",
-      // 文法外の区切り・字句 (改行・バックグラウンド・|&・ヒアドキュメント・リダイレクト)
       "git -C . status\ngit -C . diff",
       "git -C . status & git -C . diff",
       "git -C . status |& head",
@@ -431,10 +419,8 @@ describe("evaluateCommand - git -C の hook allow (hookApproved)", () => {
       "git -C . status ;; git -C . diff",
       "git -C . log | head -5 > /tmp/out",
       "/usr/bin/python3 - <<'EOF'\nprint(1)\nEOF\nR=/x; git -C $R diff --stat",
-      // -C 以外の位置の展開
       "R=/x; echo $R; git -C . status",
       "git -C . log \"$R\"",
-      // クォートした機密パス (deny と機密パスの照合はクォートの中を消してから行う)
       "git -C . status; head '.env'",
       'git -C . status && tail "/Users/x/.ssh/id_ed25519"',
       "git -C . log -p -- '.env'",
@@ -469,8 +455,6 @@ describe("evaluateCommand - git -C の hook allow (hookApproved)", () => {
   });
 
   // 実行シェルは zsh (Claude Code の Bash tool は `zsh -c '... eval <cmd>'` で実行する)。
-  // 以下はいずれも zsh で git 以外のコマンドが実行される・git の実行内容が変わる・
-  // ファイルに書き込む形、またはそれと同じ字句クラスの入力。
   test.each([
     // 関数定義で allow 済みコマンド名を再定義する (zsh の `name () cmd` 形)
     "echo () (touch X); git -C sub status; echo",
@@ -514,7 +498,6 @@ describe("evaluateCommand - git -C の hook allow (hookApproved)", () => {
     "'git' -C sub status",
     "git -C sub status; /tmp/evil/echo hi",
     "git -C sub status; ./echo hi",
-    // バックグラウンド・サブシェル・ブレースグループ
     "git -C sub status &",
     "(git -C sub status)",
     "{ git -C sub status; }",
@@ -577,7 +560,6 @@ describe("evaluateCommand - git -C の hook allow (hookApproved)", () => {
     });
   });
 
-  // 文法または allow に一致しない allow は従来どおり pass-through (hookApproved: false) のまま
   test.each([
     "git status",
     "git status && git diff",
@@ -594,7 +576,6 @@ describe("evaluateCommand - git -C の hook allow (hookApproved)", () => {
     expect(evaluate(command)).toEqual({ decision: "allow", hookApproved: false });
   });
 
-  // 正規化後の deny / ask は、-C の対象・変数参照・複合コマンドの hook allow とは独立に従来どおり効く
   test.each([
     "git -C /r reset --hard",
     "git -C /other reset --hard",
@@ -609,19 +590,15 @@ describe("evaluateCommand - git -C の hook allow (hookApproved)", () => {
     "git -C /a status && git -C /b reset --hard",
     "git -C /a status && git -C $R reset --hard",
     "git -C /a status | git -C /b push -f origin main",
-    // 付け替え時だけ危険なサブコマンド (dangerousWhenRedirected)
     "git -C $R rm -r .",
     "git -C /other branch -d feature",
-    // R が空だと `git -C status rm -r .` (rm を status で実行) になる
     "git -C $EMPTY status rm -r .",
-    // 機密パス
     "git -C $R log -- ~/.ssh/id_rsa",
     "git -C /other diff .env",
   ])("%j は deny", (command) => {
     expect(evaluate(command).decision).toBe("deny");
   });
 
-  // 変数参照以外の展開を含む -C の引数は、展開後の語数が変わりうるので ask
   test.each([
     "git -C $(echo /x) status",
     "git -C `pwd` status",
@@ -654,42 +631,19 @@ describe("evaluateCommand - git -C と ask ルール", () => {
     "git -C $R push origin main",
     'git -C "${R}" commit -m x',
     "R=/x; git -C $R push origin main",
-    // 複合コマンドでも ask のセグメントがあれば ask (hook allow しない)
     "git -C /r status && git -C /r push origin main",
-    // クォート無しの参照が空なら `-C` が次の語を取り、`git -C status push origin main`
-    // (status ディレクトリでの git push) として実行される。語が消えた形が ask に当たれば ask
     "git -C $EMPTY status push origin main",
     "R=/x; git -C $R diff push origin main",
   ])("非 -C allow と ask の両方に一致する %j は ask", (command) => {
     expect(evaluate(command).decision).toBe("ask");
   });
 
-  // matchCommand は -C の無いコマンドでは allow を ask より先に見るので、evaluateCommand の判定は
-  // allow (pass-through) になる。hook allow は全セグメントを ask とも照合し、確認を省略させない
   test.each([
     "git -C /r status && git push origin main",
     "git push origin main; git -C /r status",
     "git -C /r status && git commit -m x",
   ])("allow と ask の両方に一致するセグメントを含む %j は hookApproved ではない", (command) => {
     expect(evaluate(command)).not.toEqual({ decision: "allow", hookApproved: true });
-  });
-
-  test("git 以外のセグメントも ask と照合する", () => {
-    const makeRules: Rule[] = [
-      ...rules,
-      { category: "allow", pattern: "Bash(make *)", regex: patternToRegex("make *"), readByClaudeCode: true },
-      askRule("make deploy *"),
-    ];
-    const command = "git -C /r status && make deploy prod";
-    expect(evaluateCommand(parseShellCommands(command), makeRules, command)).toEqual({
-      decision: "allow",
-      hookApproved: false,
-    });
-    const allowed = "git -C /r status && make build";
-    expect(evaluateCommand(parseShellCommands(allowed), makeRules, allowed)).toEqual({
-      decision: "allow",
-      hookApproved: true,
-    });
   });
 
   test("ask に一致しない git -C /r status は ask にならない", () => {
@@ -825,41 +779,9 @@ describe("evaluateCommand - hook allow の根拠になる設定ファイル", ()
     });
   });
 
-  describe("複合コマンドの git 以外のセグメント", () => {
-    const gitStatus = "Bash(git status *)";
-
-    test("ユーザ設定にコマンド名を固定した allow があれば hookApproved", () => {
-      writeSettings(join(home, ".claude", "settings.json"), { allow: [gitStatus, "Bash(sleep *)"] });
-      expect(evaluate("git -C . status; sleep 1")).toEqual(hookApproved);
-    });
-
-    test.each([
-      [".codex/settings.json", () => join(fx.main, ".codex", "settings.json")],
-      ["プロジェクトの .claude/settings.json", () => join(fx.main, ".claude", "settings.json")],
-    ] as const)("%s にだけある allow は根拠にしない", (_, path) => {
-      writeSettings(join(home, ".claude", "settings.json"), { allow: [gitStatus] });
-      writeSettings(path(), { allow: ["Bash(sleep *)"] });
-      expect(evaluate("git -C . status; sleep 1")).toEqual(passThrough);
-    });
-
-    test.each(["Bash(*)", "Bash(s*)", "Bash(sleep*)"])("コマンド名を固定しない %s は根拠にしない", (pattern) => {
-      writeSettings(join(home, ".claude", "settings.json"), { allow: [gitStatus, pattern] });
-      expect(evaluate("git -C . status; sleep 1")).toEqual(passThrough);
-    });
-
-    test.each([
-      ["Bash(command *)", "git -C . status; command touch pwned"],
-      ["Bash(printf *)", "git -C . status; printf x"],
-      ["Bash(nohup *)", "git -C . status; nohup touch pwned"],
-    ])("%s", (pattern, command) => {
-      writeSettings(join(home, ".claude", "settings.json"), { allow: [gitStatus, pattern] });
-      expect(evaluate(command)).toEqual(passThrough);
-    });
-
-    test("ユーザ設定の deny は git 以外のセグメントにも効く", () => {
-      writeSettings(join(home, ".claude", "settings.json"), { allow: [gitStatus, "Bash(sleep *)"], deny: ["Bash(sleep 9 *)"] });
-      expect(evaluate("git -C . status; sleep 9 x").decision).toBe("deny");
-    });
+  test("git 以外のセグメントは、ユーザ設定に allow があっても hook allow の根拠にしない", () => {
+    writeSettings(join(home, ".claude", "settings.json"), { allow: ["Bash(git status *)", "Bash(sleep *)"] });
+    expect(evaluate("git -C . status; sleep 1")).toEqual(passThrough);
   });
 
   // CLAUDE_PROJECT_DIR は Claude Code が hook に渡す。無い / 相対 / 存在しないなら

@@ -69,10 +69,8 @@ export function patternToRegex(pattern: string): RegExp {
   return new RegExp(`^${regexStr}$`, "s");
 }
 
-/** evaluator.ts の NON_ALLOWABLE_COMMANDS も使う */
-export const SHELL_KEYWORD_PREFIXES = ["then", "else", "elif", "do"] as const;
-/** evaluator.ts の NON_ALLOWABLE_COMMANDS も使う */
-export const COMMAND_PREFIXES = [
+const SHELL_KEYWORD_PREFIXES = ["then", "else", "elif", "do"] as const;
+const COMMAND_PREFIXES = [
   "env",
   "command",
   "exec",
@@ -396,8 +394,7 @@ type DangerousGitFlagRule = {
 //    deny ルールの形に無い破壊的サブコマンド/フラグや、`-C` で付け替えた時だけ危険な
 //    操作 (dangerousWhenRedirected) を deny に昇格させる。
 // 3. 機密ファイルパス (checkSensitiveFilePaths) を deny に昇格させる。
-// 4. 正規化できない形 (展開を含む dir / 複数 -C / -C 以外の global option との併用等) と、
-//    クォートしない変数参照の dir は ask。
+// 4. 正規化できない形 (展開を含む dir / 複数 -C / -C 以外の global option との併用等) は ask。
 // 5. ask — 正規化した候補も含めて非 -C ask ルールに一致すれば ask (allow より先)。
 // 6. allow — 正規化した候補が非 -C allow ルールに一致すれば allow (gitCNormalized)。
 // settings.json には `-C` 版ルールを置かない (中間ワイルドカードは hook でも本体でも
@@ -979,7 +976,7 @@ export function checkDangerousGitFlags(command: string): boolean {
  */
 const SENSITIVE_PATH_PATTERNS: readonly RegExp[] = [
   // SSH鍵・設定
-  /[/~]\.ssh\//,
+  /[/~:]\.ssh\//,
   /id_(rsa|ed25519|ecdsa|dsa)/,
   /authorized_keys/,
   /known_hosts/,
@@ -996,7 +993,7 @@ const SENSITIVE_PATH_PATTERNS: readonly RegExp[] = [
   /\.pypirc/,
   /\.config\/gh\/hosts\.yml/,
   // 環境変数
-  /(^|\s|\/|<)\.env(\.[a-zA-Z]+)?(\s|$)/,
+  /(^|\s|\/|<|:)\.env(\.[a-zA-Z]+)?(\s|$)/,
   // システム機密ファイル
   /\/etc\/(passwd|shadow|gshadow|master\.passwd)/,
   /\/etc\/sudoers/,
@@ -1054,13 +1051,12 @@ type GitCAnalysis =
   | {
       readonly kind: "normalized";
       readonly normalized: string;
-      /** `-C` の引数がクォートしない変数参照のとき、値が空で語が消えた場合に実行されるコマンド */
       readonly vanishingDirCommand?: string;
     };
 
 /**
  * `-C` の引数に含まれるとシェル展開になる文字。展開後の語数が変わると実サブコマンドの
- * 位置がずれうる (`$(echo)` は語ごと消え、`{x,rm}` や `*` は複数語になる)。
+ * 位置がずれうる (`$(echo)` / 空の `$X` は語ごと消え、`{x,rm}` や `*` は複数語になる)。
  * ANSI-C quoting (`$'...'`) は展開ではなくリテラルなので `$` の直後が `'` の場合は除く。
  * シングルクォート内の `$` も実際にはリテラルだが、区別せず安全側 (ask) に倒す。
  * `~` (チルダ展開) は 1 語のまま展開されるので対象外。
@@ -1074,13 +1070,11 @@ const SHELL_EXPANSION_IN_WORD = /`|\$(?!')|[*?[{]/;
 
 const VARIABLE_NAME_SOURCE = "[A-Za-z_][A-Za-z0-9_]*";
 
-/** `$NAME` / `${NAME}`。`$NAME` を最長一致にして、後続の文字との分け方を 1 通りにする (ReDoS 対策) */
 export const VARIABLE_REFERENCE_SOURCE =
   `\\$(?:${VARIABLE_NAME_SOURCE}(?![A-Za-z0-9_])|\\{${VARIABLE_NAME_SOURCE}\\})`;
 
 const UNQUOTED_VARIABLE_DIR_REASON = "クォートしない変数参照は展開後の語数が決まらない。\"$R\" とクォートすれば、この理由では確認しない";
 
-/** 語全体が変数参照 1 個の `-C` の引数 (グループ 1 がクォート無し、2 がクォート付き)。ADR 0004 参照 */
 const EXACT_VARIABLE_DIR = new RegExp(`^(?:(${VARIABLE_REFERENCE_SOURCE})|"(${VARIABLE_REFERENCE_SOURCE})")$`);
 
 function dirVariableOf(dir: string): { quoted: boolean } | undefined {
@@ -1128,8 +1122,8 @@ function rawTokenSpans(input: string): { start: number; end: number }[] {
  * 判定する (matchCommand 参照)。非 -C ルールはプレフィックス一致なのでサブコマンド位置に
  * anchor される。
  *
- * 正規化するのは「`-C` が 1 つだけ・その引数がリテラルか変数参照 1 個 (EXACT_VARIABLE_DIR)・
- * 他の global option は SIDE_EFFECT_FREE_GIT_GLOBAL_OPTS だけ・env による付け替えが無い」場合に限る。
+ * 正規化するのは「`-C` が 1 つだけ・その引数がリテラル・他の global option は
+ * SIDE_EFFECT_FREE_GIT_GLOBAL_OPTS だけ・env による付け替えが無い」場合に限る。
  * それ以外 (複数 `-C` / `--git-dir` / `--work-tree` / `-c` / 展開を含む dir 等) は
  * 正規化結果が実際の実行と一致する保証が無いので ask にする。
  * 戻り値の `normalized` は元のクォートを保った生文字列 (非 -C コマンドと同じ条件で
@@ -1235,7 +1229,6 @@ export function matchCommand(
     return { decision: "deny", command, pattern: "sensitive-file-path" };
   }
 
-  // クォートしない `-C $R` は展開後の語数が決まらないので、語が消えた形でも deny を照合してから ask にする
   if (gitC.kind === "normalized" && gitC.vanishingDirCommand !== undefined) {
     const vanished = matchCommand(gitC.vanishingDirCommand, rules);
     if (vanished?.decision === "deny") return { decision: "deny", command, pattern: vanished.pattern };
