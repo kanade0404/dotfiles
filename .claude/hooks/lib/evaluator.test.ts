@@ -438,6 +438,8 @@ describe("evaluateCommand - git -C の hook allow (hookApproved)", () => {
       "git -C . status; head '.env'",
       'git -C . status && tail "/Users/x/.ssh/id_ed25519"',
       "git -C . log -p -- '.env'",
+      "git -C . status && head '/Users/me/Library/Application Support/app/.env'",
+      "git -C . status; tail 'x y/.ssh/id_rsa'",
       'git -C "$R" log -p -- ".env"',
     ])("%j は hookApproved ではない", (command) => {
       expect(evaluate(command)).not.toEqual(hookApproved);

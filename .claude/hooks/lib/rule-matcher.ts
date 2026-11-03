@@ -1078,6 +1078,8 @@ const VARIABLE_NAME_SOURCE = "[A-Za-z_][A-Za-z0-9_]*";
 export const VARIABLE_REFERENCE_SOURCE =
   `\\$(?:${VARIABLE_NAME_SOURCE}(?![A-Za-z0-9_])|\\{${VARIABLE_NAME_SOURCE}\\})`;
 
+const UNQUOTED_VARIABLE_DIR_REASON = "クォートしない変数参照は展開後の語数が決まらない。\"$R\" とクォートすれば、この理由では確認しない";
+
 /** 語全体が変数参照 1 個の `-C` の引数 (グループ 1 がクォート無し、2 がクォート付き)。ADR 0004 参照 */
 const EXACT_VARIABLE_DIR = new RegExp(`^(?:(${VARIABLE_REFERENCE_SOURCE})|"(${VARIABLE_REFERENCE_SOURCE})")$`);
 
@@ -1172,7 +1174,7 @@ function analyzeGitC(command: string, stripped: string): GitCAnalysis {
   const dirVariable = dirVariableOf(dirs[0]);
   if (i >= spans.length) {
     if (dirVariable !== undefined && !dirVariable.quoted) {
-      return { kind: "ask", reason: "クォートしない変数参照は展開後の語数が決まらない。\"$R\" とクォートすれば、この理由では確認しない" };
+      return { kind: "ask", reason: UNQUOTED_VARIABLE_DIR_REASON };
     }
     return { kind: "none" };
   }
@@ -1237,7 +1239,7 @@ export function matchCommand(
   if (gitC.kind === "normalized" && gitC.vanishingDirCommand !== undefined) {
     const vanished = matchCommand(gitC.vanishingDirCommand, rules);
     if (vanished?.decision === "deny") return { decision: "deny", command, pattern: vanished.pattern };
-    return { decision: "ask", command, pattern: "git -C (クォートしない変数参照は展開後の語数が決まらない。\"$R\" とクォートすれば、この理由では確認しない)" };
+    return { decision: "ask", command, pattern: `git -C (${UNQUOTED_VARIABLE_DIR_REASON})` };
   }
 
   // `git -C` 形だが正規化できない (展開を含む dir / 付け替えの併用等)

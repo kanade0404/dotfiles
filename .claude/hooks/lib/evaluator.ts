@@ -1,4 +1,5 @@
 import {
+  checkSensitiveFilePaths,
   COMMAND_PREFIXES,
   matchCommand,
   SHELL_KEYWORD_PREFIXES,
@@ -117,11 +118,15 @@ function hookAllowSegments(command: string, rules: readonly Rule[]): boolean {
   const blockingRules = rules.filter((rule) => rule.category !== "allow");
   const positiveRules = allowRules.filter((rule) => rule.category === "allow");
   const positivelyAllowed = (text: string) => positiveRules.some((rule) => rule.regex.test(text));
-  // deny と機密パスの照合はクォートの中を消してから行うので (`head '.env'` が見えない)、空白も `$` も
-  // 含まない語はクォートを外した形でも照合する。空白を含む語は外すと語が分かれ、意味が変わるので外さない
+  // deny と機密パスの照合はクォートの中を消してから行うので (`head '.env'` が見えない)、クォートを外した形でも
+  // 照合する。空白を含む語は外すと語が分かれて危険フラグを誤検知するので、deny と機密パスだけに使う
+  const denyRules = rules.filter((rule) => rule.category === "deny");
   const blockedUnquoted = (text: string) => {
-    const unquoted = text.replace(/(?<=^| )(["'])([^"'$ ]*)\1(?= |$)/g, "$2");
-    return unquoted !== text && matchCommand(unquoted, blockingRules) !== null;
+    const withoutSpaceFreeQuotes = text.replace(/(?<=^| )(["'])([^"'$ ]*)\1(?= |$)/g, "$2");
+    if (withoutSpaceFreeQuotes !== text && matchCommand(withoutSpaceFreeQuotes, blockingRules) !== null) return true;
+    const withoutQuotes = text.replace(/(?<=^| )(["'])([^"'$]*)\1(?= |$)/g, "$2");
+    if (withoutQuotes === withoutSpaceFreeQuotes) return false;
+    return checkSensitiveFilePaths(withoutQuotes) || denyRules.some((rule) => rule.regex.test(withoutQuotes));
   };
   let hasGitC = false;
 
