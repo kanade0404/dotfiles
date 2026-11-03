@@ -26,7 +26,8 @@
       { name = "ariga/tap"; trusted = true; }
       # Herdr UI (herdr-gpui) の作者 Fabien Penso の個人 tap。herdr 本体 (herdrdev) とは
       # 無関係の第三者なので、tap 全体は信頼せず、casks 側で herdr-gpui だけを trusted に
-      # する。Homebrew 7.0 の実装で確認済み: cask の読み込み (cask_loader) は cask 単位の
+      # する。これで防げるのは tap に追加される他の cask / formula だけで、herdr-gpui の
+      # cask 定義そのもの (HEAD に追従し preflight 等も実行される) は作者を全面的に信頼する。Homebrew 7.0 の実装で確認済み: cask の読み込み (cask_loader) は cask 単位の
       # trust で通るので、アプリ内 updater の `brew upgrade --cask herdr-gpui` も通る。
       # 全 cask を列挙する経路 (Cask.all) は、tap 内の未信頼 cask を読み飛ばすだけでエラーに
       # しない (Trust.trusted_cask_files)。brew bundle の cleanup が読み込むのは入っている

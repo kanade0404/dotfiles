@@ -43,8 +43,8 @@ eval "$(/opt/homebrew/bin/brew shellenv)"
 # Brewfile の trusted: true は brew bundle 自身も登録するが、Homebrew 5.1.x には
 # 読み込みより前に登録しない経路があった (Homebrew/brew#22631) ため、ここで事前に登録する。
 # 対象は nix/modules/homebrew.nix の trusted = true な tap と、完全修飾名 (tap/name) の
-# brews / casks (nix-darwin は casks の trusted を既定 true にするが、公式 tap の短縮名は
-# trust 不要なので除く)。nix eval で動的取得して二重管理を避ける。
+# brews / casks (nix-darwin は brews / casks の trusted を既定 true にするが、短縮名と
+# homebrew/ 配下の公式 tap は trust 不要なので除く)。nix eval で動的取得して二重管理を避ける。
 if brew help trust >/dev/null 2>&1; then
   log "サードパーティ tap / formula / cask を信頼登録"
   # flakes の有効化 (下の experimental features 節) より前に走るので、ここで明示的に付ける。
@@ -52,10 +52,11 @@ if brew help trust >/dev/null 2>&1; then
   trust_targets=$(nix --extra-experimental-features 'nix-command flakes' eval --raw \
     "$DOTFILES_DIR/nix#darwinConfigurations.$FLAKE_ATTR.config.homebrew" \
     --apply 'hb: let
-        qualified = e: builtins.match "[^/]+/[^/]+/[^/]+" e.name != null; # user/repo/name
+        qualified = e: builtins.match "[^/]+/[^/]+/[^/]+" e.name != null # user/repo/name
+          && builtins.match "homebrew/.*" e.name == null;
         pick = flag: es: map (e: "${flag} ${e.name}") (builtins.filter (e: (e.trusted or false) == true) es); # null 対策で == true
       in builtins.concatStringsSep "\n" (
-        pick "--tap" hb.taps
+        pick "--tap" hb.taps # brew trust は "user/repo" を tap と推論するが、明示する
         ++ pick "--formula" (builtins.filter qualified hb.brews)
         ++ pick "--cask" (builtins.filter qualified hb.casks))') \
     || die "homebrew.nix の trust 対象取得に失敗しました (nix eval)"
@@ -63,7 +64,9 @@ if brew help trust >/dev/null 2>&1; then
     [ -n "${name:-}" ] || continue
     # darwin-rebuild より前に呼ぶため tap 未取得でも、種別を明示すれば trust は名前を
     # JSON へ記録するだけなので通常は成功する。失敗しても中断せず警告に留める。
-    brew trust "$kind" "$name" \
+    # 種別フラグの無い初期の brew trust でも tap は従来どおり位置引数で通るようにする。
+    brew trust "$kind" "$name" 2>/dev/null \
+      || { [ "$kind" = "--tap" ] && brew trust "$name"; } \
       || warn "brew trust $kind $name が失敗 (tap 未取得の可能性。darwin-rebuild 後に再実行可)"
   done <<< "$trust_targets"
 else
