@@ -354,31 +354,42 @@ describe("evaluateCommand - git -C の hook allow (hookApproved)", () => {
       expect(evaluate("git -C $R:e status push --force origin main").decision).toBe("ask");
     });
 
-    // zsh ではクォートしない配列の参照は要素ごとに複数語へ展開される
-    // (`git -C x push --force origin main status` として実行される)
+    // クォートしない `-C $NAME` は、値が 1 個のスカラーだと静的に言える場合 (rule-matcher の
+    // isStaticScalarDirVariable) だけ正規化し、それ以外は ask。zsh では配列の参照は要素ごとに
+    // 複数語へ展開される (`git -C x push --force origin main status` として実行される)
     test.each([
+      // 特殊配列・tied 配列 (小文字の名前)
+      "set -- . push --force origin; git -C $argv main",
+      "CDPATH=.:push:--force:origin; git -C $cdpath main",
+      "git -C $dir status",
       "a=(x push --force origin main); git -C $a status",
-      "a=(x push --force origin main) && git -C ${a} status",
-      "a+=(x push); git -C $a status",
-      "a[1]=x; git -C $a status",
-      "typeset -a a; git -C $a status",
-      "declare -a a; git -C $a status",
-      "local -a a; git -C $a status",
-      "set -A a x push; git -C $a status",
-      "read -rA a; git -C $a status",
-      "readarray a; git -C $a status",
-    ])("同じコマンド内で配列にした変数の %j は ask", (command) => {
+      // -C の参照以外の `$`
+      ": ${(A)R::=. push --force origin}; git -C $R main",
+      "printf -v x R; set -A $x . push; git -C $R status",
+      // NAME が -C の参照とセグメント先頭の `NAME=<リテラル>` 以外に現れる
+      "typeset -T X R; X=.:push; git -C $R main",
+      "zstyle -a ctx style R; git -C $R main",
+      "R=(x push --force origin main) && git -C ${R} status",
+      "read -rA R; git -C $R status",
+      // eval / source / `.` / バッククォート
+      "eval 'R=(x push)'; git -C $R status",
+      ". ./env.sh; git -C $R status",
+    ])("%j は ask", (command) => {
       expect(evaluate(command).decision).toBe("ask");
     });
 
     test.each([
-      // クォートした配列の参照は zsh でも要素を空白で繋いだ 1 語になる
+      // クォートした参照は zsh の配列でも要素を空白で繋いだ 1 語になる
       'a=(x push); git -C "$a" status',
-      // 別の名前の配列
-      "b=(x push); git -C $a status",
-      "typeset -a b; git -C $a status",
-    ])("%j は配列を理由に ask にしない", (command) => {
+      "R=/x; git -C $R diff --stat",
+      "git -C $R diff --stat",
+    ])("%j は ask にしない", (command) => {
       expect(evaluate(command).decision).toBe("allow");
+    });
+
+    // 正規化はするので、ask にする場合も正規化後の deny は効く
+    test("git -C $dir push --force は deny", () => {
+      expect(evaluate("git -C $dir push --force").decision).toBe("deny");
     });
   });
 

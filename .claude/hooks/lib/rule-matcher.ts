@@ -1053,8 +1053,11 @@ type GitCAnalysis =
   | {
       readonly kind: "normalized";
       readonly normalized: string;
-      /** `-C` の引数が変数参照 (EXACT_VARIABLE_DIR) のとき、その変数名とクォートの有無 */
-      readonly dirVariable?: { readonly name: string; readonly quoted: boolean };
+      /**
+       * 正規化はできたが、クォートしない `-C $NAME` の値が 1 個のスカラーだと静的に言えない
+       * (isStaticScalarDirVariable が false) ときの理由。matchCommand は deny を照合した後に ask を返す。
+       */
+      readonly askReason?: string;
       /**
        * `-C` の引数がクォート無しの変数参照 (`$R` / `${R}`) のとき、値が空で語ごと消えた場合に
        * シェルが実行するコマンド (`git -C $R status rm -r .` → `git -C status rm -r .`)。
@@ -1097,8 +1100,9 @@ export const VARIABLE_REFERENCE_SOURCE =
  * zsh の修飾子 (`$R:e` / `$R:t`。拡張子の無い値なら `$R:e` は空になり語ごと消える)、添字
  * (`$R[1]`)、連結 (`$R/sub` / `"${R}/sub"`)、既定値付き (`${R:-x}`) などは対象にせず、
  * SHELL_EXPANSION_IN_WORD の `$` で ask にする。
- * 受け入れる制約 (ADR 0004): クォートしない参照は、bash では値の空白で、zsh では配列の要素ごとに
- * 複数語になる。同じコマンド内の配列の代入は evaluator が hasArrayAssignment で ask にする。
+ * クォートしない参照は、bash では値の空白で、zsh では配列の要素ごとに複数語になる。値が 1 個の
+ * スカラーだと静的に言えない形 (isStaticScalarDirVariable が false) は、正規化した形で deny を照合した
+ * うえで ask にする。
  */
 const EXACT_VARIABLE_DIR = new RegExp(`^(?:(${VARIABLE_REFERENCE_SOURCE})|"(${VARIABLE_REFERENCE_SOURCE})")$`);
 
@@ -1119,36 +1123,50 @@ function hasShellExpansionInDir(dir: string): boolean {
   return dirVariableOf(dir) === undefined && SHELL_EXPANSION_IN_WORD.test(dir);
 }
 
-/**
- * NAME を配列にしうる代入・宣言がコマンド文字列内にあるか。クォートしない `-C $NAME` は、zsh では
- * 配列の要素ごとに複数語へ展開される (`a=(x push --force); git -C $a status` は
- * `git -C x push --force status`)。対象は同じコマンド内の次の形 (網羅ではない)。
- * - `NAME=(` / `NAME+=(` / `NAME[...]=`
- * - `typeset` / `declare` / `local` / `readonly` / `export` / `integer` / `float` / `set` / `read` /
- *   `vared` に、`a` か `A` を含むオプションと NAME が続く (`typeset -a NAME`、`set -A NAME`、`read -rA NAME`)
- * - `mapfile` / `readarray` / `zparseopts` の後ろに NAME がある
- * ユーザの設定 (`~/.zshrc` 等) で定義された配列は検知できない。
- */
-export function hasArrayAssignment(command: string, name: string): boolean {
-  const word = `(?<![A-Za-z0-9_$])${name}(?![A-Za-z0-9_])`;
-  const patterns = [
-    new RegExp(`(?<![A-Za-z0-9_$])${name}(?:\\[[^\\]]*\\])?\\+?=\\(`),
-    new RegExp(`(?<![A-Za-z0-9_$])${name}\\[[^\\]]*\\]\\+?=`),
-    new RegExp(
-      `(?<![A-Za-z0-9_])(?:typeset|declare|local|readonly|export|integer|float|set|read|vared)\\s(?:[^;&|\\n]*\\s)?[-+][A-Za-z]*[aA][A-Za-z]*\\s[^;&|\\n]*?${word}`,
-    ),
-    new RegExp(`(?<![A-Za-z0-9_])(?:mapfile|readarray|zparseopts)\\s[^;&|\\n]*?${word}`),
-  ];
-  return patterns.some((p) => p.test(command));
-}
+/** 大文字・数字・`_` だけの変数名。zsh の特殊配列・tied 配列 (`argv` / `path` / `cdpath` / `fpath` 等) は全て小文字 */
+const UPPERCASE_NAME = /^[A-Z_][A-Z0-9_]*$/;
+/** セグメント先頭の `NAME=<リテラル>` のリテラル。括弧・クォート・`$`・バックスラッシュ・glob・空白を含まない */
+const ASSIGNMENT_LITERAL = /^[A-Za-z0-9_./~:@%+,=-]*$/;
+/** セグメントの先頭 (コマンド文字列の先頭か、区切り `;` `&` `|` 改行の直後の空白の後) */
+const SEGMENT_START = /(?:^|[;&|\n])[ \t]*$/;
+/** `eval` / `source` / バッククォート */
+const EVAL_LIKE = /`|(?<![A-Za-z0-9_./-])(?:eval|source)(?![A-Za-z0-9_./-])/;
+/** `.` コマンド (セグメント先頭か、`builtin` / `command` 等の後の単独の `.`) */
+const DOT_COMMAND = /(?:^|[;&|\n({])[ \t]*(?:(?:builtin|command|exec|noglob|nocorrect)[ \t]+)*\.(?=[ \t]|$)/m;
 
 /**
- * `git -C <dir> ...` の `-C` の引数が変数参照 (EXACT_VARIABLE_DIR) なら、その変数名とクォートの有無を返す。
- * 正規化できない形・`-C` の無いコマンドでは undefined。
+ * クォートしない `-C $NAME` / `-C ${NAME}` を、値が 1 個のスカラーとして正規化してよいか。
+ * 次を全て満たすときだけ true (配列を作る構文を列挙するのではなく、閉じた規則で判定する)。
+ * 1. NAME は大文字・数字・`_` だけ。zsh の特殊配列と tied 配列は全て小文字の名前で、これで除外できる
+ * 2. コマンド全体の `$` は、全て `-C` の引数のちょうど `$NAME` / `${NAME}` の参照である (クォートの中も
+ *    含め、他の `$` が 1 つでもあれば外れる)。`${(A)R::=...}`・`${(P)x}`・`$(...)`・`$'...'`・`set -A $x` 等
+ * 3. NAME が語として現れるのは (大小文字を区別せず、語の境界で区切る)、`-C` の参照と、セグメント先頭の
+ *    `NAME=<リテラル>` (ASSIGNMENT_LITERAL) だけ。`typeset -T X R`・`zstyle -a ctx style R`・`read -A R`・
+ *    `set -A R`・`R=(...)`・`"R=(x)"` (偽陽性だが安全側) 等
+ * 4. `eval`・`source`・`.` コマンド・バッククォートを含まない
+ * ユーザ自身の設定 (`~/.zshrc`・シェルスナップショット) で定義された配列・alias・tied 配列は防がない (ADR 0004)。
  */
-export function gitCDirVariable(command: string): { name: string; quoted: boolean } | undefined {
-  const gitC = analyzeGitC(command, stripShellPrefixes(command));
-  return gitC.kind === "normalized" ? gitC.dirVariable : undefined;
+export function isStaticScalarDirVariable(command: string, name: string): boolean {
+  if (!UPPERCASE_NAME.test(name)) return false;
+  if (EVAL_LIKE.test(command) || DOT_COMMAND.test(command)) return false;
+
+  const dollarCount = command.split("$").length - 1;
+  const references = command.match(
+    new RegExp(`(?<=(?:^|\\s)-C\\s+)(?:\\$${name}(?![A-Za-z0-9_])|\\$\\{${name}\\})(?=$|[\\s;&|])`, "g"),
+  );
+  if ((references?.length ?? 0) !== dollarCount) return false;
+
+  for (const m of command.matchAll(new RegExp(`(?<![A-Za-z0-9_])${name}(?![A-Za-z0-9_])`, "gi"))) {
+    const start = m.index;
+    const before = command.slice(0, start);
+    if (before.endsWith("$") || before.endsWith("${")) continue;
+    if (m[0] === name && SEGMENT_START.test(before) && command[start + name.length] === "=") {
+      const literal = /^[^\s;&|]*/.exec(command.slice(start + name.length + 1))?.[0] ?? "";
+      if (ASSIGNMENT_LITERAL.test(literal)) continue;
+    }
+    return false;
+  }
+  return true;
 }
 
 /**
@@ -1194,8 +1212,9 @@ function rawTokenSpans(input: string): { start: number; end: number }[] {
  * 正規化結果が実際の実行と一致する保証が無いので ask にする。
  * 戻り値の `normalized` は元のクォートを保った生文字列 (非 -C コマンドと同じ条件で
  * ルール照合するため)。
+ * wholeCommand はクォートしない `-C $NAME` を判定するコマンド全体 (isStaticScalarDirVariable)。
  */
-function analyzeGitC(command: string, stripped: string): GitCAnalysis {
+function analyzeGitC(command: string, stripped: string, wholeCommand: string = command): GitCAnalysis {
   const spans = rawTokenSpans(stripped);
   const raw = (k: number) => stripped.slice(spans[k].start, spans[k].end);
   if (spans.length === 0 || commandBaseName(raw(0)) !== "git") return { kind: "none" };
@@ -1234,12 +1253,13 @@ function analyzeGitC(command: string, stripped: string): GitCAnalysis {
   if (i >= spans.length) return { kind: "none" };
   const normalized = `git ${stripped.slice(spans[i].start)}`;
   const dirVariable = dirVariableOf(dirs[0]);
-  if (dirVariable === undefined) return { kind: "normalized", normalized };
-  if (dirSpan !== null && !dirVariable.quoted) {
-    const vanishingDirCommand = `${stripped.slice(0, dirSpan.start)}${stripped.slice(dirSpan.end).trimStart()}`;
-    return { kind: "normalized", normalized, dirVariable, vanishingDirCommand };
+  if (dirVariable === undefined || dirVariable.quoted || dirSpan === null) return { kind: "normalized", normalized };
+  const vanishingDirCommand = `${stripped.slice(0, dirSpan.start)}${stripped.slice(dirSpan.end).trimStart()}`;
+  if (!isStaticScalarDirVariable(wholeCommand, dirVariable.name)) {
+    const askReason = "クォートしない -C の変数参照が 1 個のスカラーだと静的に言えない";
+    return { kind: "normalized", normalized, vanishingDirCommand, askReason };
   }
-  return { kind: "normalized", normalized, dirVariable };
+  return { kind: "normalized", normalized, vanishingDirCommand };
 }
 
 /**
@@ -1261,10 +1281,13 @@ function vanishedAskPattern(vanishing: string, rules: readonly Rule[]): string |
 /**
  * コマンドがルールパターンにマッチするか判定する。
  * マッチした場合、判定結果・コマンド・マッチしたパターンを返す。
+ * wholeCommand は command を含むコマンド全体 (evaluateCommand の生コマンド)。クォートしない
+ * `git -C $NAME` を正規化してよいかの判定 (isStaticScalarDirVariable) に使う。既定は command 自身。
  */
 export function matchCommand(
   command: string,
   rules: readonly Rule[],
+  wholeCommand: string = command,
 ): MatchResult {
   // シェルプレフィックスを除去したコマンドも用意
   const stripped = stripShellPrefixes(command);
@@ -1282,7 +1305,7 @@ export function matchCommand(
   }
 
   // `git -C <dir> <sub> ...` は `git <sub> ...` に正規化した候補でも deny を照合する
-  const gitC = analyzeGitC(command, stripped);
+  const gitC = analyzeGitC(command, stripped, wholeCommand);
   const denyCandidates = gitC.kind === "normalized" ? [...candidates, gitC.normalized] : candidates;
 
   // クォート内を除去した候補も用意（コミットメッセージ等の文字列リテラル内の
@@ -1320,6 +1343,10 @@ export function matchCommand(
   // `git -C` 形だが正規化できない (展開を含む dir / 付け替えの併用等)
   if (gitC.kind === "ask") {
     return { decision: "ask", command, pattern: `git -C (${gitC.reason})` };
+  }
+  // 正規化はできたが、クォートしない `-C $NAME` の値が 1 個のスカラーだと静的に言えない
+  if (gitC.kind === "normalized" && gitC.askReason !== undefined) {
+    return { decision: "ask", command, pattern: `git -C (${gitC.askReason})` };
   }
 
   // 正規化した `git <sub> ...` が非 -C allow ルールにサブコマンド位置で一致した。

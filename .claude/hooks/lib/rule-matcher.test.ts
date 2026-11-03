@@ -7,7 +7,7 @@ import {
   stripShellPrefixes,
   checkDangerousGitFlags,
   extractBashPattern,
-  hasArrayAssignment,
+  isStaticScalarDirVariable,
   patternToRegex,
 } from "./rule-matcher.ts";
 import { loadRules } from "./rules.ts";
@@ -1298,44 +1298,64 @@ describe("統合テスト: settings.json ルールでの判定", () => {
     });
   });
 
-  describe("hasArrayAssignment", () => {
+  // クォートしない `-C $NAME` を値が 1 個のスカラーとして正規化してよいかの閉じた規則
+  describe("isStaticScalarDirVariable", () => {
     test.each([
-      "a=(x y)",
-      "a+=(x)",
-      "a[1]=x",
-      "a[1]+=x",
-      "foo; a=(x) && bar",
-      "typeset -a a",
-      "typeset -ga a",
-      "typeset -A a",
-      "declare -a a=(x)",
-      "local -a a",
-      "readonly -a a",
-      "export -a a",
-      "set -A a x y",
-      "set +A a x",
-      "read -A a",
-      "read -ra a",
-      "vared -a a",
-      "mapfile a",
-      "readarray -t a",
-      "zparseopts -a a x",
-    ])("%j は a を配列にする", (command) => {
-      expect(hasArrayAssignment(command, "a")).toBe(true);
+      "git -C $R status",
+      "git -C ${R} status",
+      "R=/x; git -C $R diff --stat",
+      "R=/x && git -C $R status",
+      "R=~/x; git -C $R status",
+      "R=/a/b.c-d_e:f@g%h+i,j=k; git -C $R status",
+      "R=; git -C $R status",
+      "R=/x git -C $R status",
+      "git -C $R status; git -C ${R} log",
+      "X=/a; git -C $R status",
+      "git -C . status; git -C $R log",
+    ])("%j は true", (command) => {
+      expect(isStaticScalarDirVariable(command, "R")).toBe(true);
     });
 
     test.each([
-      "a=x",
-      "ab=(x)",
-      "ba=(x)",
-      "$a=(x)",
-      "typeset a",
-      "typeset -x a",
-      "local a=x",
-      "read a",
-      "typeset -a b; echo a",
-    ])("%j は a を配列にしない", (command) => {
-      expect(hasArrayAssignment(command, "a")).toBe(false);
+      // 規則 2: -C の参照以外の `$` (クォートの中も含む)
+      ": ${(A)R::=. push --force origin}; git -C $R main",
+      "printf -v x R; set -A $x . push; git -C $R status",
+      "git -C $R log $(echo x)",
+      "git -C $R commit -m \"cost $X\"",
+      "git -C $R log '$x'",
+      "git -C $R log $'x'",
+      'git -C "$R" log; git -C $R status',
+      "git -C $S status; git -C $R log",
+      "echo $R; git -C $R status",
+      // 規則 3: NAME が -C の参照とセグメント先頭の `NAME=<リテラル>` 以外に現れる
+      "typeset -T X R; X=.:push; git -C $R main",
+      "zstyle -a ctx style R; git -C $R main",
+      "read -A R; git -C $R status",
+      "set -A R x push; git -C $R status",
+      "R=(x push); git -C $R status",
+      "R+=(x); git -C $R status",
+      "R[1]=x; git -C $R status",
+      "typeset -a R; git -C $R status",
+      "export R=/x; git -C $R status",
+      'R="/x y"; git -C $R status',
+      "R='/x'; git -C $R status",
+      "R=/x*; git -C $R status",
+      "r=/x; git -C $R status",
+      'git commit -m "R=(x)"; git -C $R status',
+      "(R=/x); git -C $R status",
+      // 規則 4: eval / source / `.` コマンド / バッククォート
+      "eval 'R=(x push)'; git -C $R status",
+      "source ./env.sh; git -C $R status",
+      ". ./env.sh; git -C $R status",
+      "builtin . ./env.sh; git -C $R status",
+      "git -C $R log `x`",
+    ])("%j は false", (command) => {
+      expect(isStaticScalarDirVariable(command, "R")).toBe(false);
+    });
+
+    // 規則 1: 大文字・数字・`_` 以外を含む名前 (zsh の特殊配列・tied 配列は全て小文字)
+    test.each(["argv", "cdpath", "path", "fpath", "pipestatus", "dir", "Repo"])("名前 %j は false", (name) => {
+      expect(isStaticScalarDirVariable(`git -C $${name} status`, name)).toBe(false);
     });
   });
 

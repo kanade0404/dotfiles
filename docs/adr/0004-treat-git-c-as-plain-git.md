@@ -53,12 +53,13 @@ ADR 0003 の決定のうち、本 ADR の Decision で変えたもの以外は�
   - 対象は、語全体がちょうど `$NAME`、`${NAME}`、`"$NAME"`、`"${NAME}"` のどれかで、前後に何も付かないものだけである。`$NAME` は名前の文字を最長で読む。
   - それ以外の形は従来どおり ask にする。zsh の修飾子 (`$R:e`、`$R:t`)、添字 (`$R[1]`)、連結 (`$R/sub`、`"${R}/sub"`)、既定値付き (`${R:-x}`)、特殊パラメータ (`$1`、`$@`) などが該当する。修飾子と添字は値を変え、`$R:e` は空になって語ごと消えうるためである。
   - クォートしない形 (`$R`、`${R}`) は、値が入った形 (正規化した `git <sub> ...`) と、値が空で語が消えた形 (`git -C <次の語> ...`) の両方で deny と ask を照合する。語が消えた形は `analyzeGitC` の `vanishingDirCommand` で 1 か所で組み立てる。`ask: ["Bash(git push *)"]` があれば、`git -C $EMPTY status push origin main` は ask になる。語の消えた形を正規化できないこと (`git -C diff --stat` は `--stat` を global option と読む) は、ask の理由にしない。allow は値が入った形で判定する。
-  - クォートしない形の変数について、同じコマンドの中にその名前を配列にする代入・宣言があれば ask にする (`hasArrayAssignment`)。対象は次の形である。
-    - `NAME=(`、`NAME+=(`、`NAME[...]=`
-    - `typeset` / `declare` / `local` / `readonly` / `set` / `read` などに、`a` か `A` を含むオプションと NAME が続く形
-    - `mapfile` / `readarray` / `zparseopts` の後ろの NAME
-
-    ユーザ自身の設定 (`~/.zshrc` など) で定義された配列は検知できず、防がない。
+  - クォートしない形は、値が 1 個のスカラーだと静的に言える場合だけ正規化し、それ以外は ask にする (`isStaticScalarDirVariable`)。配列を作る構文は `typeset -T`、`zstyle -a`、`${(A)name::=...}`、`set --` (`argv`)、tied 配列 (`CDPATH` と `cdpath`) など数が多く、列挙では収束しない。そこで次の閉じた規則を使う。4 つを全て満たすときだけ正規化する。
+    - NAME は大文字、数字、`_` だけからなる (`^[A-Z_][A-Z0-9_]*$`)。zsh の特殊配列と tied 配列 (`argv`、`path`、`cdpath`、`fpath`、`pipestatus` など) は全て小文字の名前なので、これで除外できる。
+    - コマンド全体の `$` は、全て `-C` の引数のちょうど `$NAME` / `${NAME}` の参照である。クォートの中も含め、他の `$` が 1 つでもあれば外れる。`${(A)R::=...}`、`${(P)x}`、`$(...)`、`$'...'`、`set -A $x` などを、列挙せずにまとめて除外できる。
+    - コマンドの中で NAME が語として現れるのは、`-C` の参照と、セグメント先頭の `NAME=<リテラル>` だけである。照合は大文字と小文字を区別せず、語の境界で区切る。リテラルは `^[A-Za-z0-9_./~:@%+,=-]*$` に一致し、括弧、クォート、`$`、バックスラッシュ、glob、空白を含まない。`typeset -T X R`、`zstyle -a ctx style R`、`read -A R`、`set -A R`、`R=(...)` を除外できる。`"R=(x)"` のようなクォートの中の文字列も外れるが、安全側の偽陽性として受け入れる。
+    - `eval`、`source`、`.` コマンド、バッククォートを含まない。
+  - ask にする場合も、正規化した形で deny を照合する。`git -C $dir push --force` は deny になる。
+  - この規則の前提として、ユーザ自身の `~/.zshrc` やシェルスナップショットで定義された配列、alias、tied 配列は防がない。これらの値の出どころはユーザ自身が管理しているためである。
 - 複合コマンドは (a) を採る。ただし shell-parser の分解結果は使わず、生コマンド全体に正の文法を当てる (`evaluator.ts` の `hookAllowSegments`)。次を全て満たすときだけ hook allow を返す。
 
     ```text
@@ -114,9 +115,10 @@ ADR 0003 の決定のうち、本 ADR の Decision で変えたもの以外は�
   - ADR 0003 が Option D として却下した形を、ユーザの要望で受け入れる。cwd のリポジトリ自体の設定を経由した実行面は、ADR 0003 の時点でも非 -C の `git status` と同じく残っていた。
 - 受け入れたトレードオフの 2 つ目は、クォートしない `$VAR` の語数が静的に決まらないことである。deny / ask の判定は `-C $R` を 1 語 (値が入った形) か 0 語 (語が消えた形) として行う。
   - bash では、R に空白を含む値が入っていると単語分割される。`R='/x reset --hard'` なら、`git -C $R status` は bash で `git -C /x reset --hard status` になる。
-  - zsh では、R が配列なら要素ごとに別の語になる。同じコマンド内の配列の代入・宣言は ask にするが、`~/.zshrc` などユーザの設定で定義された配列や、`hasArrayAssignment` の列挙から漏れた形は検知できない。
+    - 同じコマンド内で代入されたリテラルの値は、`isStaticScalarDirVariable` の規則 3 により空白を含まないので、この分割は起きない。分割が起きうるのは、環境やユーザの設定から来た値である。
+  - zsh では、R が配列なら要素ごとに別の語になる。同じコマンドの中で配列にしうる形は `isStaticScalarDirVariable` で ask にする。`~/.zshrc` やシェルスナップショットなど、ユーザ自身の設定で定義された配列 (大文字の名前のもの) は検知できない。
   - これらの場合は、危険 git フラグの backstop や deny が効かないまま pass-through になりうる。以前は `-C` の引数に `$` があれば一律に ask だった。
-  - pass-through 後は、`default` では本体が確認を出し、auto mode では classifier が判定する (settings.json に `-C` ルールが無いので本体は自動許可しない)。`bypassPermissions` では実行される。hook allow はクォートしない参照を対象にしないので、hook がこれを自動許可することはない。
+  - pass-through 後は、`default` / `acceptEdits` では本体が確認を出し、auto mode では classifier が判定する (settings.json に `-C` ルールが無いので本体は自動許可しない)。`bypassPermissions` では実行される。hook allow はクォートしない参照を対象にしないので、hook がこれを自動許可することはない。
 - 代入やクォートしない `-C $R` を含むコマンドは、`default` / `acceptEdits` では本体の確認が出る。自動許可したい場合は、代入を分けて `git -C "$R" diff` とクォートする。
 - 複合コマンドの hook allow は、本体が自分でセグメントを解析して判定する手順を飛ばす。git 以外のセグメントは、ユーザ設定のコマンド名を固定した allow に一致することを根拠にする。`default` / `acceptEdits` の本体も同じ allow で自動許可するが、本体がそれ以外に行う検査 (作業ディレクトリ外のパスなど) と一致する保証は無い。
 - 複合コマンドの文法は、ADR 0003 の単一コマンドの文法と違い、文法に一致する入力を zsh と bash で実際に実行する検証 (偽の `git` を PATH に置いたランダム生成の実行) をしていない。根拠はシェルの字句規則の検討と、hook をプロセスとして起動するテストだけである。
@@ -130,7 +132,7 @@ ADR 0003 の決定のうち、本 ADR の Decision で変えたもの以外は�
   - nix 2.34.9 の `builtins.fetchGit` と `nix flake metadata --refresh` は影響を受けない。
   - Go は検証していない。VCS キャッシュ (`$GOMODCACHE/cache/vcs`) は bare リポジトリなので、`GOPROXY=direct` での git 取得は壊れる可能性がある。cargo も `net.git-fetch-with-cli=true` にすると同じ可能性がある。既定の libgit2 を使う場合は影響しない。
   - 該当するディレクトリだけは、`includeIf "gitdir:<dir>/"` で `safe.bareRepository = all` にして回避する。
-- 組み込みコマンド・ラッパーの除外 (`NON_ALLOWABLE_COMMANDS`) と配列の代入・宣言の検知 (`hasArrayAssignment`) は列挙であり、網羅を保証しない。ユーザ設定の alias・関数・global alias が文法に一致する入力の意味を変えうる点は ADR 0003 と同じく防御対象外とする。
+- 組み込みコマンド・ラッパーの除外 (`NON_ALLOWABLE_COMMANDS`) は列挙であり、網羅を保証しない。ユーザ設定の alias・関数・global alias が文法に一致する入力の意味を変えうる点は ADR 0003 と同じく防御対象外とする。
 - 上の例そのもの (ヒアドキュメント付きの `/usr/bin/python3` を含む) は文法外なので hook allow しない。python3 はユーザ設定の allow にも無いので、`default` では本体が確認を出す。
 
 ### Neutral

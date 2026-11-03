@@ -1,6 +1,4 @@
 import {
-  gitCDirVariable,
-  hasArrayAssignment,
   matchCommand,
   SIDE_EFFECT_FREE_GIT_GLOBAL_OPTS,
   VARIABLE_REFERENCE_SOURCE,
@@ -124,7 +122,7 @@ const SUBCOMMAND_ANCHORED_GIT_PATTERN = /^Bash\(git [A-Za-z0-9][A-Za-z0-9._-]*(?
  * `*` / `e*` / `echo*` は不可。コマンド名が NON_ALLOWABLE_COMMANDS のもの (`command *` 等) は
  * rulesForHookAllow が外す。
  */
-const COMMAND_ANCHORED_PATTERN = /^Bash\(([A-Za-z0-9_][A-Za-z0-9_.+-]*)(?:\)$| |:\*\)$)/;
+const COMMAND_ANCHORED_PATTERN = new RegExp(`^Bash\\((${COMMAND_NAME})(?:\\)$| |:\\*\\)$)`);
 
 /**
  * hook allow の判定に使うルール。deny / ask は出自を問わず残す (判定を厳しくする方向のため)。
@@ -175,8 +173,8 @@ function hookAllowSegments(command: string, rules: readonly Rule[]): boolean {
   const segments = command.split(SEPARATOR_SPLIT);
   const allowRules = rulesForHookAllow(rules);
   const blockingRules = rules.filter((rule) => rule.category !== "allow");
-  const positivelyAllowed = (text: string) =>
-    allowRules.some((rule) => rule.category === "allow" && rule.regex.test(text));
+  const positiveRules = allowRules.filter((rule) => rule.category === "allow");
+  const positivelyAllowed = (text: string) => positiveRules.some((rule) => rule.regex.test(text));
   let hasGitC = false;
 
   for (const text of segments) {
@@ -307,10 +305,10 @@ export function isAssignmentOnly(command: string): boolean {
  * ので、pass-through 経路でも安全性は維持される。
  *
  * `git -C <dir> <sub>` は rule-matcher が `git <sub>` に正規化して判定する (ADR 0004)。
- * `-C` の引数がクォートしない変数参照 (`$R`) で、同じコマンド内にその名前を配列にする代入・宣言
- * (hasArrayAssignment) があれば ask にする。zsh では配列の要素ごとに複数語へ展開され、正規化した
- * `git <sub>` と実際に実行されるサブコマンドがずれるため。照合する文字列は rawCommand (無ければ
- * サブコマンドを繋いだもの)。
+ * `-C` の引数がクォートしない変数参照 (`$R`) のときは、値が 1 個のスカラーだと静的に言えなければ
+ * ask にする (rule-matcher の isStaticScalarDirVariable)。zsh では配列の要素ごとに複数語へ展開され、
+ * 正規化した `git <sub>` と実際に実行されるサブコマンドがずれるため。判定に使うコマンド全体は
+ * rawCommand (無ければサブコマンドを繋いだもの)。
  *
  * settings.json に `-C` 版ルールを置かない (rule-matcher の analyzeGitC 参照) ため、本体は
  * `git -C` を自力で allow しない。生コマンド (rawCommand) 全体が hookAllowSegments の条件
@@ -332,19 +330,9 @@ export function evaluateCommand(
   for (const sub of subCommands) {
     if (isAssignmentOnly(sub)) continue;
 
-    const result = matchCommand(sub, rules);
-    if (result?.decision === "deny") {
-      denyReasons.push({ command: sub, pattern: result.pattern });
-      continue;
-    }
-    if (result?.decision === "ask") {
-      askReasons.push(sub);
-      continue;
-    }
-    const dirVariable = gitCDirVariable(sub);
-    if (dirVariable !== undefined && !dirVariable.quoted && hasArrayAssignment(whole, dirVariable.name)) {
-      askReasons.push(sub);
-    }
+    const result = matchCommand(sub, rules, whole);
+    if (result?.decision === "deny") denyReasons.push({ command: sub, pattern: result.pattern });
+    else if (result?.decision === "ask") askReasons.push(sub);
   }
 
   if (denyReasons.length > 0) {
