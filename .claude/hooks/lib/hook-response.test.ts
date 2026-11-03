@@ -166,9 +166,7 @@ describe("pre-tool-use-bash-analyzer (プロセス)", () => {
     expect(JSON.parse(r.stdout).hookSpecificOutput.permissionDecision).toBe("deny");
   });
 
-  // hook が allow を返すのは、生コマンド全体が `git ... -C <dir> ... <sub> ...` を含む単純コマンドの
-  // 並びの文法 (evaluator.ts の hookAllowSegments) に一致し、全セグメントが deny / ask に当たらず
-  // allow ルールに肯定的に一致する場合だけ。<dir> はリテラルか `"$R"` で、判定には使わない。
+  // hook allow の条件は evaluator.ts の hookAllowSegments (ADR 0004 参照)
   test.each([
     "git -C sub status",
     "git -C sub log --oneline -5",
@@ -185,9 +183,7 @@ describe("pre-tool-use-bash-analyzer (プロセス)", () => {
     expect(env.decisionOf(command)).toBe("allow");
   });
 
-  // 従来は -C の引数の変数参照で ask を返していた。正規化後の deny / ask に当たらなければ
-  // 確認を出さない。代入とクォートしない変数参照は hook allow の対象外なので、pass-through で
-  // 本体の判定に委ねる
+  // 代入は hook allow の対象外なので pass-through
   test.each([
     'R=/Users/kanade0404/orca/workspaces/skills/pinniped; git -C "$R" diff --stat',
     "/usr/bin/python3 - <<'EOF'\nprint(1)\nEOF\nR=/Users/kanade0404/orca/workspaces/skills/pinniped; git -C \"$R\" diff --stat",
@@ -264,9 +260,7 @@ describe("pre-tool-use-bash-analyzer (プロセス)", () => {
     expect(env.decisionOf(command)).not.toBe("allow");
   });
 
-  // `git -C <dir> <sub>` は `git <sub>` と同じ扱いで、-C の対象が cwd と別のリポジトリでも
-  // allow を返す (ADR 0004)。対象リポジトリの .git/config (core.fsmonitor 等) や .git/hooks が
-  // 確認無しに実行されうることは受け入れたトレードオフ。
+  // -C の対象が cwd と別のリポジトリでも allow を返す (ADR 0004 参照)
   test.each([
     ["無関係なリポジトリ", (f: GitFixture) => `git -C ${f.other} status`],
     ["submodule 相当", () => "git -C sm status"],

@@ -135,22 +135,9 @@ TypeScript 製の PreToolUse hook で Bash コマンドの権限を統合管理�
 - Codex は `.codex/rules/default.rules` の `prefix_rule()` で sandbox 外実行の `allow/prompt/forbidden` を判定
 - シェルコマンドを構文解析（パイプ、`&&`、コマンド置換、ヒアドキュメント等）
 - dangerous-git-flags 検出（`--no-verify`, `--force` 等の位置非依存チェック）
-- `git -C <dir> <subcommand>` は `git <subcommand>` に正規化して通常の git ルールで判定する。経緯と受け入れたトレードオフは [ADR 0004](docs/adr/0004-treat-git-c-as-plain-git.md)
-  - `-C` の対象ディレクトリ (別リポジトリかどうか) は判定に使わない
-  - `-C` の引数がダブルクォートした変数参照 (語全体でちょうど `"$R"` / `"${R}"`) なら、リテラルの dir と同じく正規化する。この形は値によらず 1 語のままである
-  - クォートしない `$R` / `${R}` は ask にする。代入の有無 (`R=/x; git -C $R diff --stat` を含む) は問わない。bash の単語分割や zsh の配列があり、展開後の語数を静的に決められないためである。ask を返す前に、正規化した形と値が空で語が消えた形 (`git -C <次の語> ...`) で deny を照合する (`git -C $R push --force` は deny)
-  - ask を避けるには `git -C "$R" diff --stat` とクォートする
-  - zsh の修飾子 (`$R:e`)・添字・連結 (`$R/sub`、`"${R}/sub"`)・既定値付きなども ask にする
-  - `settings.json` には `git -C` 系ルールを置かない。hook が動かない環境で、本体が `-C` 版の deny を外したまま自動許可しないためである
-  - hook が allow を返すのは、Claude Code から起動され (`--client=claude-code`)、permission_mode が `default` / `acceptEdits` のときだけである
-  - さらにコマンド全体が、単純コマンドを `;` / `&&` / `||` / `|` で繋いだ正の文法に一致し、`git -C` を含む必要がある。全セグメントは deny / ask のどれにも当たらず、`~/.claude/settings.json` の allow ルールに肯定的に一致しなければならない (`git -C` は正規化後で照合)
-  - hook allow の対象は、リテラルの dir と `"$VAR"` の `git -C`、`-C` の無い git、allow に当たる git 以外の単純コマンドを繋いだものである
-  - git 以外の単純コマンドは、allow ルールと一致することに加えて、コマンド名が `NON_ALLOWABLE_COMMANDS` (シェルの予約語・組み込みコマンドと、別のコマンドを起動するラッパー) に含まれない必要がある。`printf`・`command`・`env`・`nice`・`exec` などは allow ルールに一致しても hook allow しない
-  - 代入 (`R=/x`) とクォートしない変数 (`-C $R`) は hook allow の対象外にする。zsh の配列や修飾子があるので、クォートしない語の展開は静的に決められない。代入は export 済みの変数を書き換え、後のセグメントや git 自身の動作を変えうる
-  - そのため `R=/x; git -C "$R" diff --stat` は ask にならないが、自動許可もされず pass-through になる。auto mode では classifier が判定し、`default` / `acceptEdits` では本体が確認を出す
-  - ヒアドキュメント・リダイレクト・前置・改行を含むコマンドは本体の判定に委ねる。Codex には allow を返さない
-  - 別リポジトリの `.git/config` や `.git/hooks` が確認無しに実行されうることは受け入れている
-  - clone した作業ツリーに埋め込まれた bare リポジトリ (embedded bare repository) の経路は、`nix/home.nix` の `safe.bareRepository = "explicit"` で塞いでいる。この設定は home-manager (`nix/home.nix`) を適用したホストにしか効かない。`install.sh` で hook だけを配ったマシンでは、embedded bare repository の経路が開いたままになる
+- `git -C <dir> <subcommand>` は `git <subcommand>` として判定する。`-C` の対象ディレクトリは問わない。クォートしない `-C $R` は ask にする (`"$R"` とクォートすれば正規化する)
+  - hook が allow を返すのは Claude Code の `default` / `acceptEdits` だけである。`git -C` を含む単純コマンドの並びで、全セグメントが `~/.claude/settings.json` の allow に一致する必要がある
+  - 詳細とトレードオフは [ADR 0004](docs/adr/0004-treat-git-c-as-plain-git.md)。`safe.bareRepository` による緩和は home-manager を適用したホストでのみ効く
 - deny 時に代替ツールを案内（`ls` → Glob ツール、`cat` → Read ツール等）
 
 ```bash

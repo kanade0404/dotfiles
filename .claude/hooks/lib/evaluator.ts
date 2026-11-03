@@ -24,13 +24,7 @@ const PLAIN_WORD = `[${PLAIN_CHARS}](?:[${PLAIN_CHARS}]|(?<=[A-Za-z0-9_-])=|(?<=
 /** シングル / ダブルクォートの word。中身は PLAIN_CHARS と半角スペースだけ (連結は不可) */
 const QUOTED_WORD = `'[ ${PLAIN_CHARS}]*'|"[ ${PLAIN_CHARS}]*"`;
 const WORD = `(?:${PLAIN_WORD}|${QUOTED_WORD})`;
-/**
- * `-C` の位置だけで許す word。WORD に加えて、ダブルクォートした変数参照 1 個だけの word
- * (`"$R"` / `"${R}"`。値によらず 1 語のまま) を許す。変数参照は rule-matcher.ts と共有する。
- * クォートしない参照 (`$R`) は、zsh の配列・修飾子や bash の単語分割で語数が静的に決まらないので許さない。
- * 各選択肢は先頭の 2 文字までで排他になる (`"` の直後が `$` か PLAIN_CHARS か)。LIST_GRAMMAR で
- * word を繰り返したときに、一致しない入力でバックトラックが指数的に増えないようにする。
- */
+/** `-C` の引数は WORD か、ダブルクォートした変数参照 1 個 (値によらず 1 語)。ADR 0004 参照 */
 const DIR_WORD = `(?:${PLAIN_WORD}|${QUOTED_WORD}|"${VARIABLE_REFERENCE_SOURCE}")`;
 /** サブコマンド: `-` で始まらないクォート無しの word */
 const SUBCOMMAND = `(?!-)[${PLAIN_CHARS}]+`;
@@ -38,64 +32,32 @@ const GLOBAL_OPT = `(?:${[...SIDE_EFFECT_FREE_GIT_GLOBAL_OPTS]
   .map((opt) => opt.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
   .join("|")})`;
 /**
- * `git -C` のセグメント。
- *
- *   segment := "git" (SP gopt)* SP "-C" SP dirword (SP gopt)* SP sub (SP word)*
- *   gopt    := SIDE_EFFECT_FREE_GIT_GLOBAL_OPTS のいずれか (値を取らないもの)
- *   word    := PLAIN_WORD | QUOTED_WORD
- *   dirword := word | "\"" varref "\""
- *   SP      := 半角スペース 1 個以上
- *
- * 先頭は素の `git` 固定 (`time` / `env` / `command` / 代入 / `(` 等の前置は不可)、`-C` は正確に 1 回。
- *
- * hook の allow は Claude Code 本体の確認を省略させる。実行シェルは zsh
- * (Claude Code の Bash tool はユーザの $SHELL で `eval` する) で、bash 前提の
- * パーサで危険な構文を除外する方式は、zsh 固有の構文 (関数定義 `name () cmd`、
- * `=(...)`、`time VAR=...` 等) を拾いきれず漏れが続いた。そこでシェルの構文を
- * モデル化せず、どのシェルでも単純コマンドとしか読めない字句だけを許す。
- * shell-parser / rule-matcher のトークナイザは使わない (パーサの解釈とのずれが
- * 許可判定に入り込まない構造にする)。
+ * どのシェルでも単純コマンド 1 つとしか読めない字句だけを許す正の文法 (ADR 0003 / 0004 参照)。
+ * shell-parser のトークナイザは使わない (パーサの解釈とのずれを許可判定に入れないため)。
  */
 const GIT_C_GRAMMAR = new RegExp(
   `^git(?: +${GLOBAL_OPT})* +-C +${DIR_WORD}(?: +${GLOBAL_OPT})* +${SUBCOMMAND}(?: +${WORD})*$`,
 );
-/**
- * `-C` の無い git。global option は付けられない (`git --no-pager log` は文法外)。
- * allow ルールの照合 (positivelyAllowed) は生のセグメントで行い、`Bash(git log *)` は
- * global option 付きの形に一致しないので、文法もそれに合わせる。
- */
+/** allow ルールは生のセグメントで照合するので、global option 付きの形は受け付けない */
 const PLAIN_GIT_GRAMMAR = new RegExp(`^git +${SUBCOMMAND}(?: +${WORD})*$`);
-/** git 以外の単純コマンド。コマンド名はパス・クォート・`=` を含まない素の名前 */
 const COMMAND_NAME = "[A-Za-z0-9_][A-Za-z0-9_.+-]*";
 const SIMPLE_COMMAND_GRAMMAR = new RegExp(`^(${COMMAND_NAME})(?: +${WORD})*$`);
-/** セグメントの区切り演算子。改行・`&`・`|&` は含めない */
+/** 改行・`&`・`|&` は区切りに含めない */
 const SEPARATOR_OPERATOR = "(?:;|&&|\\|\\||\\|)";
-/** 区切り (前後の空白を含む) */
 const SEPARATOR = ` *${SEPARATOR_OPERATOR} *`;
-/** 区切りで分割する (区切り自体は捨てる) */
 const SEPARATOR_SPLIT = new RegExp(SEPARATOR);
-/**
- * 区切りで分ける前の粗い文法。セグメントは「コマンド名 + DIR_WORD の並び」で、代入 (`R=/x`) は
- * 含まない (COMMAND_NAME は `=` を含まない)。セグメントごとの厳密な文法 (GIT_C_GRAMMAR /
- * PLAIN_GIT_GRAMMAR / SIMPLE_COMMAND_GRAMMAR) は hookAllowSegments が当てる。
- */
+/** 代入は含まない (COMMAND_NAME は `=` を含まない)。セグメントごとの文法は hookAllowSegments が当てる */
 const SEGMENT = `${COMMAND_NAME}(?: +${DIR_WORD})*`;
 const LIST_GRAMMAR = new RegExp(`^${SEGMENT}(?:${SEPARATOR}${SEGMENT})*$`);
 
 /**
- * hook allow の対象にしない git 以外のコマンド名。シェルの予約語・組み込みコマンド
- * (zsh / bash) と、別のコマンドを起動するラッパー。状態を変えない組み込み (`echo` / `pwd` /
- * `true` / `false` / `test`) は含めない。
- * - 組み込みコマンドはシェルの状態 (変数・関数・alias・hash・オプション・作業ディレクトリ) を
- *   書き換えて後続のセグメントの意味を変えうる (`printf -v PATH ...`、`hash git=...` 等)
- * - ラッパーは allow ルールの照合 (コマンド名のプレフィックス一致) と実際に実行される
- *   コマンドがずれる (`command rm ...`、`nice rm ...`)
+ * hook allow の根拠にしないコマンド名。組み込みはシェルの状態を変えて後続のセグメントの意味を変えうる。
+ * ラッパーは allow の照合に使う名前と実際に実行されるコマンドがずれる。
  */
 const NON_ALLOWABLE_COMMANDS: ReadonlySet<string> = new Set([
-  // rule-matcher.ts が deny 照合の前に剥がす予約語とラッパー (片方にだけ足してずれないよう共有する)
   ...SHELL_KEYWORD_PREFIXES,
   ...COMMAND_PREFIXES,
-  // 予約語 (then / else / elif / do / time は上で取り込み済み)
+  // 予約語
   "if", "fi", "case", "esac", "for", "select", "while", "until", "done",
   "function", "coproc", "repeat", "foreach", "end", "nocorrect", "noglob",
   // zsh / bash の組み込みコマンド
@@ -108,7 +70,7 @@ const NON_ALLOWABLE_COMMANDS: ReadonlySet<string> = new Set([
   "source", "stat", "strftime", "suspend", "times", "trap", "ttyctl", "type", "typeset", "ulimit", "umask", "unalias",
   "unfunction", "unhash", "unlimit", "unset", "unsetopt", "vared", "wait", "whence", "where", "which",
   "zcompile", "zformat", "zle", "zmodload", "zparseopts", "zprof", "zpty", "zregexparse", "zstyle",
-  // 別のコマンドを起動するラッパー (env / command / exec / nohup / nice は上で取り込み済み)
+  // ラッパー
   "sudo", "doas", "xargs", "timeout", "gtimeout", "stdbuf", "caffeinate", "arch",
   "script", "watch", "chroot", "setsid", "unbuffer", "ionice", "taskset", "flock",
 ]);
@@ -121,23 +83,12 @@ const NON_ALLOWABLE_COMMANDS: ReadonlySet<string> = new Set([
  */
 const SUBCOMMAND_ANCHORED_GIT_PATTERN = /^Bash\(git [A-Za-z0-9][A-Za-z0-9._-]*(?:\)$| |:\*\)$)/;
 
-/**
- * `Bash(...)` の中身が git 以外のリテラルのコマンド名で始まり、その直後が終端・空白・`:*` の
- * いずれかである (コマンド名の位置に anchor される)。例: `echo *` / `pwd` / `bun test *` は可、
- * `*` / `e*` / `echo*` は不可。コマンド名が NON_ALLOWABLE_COMMANDS のもの (`command *` 等) は
- * rulesForHookAllow が外す。
- */
+/** `Bash(...)` の中身がリテラルのコマンド名で始まる (コマンド名の位置に anchor される) */
 const COMMAND_ANCHORED_PATTERN = new RegExp(`^Bash\\((${COMMAND_NAME})(?:\\)$| |:\\*\\)$)`);
 
 /**
- * hook allow の判定に使うルール。deny / ask は出自を問わず残す (判定を厳しくする方向のため)。
- * allow は次の両方を満たすものだけに絞る。
- * - 本体が通常適用するユーザ設定由来 (readByClaudeCode。例外は ADR 0003 の既知の制約:
- *   `--setting-sources` / SDK の `settingSources` でユーザ設定を除いた構成)
- * - git ならサブコマンドをリテラルで固定した allow (SUBCOMMAND_ANCHORED_GIT_PATTERN)、
- *   git 以外ならコマンド名をリテラルで固定した allow (COMMAND_ANCHORED_PATTERN) で、
- *   コマンド名が組み込みコマンド・ラッパーでないもの。本体は auto mode で `Bash(*)` などの
- *   広い allow を落として classifier に回すので、広い allow は hook allow の根拠にしない
+ * hook allow の判定に使うルール。deny / ask は出自を問わず残す。allow はユーザ設定由来 (readByClaudeCode) で、
+ * サブコマンドかコマンド名をリテラルで固定したものに限る (広い allow は auto mode で本体が落とすため)。
  */
 function rulesForHookAllow(rules: readonly Rule[]): readonly Rule[] {
   return rules.filter((rule) => {
@@ -149,29 +100,13 @@ function rulesForHookAllow(rules: readonly Rule[]): readonly Rule[] {
   });
 }
 
-/** hook allow の根拠にしてよい git 以外のコマンド名か */
 function isAllowableCommandName(name: string): boolean {
   return name !== "git" && !NON_ALLOWABLE_COMMANDS.has(name);
 }
 
 /**
- * 生コマンド全体を hook allow してよいか (evaluateCommand の hookApproved)。
- *
- * 次を全て満たす場合に限る。shell-parser の分解結果は使わず、生コマンドに正の文法を当てる。
- * - 生コマンド全体が「単純コマンドを `;` / `&&` / `||` / `|` で繋いだもの」の文法 (LIST_GRAMMAR) に
- *   一致する。代入 (`R=/x`)、クォートしない変数参照 (`-C $R`)、改行・ヒアドキュメント・リダイレクト・
- *   括弧・前置は文法外 (pass-through で本体の判定に委ねる)
- * - `git -C` のセグメントが 1 つ以上ある (-C が無いコマンドは従来どおり本体の判定に委ねる)
- * - 全セグメントが deny / ask (危険 git フラグ・機密パスを含む) のどれにも当たらず、allow ルールに
- *   肯定的に一致する (照合に使う allow は rulesForHookAllow)。どのルールにも一致しないセグメントが
- *   1 つでもあれば allow しない
- *   - `git -C` は GIT_C_GRAMMAR に一致し、matchCommand が正規化した `git <sub> ...` を allow に
- *     一致させる (gitCNormalized)。matchCommand は `-C` 付きのコマンドで deny > ask > allow の順に
- *     照合するので、allow の結果だけで deny / ask に当たらないことも分かる (呼び出しは 1 回)
- *   - `-C` の無い git は PLAIN_GIT_GRAMMAR、git 以外は SIMPLE_COMMAND_GRAMMAR に一致し (git 以外は
- *     コマンド名が組み込みコマンド・ラッパーでない)、生のセグメントが allow に一致する。matchCommand は
- *     `-C` の無いコマンドでは allow を ask より先に見るので、deny / ask は allow 以外のルールだけで
- *     改めて照合する (呼び出しは 1 回)
+ * 生コマンド全体を hook allow してよいか (条件は ADR 0004 参照)。
+ * `-C` の無いセグメントでは matchCommand が allow を ask より先に見るので、deny / ask だけで改めて照合する。
  */
 function hookAllowSegments(command: string, rules: readonly Rule[]): boolean {
   if (!LIST_GRAMMAR.test(command)) return false;
@@ -309,18 +244,8 @@ export function isAssignmentOnly(command: string): boolean {
  * 機密ファイルパスや危険な git フラグは rule-matcher 側で deny に昇格する
  * ので、pass-through 経路でも安全性は維持される。
  *
- * `git -C <dir> <sub>` は rule-matcher が `git <sub>` に正規化して判定する (ADR 0004)。
- * `-C` の引数がクォートしない変数参照 (`$R`) のときは、正規化した形と語が消えた形で deny を
- * 照合したうえで ask にする。zsh の配列や bash の単語分割で、展開後の語数を静的に決められないため。
- * `"$R"` とクォートした参照は 1 語に決まるので、リテラルの dir と同じく正規化する。
- *
- * settings.json に `-C` 版ルールを置かない (rule-matcher の analyzeGitC 参照) ため、本体は
- * `git -C` を自力で allow しない。生コマンド (rawCommand) 全体が hookAllowSegments の条件
- * (正の文法に一致し、全セグメントが deny / ask に当たらず allow ルールに肯定的に一致する) を
- * 満たす場合に限り hookApproved を立て、hook 自身が allow を返せるようにする。`-C` の対象
- * ディレクトリ (別リポジトリかどうか) は判定に使わない。代入とクォートしない変数参照を含む
- * コマンドは hookApproved にしない。rawCommand を渡さない呼び出しは検査できないので
- * hookApproved にしない。
+ * `git -C` は settings.json に `-C` 版ルールが無く本体が自力で allow しないので、hookAllowSegments を
+ * 満たすときだけ hookApproved を立てる (ADR 0004 参照)。rawCommand が無い呼び出しは検査できないので立てない。
  */
 export function evaluateCommand(
   subCommands: readonly string[],

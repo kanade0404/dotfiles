@@ -35,9 +35,8 @@ export type Rule = {
    * Claude Code 本体が通常適用する設定ファイル (ユーザ設定 ~/.claude/settings.json。
    * rules.ts の loadRules 参照) 由来。例外は ADR 0003 の既知の制約 (`--setting-sources` /
    * SDK の `settingSources` でユーザ設定を除いた構成)。
-   * hook 自身の allow の根拠にできるのはこのルールのうち、サブコマンドをリテラルで固定した
-   * git の allow と、コマンド名をリテラルで固定した git 以外の allow (組み込みコマンド・
-   * ラッパーを除く) だけ (evaluator.ts の rulesForHookAllow)。
+   * hook 自身の allow の根拠にできるのはこのルールのうち、サブコマンドかコマンド名を
+   * リテラルで固定した allow だけ (evaluator.ts の rulesForHookAllow)。
    */
   readonly readByClaudeCode?: true;
 };

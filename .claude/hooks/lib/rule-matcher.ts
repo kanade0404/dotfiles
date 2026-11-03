@@ -69,9 +69,9 @@ export function patternToRegex(pattern: string): RegExp {
   return new RegExp(`^${regexStr}$`, "s");
 }
 
-/** deny 照合の前に剥がす予約語 (evaluator.ts の NON_ALLOWABLE_COMMANDS も含める) */
+/** evaluator.ts の NON_ALLOWABLE_COMMANDS も使う */
 export const SHELL_KEYWORD_PREFIXES = ["then", "else", "elif", "do"] as const;
-/** deny 照合の前に剥がすラッパー (evaluator.ts の NON_ALLOWABLE_COMMANDS も含める) */
+/** evaluator.ts の NON_ALLOWABLE_COMMANDS も使う */
 export const COMMAND_PREFIXES = [
   "env",
   "command",
@@ -396,9 +396,8 @@ type DangerousGitFlagRule = {
 //    deny ルールの形に無い破壊的サブコマンド/フラグや、`-C` で付け替えた時だけ危険な
 //    操作 (dangerousWhenRedirected) を deny に昇格させる。
 // 3. 機密ファイルパス (checkSensitiveFilePaths) を deny に昇格させる。
-//    `-C $R` (クォート無しの変数参照だけ) は、R が空で語ごと消えた形にも deny を照合する。
-// 4. 正規化できない形 (単純な変数参照以外の展開を含む dir / 複数 -C / -C 以外の global option
-//    との併用等) は ask。
+// 4. 正規化できない形 (展開を含む dir / 複数 -C / -C 以外の global option との併用等) と、
+//    クォートしない変数参照の dir は ask。
 // 5. ask — 正規化した候補も含めて非 -C ask ルールに一致すれば ask (allow より先)。
 // 6. allow — 正規化した候補が非 -C allow ルールに一致すれば allow (gitCNormalized)。
 // settings.json には `-C` 版ルールを置かない (中間ワイルドカードは hook でも本体でも
@@ -1055,19 +1054,13 @@ type GitCAnalysis =
   | {
       readonly kind: "normalized";
       readonly normalized: string;
-      /**
-       * `-C` の引数がクォート無しの変数参照 (`$R` / `${R}`) のとき、値が空で語ごと消えた場合に
-       * シェルが実行するコマンド (`git -C $R status rm -r .` → `git -C status rm -r .`)。
-       * クォートしない参照は展開後の語数を静的に決められないので、matchCommand は正規化した形と
-       * この形で deny を照合した後に ask を返す (allow にはしない)。
-       */
+      /** `-C` の引数がクォートしない変数参照のとき、値が空で語が消えた場合に実行されるコマンド */
       readonly vanishingDirCommand?: string;
     };
 
 /**
  * `-C` の引数に含まれるとシェル展開になる文字。展開後の語数が変わると実サブコマンドの
  * 位置がずれうる (`$(echo)` は語ごと消え、`{x,rm}` や `*` は複数語になる)。
- * 語全体が変数参照 1 個だけの形 (EXACT_VARIABLE_DIR) は、これより先に別扱いにする。
  * ANSI-C quoting (`$'...'`) は展開ではなくリテラルなので `$` の直後が `'` の場合は除く。
  * シングルクォート内の `$` も実際にはリテラルだが、区別せず安全側 (ask) に倒す。
  * `~` (チルダ展開) は 1 語のまま展開されるので対象外。
@@ -1079,39 +1072,21 @@ type GitCAnalysis =
  */
 const SHELL_EXPANSION_IN_WORD = /`|\$(?!')|[*?[{]/;
 
-/** 変数名 (POSIX の名前規則) の正規表現の断片 */
 const VARIABLE_NAME_SOURCE = "[A-Za-z_][A-Za-z0-9_]*";
 
-/**
- * 単純な変数参照 `$NAME` / `${NAME}` の正規表現の断片 (キャプチャ無し)。evaluator.ts の文法と共有する。
- * `$NAME` はシェルと同じく名前の文字を最長で読む (`$R_x` は `R_x` の参照)。直後に名前の文字が
- * 続かないことを要求して分け方を 1 通りにし、後ろに名前の文字にも一致する文字クラスが続く文法で
- * バックトラックが指数的に増えないようにする。
- */
+/** `$NAME` / `${NAME}`。`$NAME` を最長一致にして、後続の文字との分け方を 1 通りにする (ReDoS 対策) */
 export const VARIABLE_REFERENCE_SOURCE =
   `\\$(?:${VARIABLE_NAME_SOURCE}(?![A-Za-z0-9_])|\\{${VARIABLE_NAME_SOURCE}\\})`;
 
-/**
- * `-C` の引数のうち、変数参照を正規化の対象にする形。語全体がちょうど `$NAME` / `${NAME}` /
- * `"$NAME"` / `"${NAME}"` のどれかで、前後に何も付かないものだけ (グループ 1 がクォート無し、
- * グループ 2 がクォート付きの参照)。
- * zsh の修飾子 (`$R:e` / `$R:t`。拡張子の無い値なら `$R:e` は空になり語ごと消える)、添字
- * (`$R[1]`)、連結 (`$R/sub` / `"${R}/sub"`)、既定値付き (`${R:-x}`) などは対象にせず、
- * SHELL_EXPANSION_IN_WORD の `$` で ask にする。
- * クォートしない参照 (`$R` / `${R}`) は、bash では値の空白 (IFS) で、zsh では配列の要素ごとに
- * 複数語になり、空なら語ごと消える。展開後の語数を静的に決められないので、正規化した形と語が消えた形で
- * deny を照合したうえで ask にする (ADR 0004)。
- */
+/** 語全体が変数参照 1 個の `-C` の引数 (グループ 1 がクォート無し、2 がクォート付き)。ADR 0004 参照 */
 const EXACT_VARIABLE_DIR = new RegExp(`^(?:(${VARIABLE_REFERENCE_SOURCE})|"(${VARIABLE_REFERENCE_SOURCE})")$`);
 
-/** `-C` の引数が EXACT_VARIABLE_DIR なら、クォートの有無 */
 function dirVariableOf(dir: string): { quoted: boolean } | undefined {
   const m = EXACT_VARIABLE_DIR.exec(dir);
   if (m === null) return undefined;
   return { quoted: m[1] === undefined };
 }
 
-/** `-C` の引数に、正規化できないシェル展開が含まれるか */
 function hasShellExpansionInDir(dir: string): boolean {
   return dirVariableOf(dir) === undefined && SHELL_EXPANSION_IN_WORD.test(dir);
 }
@@ -1151,11 +1126,9 @@ function rawTokenSpans(input: string): { start: number; end: number }[] {
  * 判定する (matchCommand 参照)。非 -C ルールはプレフィックス一致なのでサブコマンド位置に
  * anchor される。
  *
- * 正規化するのは「`-C` が 1 つだけ・その引数がリテラルか、語全体が変数参照 1 個 (`$R` / `${R}` /
- * `"$R"` / `"${R}"`。EXACT_VARIABLE_DIR)・他の global option は SIDE_EFFECT_FREE_GIT_GLOBAL_OPTS だけ・
- * env による付け替えが無い」場合に限る。`-C` の対象ディレクトリ自体は判定に使わない
- * (`git -C <dir> <sub>` は `git <sub>` と同じ扱い。ADR 0004)。
- * それ以外 (複数 `-C` / `--git-dir` / `--work-tree` / `-c` / 変数参照以外の展開を含む dir 等) は
+ * 正規化するのは「`-C` が 1 つだけ・その引数がリテラルか変数参照 1 個 (EXACT_VARIABLE_DIR)・
+ * 他の global option は SIDE_EFFECT_FREE_GIT_GLOBAL_OPTS だけ・env による付け替えが無い」場合に限る。
+ * それ以外 (複数 `-C` / `--git-dir` / `--work-tree` / `-c` / 展開を含む dir 等) は
  * 正規化結果が実際の実行と一致する保証が無いので ask にする。
  * 戻り値の `normalized` は元のクォートを保った生文字列 (非 -C コマンドと同じ条件で
  * ルール照合するため)。
@@ -1198,8 +1171,6 @@ function analyzeGitC(command: string, stripped: string): GitCAnalysis {
   }
   const dirVariable = dirVariableOf(dirs[0]);
   if (i >= spans.length) {
-    // サブコマンドが無い形でも、クォートしない参照は展開後の語数を静的に決められないので ask にする
-    // (zsh で a が配列なら `git -C $a` は `git -C x push --force origin main` として実行されうる)
     if (dirVariable !== undefined && !dirVariable.quoted) {
       return { kind: "ask", reason: "クォートしない変数参照は展開後の語数を静的に決められない" };
     }
@@ -1207,7 +1178,6 @@ function analyzeGitC(command: string, stripped: string): GitCAnalysis {
   }
   const normalized = `git ${stripped.slice(spans[i].start)}`;
   if (dirVariable === undefined || dirVariable.quoted || dirSpan === null) return { kind: "normalized", normalized };
-  // (dirSpan は dirs が 1 個のときは必ず値を持つ。型を絞るためだけに見ている)
   const vanishingDirCommand = `${stripped.slice(0, dirSpan.start)}${stripped.slice(dirSpan.end).trimStart()}`;
   return { kind: "normalized", normalized, vanishingDirCommand };
 }
@@ -1263,10 +1233,7 @@ export function matchCommand(
     return { decision: "deny", command, pattern: "sensitive-file-path" };
   }
 
-  // `-C $R` の R が空だと `-C` は次の語を引数に取り、実サブコマンドがずれる
-  // (`git -C $R status rm -r .` は `git -C status rm -r .` として実行される)。
-  // その形でも deny に当たるなら deny にし、当たらなければ ask にする (クォートしない `-C $NAME` は
-  // 展開後の語数を静的に決められない)。
+  // クォートしない `-C $R` は展開後の語数が決まらないので、語が消えた形でも deny を照合してから ask にする
   if (gitC.kind === "normalized" && gitC.vanishingDirCommand !== undefined) {
     const vanished = matchCommand(gitC.vanishingDirCommand, rules);
     if (vanished?.decision === "deny") return { decision: "deny", command, pattern: vanished.pattern };

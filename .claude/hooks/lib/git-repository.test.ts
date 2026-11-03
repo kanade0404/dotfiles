@@ -8,8 +8,6 @@ import { localSettingsRootsOf } from "./git-repository.ts";
 // 本体が .claude/settings.local.json を読むリポジトリのルート (worktree では main checkout のルート)。
 // hook は git を実行せずファイルシステムだけで解決し、git の解釈と一致する保証の無い形は
 // null (特定できない。rules.ts の loadRules はそのセッションで hook allow しない) にする。
-// (`git -C <dir>` の対象が cwd と同じリポジトリかの判定 isSameGitRepository は ADR 0004 で
-// 廃止した。リポジトリの形の境界はここで localSettingsRootsOf に対して固定する)
 describe("localSettingsRootsOf: リポジトリの形", () => {
   let fx: GitFixture;
   beforeAll(() => { fx = createGitFixture(); });

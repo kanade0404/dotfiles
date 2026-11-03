@@ -191,12 +191,7 @@ describe("evaluateCommand - 変数代入", () => {
 });
 
 // git -C <dir> <sub> は settings.json にルールが無く Claude Code 本体は自力で allow しない。
-// hook 自身の allow は本体の確認を省略させるので、生コマンド全体が「単純コマンドを ; && || | で
-// 繋いだもの」という正の文法 (evaluator.ts の hookAllowSegments) に完全一致し、各セグメントが
-// allow ルールに肯定的に一致するときだけ hookApproved を立てる。シェルの構文を部分的にモデル化して
-// 危険を除外する方式は実行シェル (zsh) の構文の広さに追いつかず漏れが続いたため採らない。
-// 以下は文法の字句単位の性質。PLAIN_CHARS 以外の文字はクォートの内外を問わず、word のどこに
-// 現れても文法外になる。
+// hook allow の文法の字句単位の性質。PLAIN_CHARS 以外の文字は、クォートの内外を問わず文法外になる。
 describe("hook allow の文法 (字句)", () => {
   const rules = loadRepoRules();
   const approved = (command: string) => {
@@ -256,9 +251,7 @@ describe("hook allow の文法 (字句)", () => {
     expect(approved(`git -C ${dir} status`)).toBe(false);
   });
 
-  // hook allow の文法 (`-C "$R"`) は rule-matcher.ts の VARIABLE_REFERENCE_SOURCE を共有する。
-  // 正規化の対象を広げる変更 (特殊パラメータ・修飾子・添字・既定値付きを足す等) が hook allow の
-  // 文法を黙って広げないよう、受け付ける形を `$NAME` / `${NAME}` に固定する
+  // 正規化側の変更で hook allow の文法 (`-C "$R"`) が黙って広がらないよう、共有する断片を固定する
   test.each([
     ["$R", true], ["${R}", true], ["$R_x1", true], ["$_", true],
     ["$1", false], ["$@", false], ["$?", false], ["$R:e", false], ["$R[1]", false], ["${R:-x}", false],
@@ -272,8 +265,6 @@ describe("hook allow の文法 (字句)", () => {
     expect(approved('git -C /r log "$R"')).toBe(false);
   });
 
-  // 変数参照を繰り返す文法は、名前の長さの選び方が参照ごとに複数あると一致しない入力で分け方を
-  // 全て試し、指数的に遅くなる (以前の文法では参照 6 個で約 0.5 秒かかり、JSC の上限で打ち切られていた)
   describe("変数参照を多数並べた入力でもすぐに終わる (ReDoS)", () => {
     const refs = "$aaaaaaaaaaaaaaaa".repeat(30);
     test.each([
@@ -296,9 +287,7 @@ describe("evaluateCommand - git -C の hook allow (hookApproved)", () => {
   const hookApproved = { decision: "allow", hookApproved: true } as const;
   const passThrough = { decision: "allow", hookApproved: false } as const;
 
-  // `git -C <dir> <sub>` は `git <sub>` と同じ扱いにする (ADR 0004)。-C の対象が cwd と別の
-  // リポジトリか・存在するかは判定に使わない。別リポジトリの .git/config や .git/hooks が
-  // 確認無しに実行されうることは受け入れたトレードオフ。
+  // -C の対象ディレクトリは判定に使わない (ADR 0004 参照)
   describe("-C の対象ディレクトリによらず hookApproved", () => {
     test.each([
       "git -C /Users/kanade0404/orca/workspaces/skills/pinniped diff --stat",
@@ -310,9 +299,7 @@ describe("evaluateCommand - git -C の hook allow (hookApproved)", () => {
     });
   });
 
-  // -C の引数の変数参照。正規化して hook allow の対象にするのは、ダブルクォートした `"$R"` / `"${R}"`
-  // だけ (値によらず 1 語)。クォートしない参照は zsh の配列・修飾子や bash の単語分割で語数が静的に
-  // 決まらないので、正規化した形と語が消えた形で deny を照合したうえで ask にする。
+  // クォートしない参照は ask、クォートした参照は正規化する (ADR 0004 参照)
   describe("-C の変数参照", () => {
     test.each([
       'git -C "$R" diff --stat',
@@ -322,8 +309,7 @@ describe("evaluateCommand - git -C の hook allow (hookApproved)", () => {
       expect(evaluate(command)).toEqual(hookApproved);
     });
 
-    // 代入のセグメントがあれば hook allow しない。代入は export 済みの変数を書き換えて、後続の
-    // セグメントや git 自身の動作を変えうる (hook からは Bash tool のシェルの export を確かめきれない)
+    // 代入は export 済みの変数を書き換えうるので hook allow しない
     test.each([
       'R=/x; git -C "$R" diff --stat',
       "DOCKER_HOST=ssh://x; git -C \"$DOCKER_HOST\" --no-pager log; docker build .",
@@ -347,7 +333,7 @@ describe("evaluateCommand - git -C の hook allow (hookApproved)", () => {
       "git -C ${R}",
       "git -C $R --no-pager",
       "a=(x push --force origin main); git -C $a",
-      // 指摘で挙がった、配列や語分割で実行内容がずれる形
+      // 配列や語分割で実行内容がずれる形
       "set -- . push --force origin; git -C $argv main",
       "CDPATH=.:push:--force:origin; git -C $cdpath main",
       "a=(x push --force origin main); git -C $a status",
@@ -393,8 +379,6 @@ describe("evaluateCommand - git -C の hook allow (hookApproved)", () => {
     });
   });
 
-  // 複合コマンドは、生コマンド全体が「単純コマンドを ; && || | で繋いだもの」(代入は含まない) の正の文法に
-  // 一致し、全セグメントが allow ルールに肯定的に一致するときだけ hookApproved。
   describe("複合コマンド", () => {
     test.each([
       "git -C /a status && git -C /b diff",
@@ -475,9 +459,8 @@ describe("evaluateCommand - git -C の hook allow (hookApproved)", () => {
   });
 
   // 実行シェルは zsh (Claude Code の Bash tool は `zsh -c '... eval <cmd>'` で実行する)。
-  // 以下はいずれも zsh で allow ルールに一致しないコマンドが実行される・git の実行内容が変わる・
-  // ファイルに書き込む形、またはそれと同じ字句クラスの入力。hook allow しない
-  // (pass-through で本体の判定に委ねる)。
+  // 以下はいずれも zsh で git 以外のコマンドが実行される・git の実行内容が変わる・
+  // ファイルに書き込む形、またはそれと同じ字句クラスの入力。
   test.each([
     // 関数定義で allow 済みコマンド名を再定義する (zsh の `name () cmd` 形)
     "echo () (touch X); git -C sub status; echo",
@@ -832,8 +815,6 @@ describe("evaluateCommand - hook allow の根拠になる設定ファイル", ()
     });
   });
 
-  // 複合コマンドの git 以外のセグメントも、ユーザ設定のコマンド名を固定した allow に
-  // 肯定的に一致する必要がある (git -C 以外のセグメントの出自も git -C と同じ条件)
   describe("複合コマンドの git 以外のセグメント", () => {
     const gitStatus = "Bash(git status *)";
 
@@ -856,8 +837,6 @@ describe("evaluateCommand - hook allow の根拠になる設定ファイル", ()
       expect(evaluate("git -C . status; sleep 1")).toEqual(passThrough);
     });
 
-    // ラッパー・組み込みコマンドは allow の照合 (先頭のコマンド名) と実際の実行内容がずれる、
-    // またはシェルの状態を変えうるので、ユーザ設定に allow があっても根拠にしない
     test.each([
       ["Bash(command *)", "git -C . status; command touch pwned"],
       ["Bash(printf *)", "git -C . status; printf x"],

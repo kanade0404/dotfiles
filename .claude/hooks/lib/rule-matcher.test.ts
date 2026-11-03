@@ -1154,8 +1154,7 @@ describe("統合テスト: settings.json ルールでの判定", () => {
       "git -C {x,rm} status",
       "git -C * status",
       'git -C "$(git rev-parse --show-toplevel)" status',
-      // 語全体が変数参照 1 個でない形 (既定値付き・特殊パラメータ・glob・ブレース展開・連結・
-      // zsh の修飾子と添字。R=/x なら `$R:e` は空になり語ごと消える)
+      // 語全体が変数参照 1 個でない形 (R=/x なら `$R:e` は空になり語ごと消える)
       "git -C ${R:-/x} status",
       "git -C $1 status",
       'git -C "$@" status',
