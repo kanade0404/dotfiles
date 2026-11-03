@@ -52,7 +52,7 @@
       "notion"
       "obsidian"
       "orbstack"
-      { name = "penso/tap/herdr-gpui"; greedy = true; trusted = true; }
+      { name = "penso/tap/herdr-gpui"; trusted = true; }
       "postman"
       "raycast"
       "secretive"
