@@ -4,7 +4,7 @@ Date: 2026-10-04
 
 ## Status
 
-Superseded by [4. `git -C <dir> <sub>` を `git <sub>` と同じ扱いにし、対象ディレクトリ・変数参照・複合コマンドを理由に止めない](0004-treat-git-c-as-plain-git.md)
+Superseded by [4. `git -C <dir> <sub>` を `git <sub>` と同じ扱いにし、対象ディレクトリ・クォートした変数参照・複合コマンドを理由に止めない](0004-treat-git-c-as-plain-git.md)
 
 ## Context
 

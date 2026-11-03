@@ -393,8 +393,8 @@ describe("evaluateCommand - git -C の hook allow (hookApproved)", () => {
     });
   });
 
-  // 複合コマンドは、生コマンド全体が「単純コマンド・代入を ; && || | で繋いだもの」の正の文法に
-  // 一致し、代入以外の全セグメントが allow ルールに肯定的に一致するときだけ hookApproved。
+  // 複合コマンドは、生コマンド全体が「単純コマンドを ; && || | で繋いだもの」(代入は含まない) の正の文法に
+  // 一致し、全セグメントが allow ルールに肯定的に一致するときだけ hookApproved。
   describe("複合コマンド", () => {
     test.each([
       "git -C /a status && git -C /b diff",

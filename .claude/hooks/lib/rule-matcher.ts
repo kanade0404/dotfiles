@@ -1207,6 +1207,7 @@ function analyzeGitC(command: string, stripped: string): GitCAnalysis {
   }
   const normalized = `git ${stripped.slice(spans[i].start)}`;
   if (dirVariable === undefined || dirVariable.quoted || dirSpan === null) return { kind: "normalized", normalized };
+  // (dirSpan は dirs が 1 個のときは必ず値を持つ。型を絞るためだけに見ている)
   const vanishingDirCommand = `${stripped.slice(0, dirSpan.start)}${stripped.slice(dirSpan.end).trimStart()}`;
   return { kind: "normalized", normalized, vanishingDirCommand };
 }
@@ -1264,19 +1265,17 @@ export function matchCommand(
 
   // `-C $R` の R が空だと `-C` は次の語を引数に取り、実サブコマンドがずれる
   // (`git -C $R status rm -r .` は `git -C status rm -r .` として実行される)。
-  // その形でも deny に当たるなら deny にする (deny でなければ下で ask にする)。
+  // その形でも deny に当たるなら deny にし、当たらなければ ask にする (クォートしない `-C $NAME` は
+  // 展開後の語数を静的に決められない)。
   if (gitC.kind === "normalized" && gitC.vanishingDirCommand !== undefined) {
     const vanished = matchCommand(gitC.vanishingDirCommand, rules);
     if (vanished?.decision === "deny") return { decision: "deny", command, pattern: vanished.pattern };
+    return { decision: "ask", command, pattern: "git -C (クォートしない変数参照は展開後の語数を静的に決められない)" };
   }
 
   // `git -C` 形だが正規化できない (展開を含む dir / 付け替えの併用等)
   if (gitC.kind === "ask") {
     return { decision: "ask", command, pattern: `git -C (${gitC.reason})` };
-  }
-  // クォートしない `-C $NAME` は展開後の語数を静的に決められない (deny は上で照合済み)
-  if (gitC.kind === "normalized" && gitC.vanishingDirCommand !== undefined) {
-    return { decision: "ask", command, pattern: "git -C (クォートしない変数参照は展開後の語数を静的に決められない)" };
   }
 
   // 正規化した `git <sub> ...` が非 -C allow ルールにサブコマンド位置で一致した。

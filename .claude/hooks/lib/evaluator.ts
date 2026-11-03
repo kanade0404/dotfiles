@@ -95,21 +95,21 @@ const NON_ALLOWABLE_COMMANDS: ReadonlySet<string> = new Set([
   // rule-matcher.ts が deny 照合の前に剥がす予約語とラッパー (片方にだけ足してずれないよう共有する)
   ...SHELL_KEYWORD_PREFIXES,
   ...COMMAND_PREFIXES,
-  // 予約語
-  "if", "then", "else", "elif", "fi", "case", "esac", "for", "select", "while", "until", "do", "done",
-  "function", "time", "coproc", "repeat", "foreach", "end", "nocorrect", "noglob",
+  // 予約語 (then / else / elif / do / time は上で取り込み済み)
+  "if", "fi", "case", "esac", "for", "select", "while", "until", "done",
+  "function", "coproc", "repeat", "foreach", "end", "nocorrect", "noglob",
   // zsh / bash の組み込みコマンド
   "alias", "autoload", "bg", "bind", "bindkey", "break", "builtin", "bye", "caller", "cap", "cd", "chdir",
-  "clone", "command", "compgen", "complete", "compopt", "continue", "declare", "dirs", "disable", "disown",
-  "echotc", "echoti", "emulate", "enable", "eval", "exec", "exit", "export", "fc", "fg", "float",
+  "clone", "compgen", "complete", "compopt", "continue", "declare", "dirs", "disable", "disown",
+  "echotc", "echoti", "emulate", "enable", "eval", "exit", "export", "fc", "fg", "float",
   "functions", "getcap", "getln", "getopts", "hash", "help", "history", "integer", "jobs", "kill", "let",
   "limit", "local", "log", "logout", "mapfile", "popd", "print", "printf", "pushd", "pushln", "r", "read",
   "readarray", "readonly", "rehash", "return", "sched", "set", "setcap", "setopt", "shift", "shopt",
   "source", "stat", "strftime", "suspend", "times", "trap", "ttyctl", "type", "typeset", "ulimit", "umask", "unalias",
   "unfunction", "unhash", "unlimit", "unset", "unsetopt", "vared", "wait", "whence", "where", "which",
   "zcompile", "zformat", "zle", "zmodload", "zparseopts", "zprof", "zpty", "zregexparse", "zstyle",
-  // 別のコマンドを起動するラッパー
-  "env", "nohup", "nice", "sudo", "doas", "xargs", "timeout", "gtimeout", "stdbuf", "caffeinate", "arch",
+  // 別のコマンドを起動するラッパー (env / command / exec / nohup / nice は上で取り込み済み)
+  "sudo", "doas", "xargs", "timeout", "gtimeout", "stdbuf", "caffeinate", "arch",
   "script", "watch", "chroot", "setsid", "unbuffer", "ionice", "taskset", "flock",
 ]);
 
