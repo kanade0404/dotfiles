@@ -54,24 +54,28 @@ if brew help trust >/dev/null 2>&1; then
     --apply 'hb: let
         qualified = e: builtins.match "[^/]+/[^/]+/[^/]+" e.name != null # user/repo/name
           && builtins.match "homebrew/.*" e.name == null;
-        pick = flag: es: map (e: "${flag} ${e.name}") (builtins.filter (e: (e.trusted or false) == true) es); # null 対策で == true
+        fmt = flag: es: map (e: "${flag} ${e.name}") es;
+        # tap は明示 opt-in (== true)、完全修飾名の brews / casks は明示的に false でない限り対象
+        # (nix-darwin の既定値が将来 null 等に変わっても漏れないように)。
+        taps = builtins.filter (t: (t.trusted or false) == true) hb.taps;
+        items = es: builtins.filter (e: qualified e && (e.trusted or null) != false) es;
       in builtins.concatStringsSep "\n" (
-        pick "--tap" hb.taps # brew trust は "user/repo" を tap と推論するが、明示する
-        ++ pick "--formula" (builtins.filter qualified hb.brews)
-        ++ pick "--cask" (builtins.filter qualified hb.casks))') \
+        fmt "--tap" taps ++ fmt "--formula" (items hb.brews) ++ fmt "--cask" (items hb.casks))') \
     || die "homebrew.nix の trust 対象取得に失敗しました (nix eval)"
   while read -r kind name; do
     [ -n "${name:-}" ] || continue
     # darwin-rebuild より前に呼ぶため tap 未取得でも、種別を明示すれば trust は名前を
     # JSON へ記録するだけなので通常は成功する。失敗しても中断せず警告に留める。
-    # 種別フラグの無い初期の brew trust でも tap は従来どおり位置引数で通るようにする。
-    brew trust "$kind" "$name" 2>/dev/null \
-      || { [ "$kind" = "--tap" ] && brew trust "$name"; } \
-      || warn "brew trust $kind $name が失敗 (tap 未取得の可能性。darwin-rebuild 後に再実行可)"
+    # tap は "user/repo" から tap と推論されるので、種別フラグの無い初期の brew trust でも
+    # 通るよう位置引数で渡す。
+    case "$kind" in
+      --tap) brew trust "$name" ;;
+      *) brew trust "$kind" "$name" ;;
+    esac || warn "brew trust $kind $name が失敗 (tap 未取得の可能性。darwin-rebuild 後に再実行可)"
   done <<< "$trust_targets"
 else
   warn "この Homebrew では 'brew trust' が無いため tap / formula / cask の trust 事前登録をスキップします。"
-  warn "Homebrew 5.1+ では後続の darwin-rebuild が untrusted tap エラーで失敗する可能性があります (tap 全体ではなく対象の formula / cask を trust すること)。"
+  warn "Homebrew 5.1+ では後続の darwin-rebuild が untrusted tap エラーで失敗する可能性があります (homebrew.nix の trusted = true な tap と、完全修飾名の formula / cask を trust すること)。"
 fi
 
 # ---- Nix experimental features (一時ユーザー設定) ----
