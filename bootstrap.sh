@@ -47,13 +47,13 @@ eval "$(/opt/homebrew/bin/brew shellenv)"
 # trust 不要なので除く)。nix eval で動的取得して二重管理を避ける。
 if brew help trust >/dev/null 2>&1; then
   log "サードパーティ tap / formula / cask を信頼登録"
-  # shellcheck disable=SC2016 # ${flag} などは Nix の補間でシェル展開しない
   # flakes の有効化 (下の experimental features 節) より前に走るので、ここで明示的に付ける。
+  # shellcheck disable=SC2016 # ${flag} などは Nix の補間でシェル展開しない
   trust_targets=$(nix --extra-experimental-features 'nix-command flakes' eval --raw \
     "$DOTFILES_DIR/nix#darwinConfigurations.$FLAKE_ATTR.config.homebrew" \
     --apply 'hb: let
         qualified = e: builtins.match "[^/]+/[^/]+/[^/]+" e.name != null; # user/repo/name
-        pick = flag: es: map (e: "${flag} ${e.name}") (builtins.filter (e: e.trusted or false) es);
+        pick = flag: es: map (e: "${flag} ${e.name}") (builtins.filter (e: (e.trusted or false) == true) es); # null 対策で == true
       in builtins.concatStringsSep "\n" (
         pick "--tap" hb.taps
         ++ pick "--formula" (builtins.filter qualified hb.brews)
@@ -67,8 +67,8 @@ if brew help trust >/dev/null 2>&1; then
       || warn "brew trust $kind $name が失敗 (tap 未取得の可能性。darwin-rebuild 後に再実行可)"
   done <<< "$trust_targets"
 else
-  warn "この Homebrew では 'brew trust' が無いため tap trust 登録をスキップします。"
-  warn "Homebrew 5.1+ では後続の darwin-rebuild が untrusted tap エラーで失敗する可能性があります。"
+  warn "この Homebrew では 'brew trust' が無いため tap / formula / cask の trust 事前登録をスキップします。"
+  warn "Homebrew 5.1+ では後続の darwin-rebuild が untrusted tap エラーで失敗する可能性があります (tap 全体ではなく対象の formula / cask を trust すること)。"
 fi
 
 # ---- Nix experimental features (一時ユーザー設定) ----
