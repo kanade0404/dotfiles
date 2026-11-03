@@ -410,7 +410,7 @@ const DANGEROUS_GIT_FLAGS: readonly DangerousGitFlagRule[] = [
     // findGitSubcommand が -C / --git-dir / --work-tree / -c を正規化して読み飛ばした
     // 後のサブコマンドで捕捉し、ディレクトリ迂回の有無によらず同じ判定にする。
     // 読み取り系 (status / log / diff) と `git switch` は対象外なので影響しない。
-    gitSubcommands: ["reset", "rebase", "checkout"],
+    gitSubcommands: ["reset", "rebase", "checkout", "credential"],
     alwaysDangerous: true,
   },
   {

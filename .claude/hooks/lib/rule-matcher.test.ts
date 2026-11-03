@@ -390,6 +390,8 @@ describe("checkDangerousGitFlags", () => {
       "git --git-dir /tmp/x/.git reset --hard",
       "git --work-tree /tmp/x checkout main",
       "git -c core.pager=cat reset --hard",
+      "git -c core.pager=cat credential fill",
+      "git --no-pager credential fill",
       "git reset --hard",
       "git rebase main",
       "git checkout main",
