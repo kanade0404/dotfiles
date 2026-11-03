@@ -1,4 +1,4 @@
-{ pkgs, ... }: {
+{ pkgs, lib, ... }: {
   home.stateVersion = "24.11";
   home.username = "kanade0404";
   home.homeDirectory = "/Users/kanade0404";
@@ -46,7 +46,11 @@
         };
         init.defaultBranch = "master";
         web.browser = "google-chrome";
-        credential.helper = "osxkeychain";
+        credential = {
+          helper = "osxkeychain";
+        } // lib.genAttrs [ "https://github.com" "https://gist.github.com" ] (_: {
+          helper = [ "" "!${pkgs.gh}/bin/gh auth git-credential" ];
+        });
         push.default = "simple";
         merge = {
           tool = "kdiff3";

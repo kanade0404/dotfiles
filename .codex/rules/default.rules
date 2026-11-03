@@ -77,6 +77,7 @@ prefix_rule(pattern = ["gh", "auth", "switch"], decision = "forbidden", justific
 prefix_rule(pattern = ["gh", "auth", "setup-git"], decision = "forbidden", justification = "Authentication changes should be done by the user.")
 prefix_rule(pattern = ["gh", "auth", "token"], decision = "forbidden", justification = "Do not expose auth tokens.")
 prefix_rule(pattern = ["gh", "auth", "git-credential"], decision = "forbidden", justification = "Do not expose auth credentials.")
+prefix_rule(pattern = ["git", "credential"], decision = "forbidden", justification = "Do not expose auth credentials.")
 prefix_rule(pattern = ["gh", "ssh-key"], decision = "forbidden", justification = "SSH key management should be done by the user.")
 prefix_rule(pattern = ["gh", "gpg-key"], decision = "forbidden", justification = "GPG key management should be done by the user.")
 prefix_rule(pattern = ["gh", "secret"], decision = "forbidden", justification = "Secret management should be done by the user.")
