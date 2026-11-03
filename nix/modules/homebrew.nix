@@ -25,11 +25,16 @@
     taps = [
       { name = "ariga/tap"; trusted = true; }
       # Herdr UI (herdr-gpui) の作者 Fabien Penso の個人 tap。herdr 本体 (herdrdev) とは
-      # 無関係の第三者。macOS 向けには GitHub Releases の DMG もあるが、Homebrew で
-      # 管理する公式経路はこの tap で、Homebrew 管理下ではアプリ自身の updater も
-      # `brew upgrade --cask` を叩く。DMG でも tap でも同じ作者のコードを実行するので、
-      # tap を trusted にしても信頼する相手は増えない。
-      # 作者を信頼できなくなったら tap ごと外す (cask の vendoring では解決しない)。
+      # 無関係の第三者。macOS 向けには GitHub Releases の署名・公証済み DMG もあるが、
+      # Homebrew で管理する公式経路はこの tap になる。
+      # trusted は herdr-gpui だけでなく tap 全体が対象で、autoUpdate により activation の
+      # たびに tap の HEAD (commit 固定なし) の Ruby コードを評価する。つまり DMG を
+      # 手動で入れる場合と違い、tap への push 権限が奪われると次の rebuild でコードが
+      # 実行される。ただし Homebrew 管理下ではアプリ内 updater 自身も
+      # `brew upgrade --cask herdr-gpui` で同じ tap HEAD を取り込むので、cask で入れる時点で
+      # この経路は避けられない。そのリスクを受け入れて trusted にしている。
+      # 作者や tap を信頼できなくなったら tap ごと外す (cask の vendoring では updater
+      # 経由の取り込みを止められない)。
       { name = "penso/tap"; trusted = true; }
     ];
 
@@ -58,10 +63,13 @@
       "notion"
       "obsidian"
       "orbstack"
-      # Native GUI client for the herdr daemon。daemon (brews の "herdr", homebrew-core) とは
-      # 配布元もリリース周期も別で、cask に daemon のバージョン制約 (depends_on) は無い。
-      # upgrade = true で片方だけ上がりうるので、GUI が daemon に繋がらなくなったら
-      # まず `herdr --version` と GUI のバージョンの組み合わせを疑う。
+      # herdr daemon のネイティブ GUI クライアント (Herdr UI)。daemon (brews の "herdr",
+      # homebrew-core) とは配布元もリリース周期も別で、cask に daemon のバージョン制約
+      # (depends_on) は無い。cask は auto_updates を宣言していないので upgrade = true で
+      # GUI も上がるが、daemon と同時に上がるとは限らない。GUI が daemon に繋がらなく
+      # なったら、まず `herdr --version` と GUI のバージョンの組み合わせを疑う。
+      # アプリ内 updater も `brew upgrade --cask` を実行するが、cask は version を固定して
+      # いないので darwin-rebuild の宣言とは食い違わない。
       "penso/tap/herdr-gpui"
       "postman"
       "raycast"
