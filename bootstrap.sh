@@ -40,12 +40,12 @@ eval "$(/opt/homebrew/bin/brew shellenv)"
 # 新しい Homebrew は非公式 tap の formula/cask を読み込む前に明示的な信頼を要求する
 # (HOMEBREW_REQUIRE_TAP_TRUST)。未信頼だと darwin-rebuild の brew bundle が
 # "Refusing to load formula ... from untrusted tap" で失敗する。信頼対象は
-# nix/modules/homebrew.nix の taps を nix eval で動的取得し、二重管理を避ける。
+# nix/modules/homebrew.nix の trusted な taps を nix eval で動的取得し、二重管理を避ける。
 if brew help trust >/dev/null 2>&1; then
   log "サードパーティ tap を信頼登録"
   taps=$(nix eval --raw \
     "$DOTFILES_DIR/nix#darwinConfigurations.$FLAKE_ATTR.config.homebrew.taps" \
-    --apply 'ts: builtins.concatStringsSep "\n" (map (t: t.name) ts)') \
+    --apply 'ts: builtins.concatStringsSep "\n" (map (t: t.name) (builtins.filter (t: t.trusted) ts))') \
     || die "homebrew.nix の taps 取得に失敗しました (nix eval)"
   while IFS= read -r tap; do
     [ -n "$tap" ] || continue
