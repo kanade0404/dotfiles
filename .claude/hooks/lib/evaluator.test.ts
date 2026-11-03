@@ -3,7 +3,7 @@ import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readdirSync, rmSync, w
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { evaluateCommand, isAssignmentOnly } from "./evaluator.ts";
-import { patternToRegex } from "./rule-matcher.ts";
+import { patternToRegex, VARIABLE_REFERENCE_SOURCE } from "./rule-matcher.ts";
 import { defaultManagedSettingsSources, loadRules, type ManagedSettingsSources } from "./rules.ts";
 import { createGitFixture, type GitFixture } from "./git-fixture.ts";
 import type { Rule } from "./types.ts";
@@ -256,6 +256,17 @@ describe("hook allow の文法 (字句)", () => {
     expect(approved(`git -C ${dir} status`)).toBe(false);
   });
 
+  // hook allow の文法 (`-C "$R"`) は rule-matcher.ts の VARIABLE_REFERENCE_SOURCE を共有する。
+  // 正規化の対象を広げる変更 (特殊パラメータ・修飾子・添字・既定値付きを足す等) が hook allow の
+  // 文法を黙って広げないよう、受け付ける形を `$NAME` / `${NAME}` に固定する
+  test.each([
+    ["$R", true], ["${R}", true], ["$R_x1", true], ["$_", true],
+    ["$1", false], ["$@", false], ["$?", false], ["$R:e", false], ["$R[1]", false], ["${R:-x}", false],
+    ["${#R}", false], ["${(A)R}", false], ["${!R}", false], ["$R$S", false], ["${R}x", false],
+  ] as const)("VARIABLE_REFERENCE_SOURCE と %j の一致は %s", (word, matches) => {
+    expect(new RegExp(`^${VARIABLE_REFERENCE_SOURCE}$`).test(word)).toBe(matches);
+  });
+
   test("-C 以外の位置の変数参照は文法外", () => {
     expect(approved("git -C /r log $R")).toBe(false);
     expect(approved('git -C /r log "$R"')).toBe(false);
@@ -331,6 +342,11 @@ describe("evaluateCommand - git -C の hook allow (hookApproved)", () => {
       "R=/x; git -C $R diff --stat",
       "R=/x; git -C $R branch -r",
       "git -C /a status && git -C $R diff",
+      // サブコマンドが無い形 (zsh で a が配列なら `git -C x push --force origin main` として実行される)
+      "git -C $a",
+      "git -C ${R}",
+      "git -C $R --no-pager",
+      "a=(x push --force origin main); git -C $a",
       // 指摘で挙がった、配列や語分割で実行内容がずれる形
       "set -- . push --force origin; git -C $argv main",
       "CDPATH=.:push:--force:origin; git -C $cdpath main",

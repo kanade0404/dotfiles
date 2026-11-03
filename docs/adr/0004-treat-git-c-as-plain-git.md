@@ -1,4 +1,4 @@
-# 4. `git -C <dir> <sub>` を `git <sub>` と同じ扱いにし、対象ディレクトリ・変数参照・複合コマンドを理由に止めない
+# 4. `git -C <dir> <sub>` を `git <sub>` と同じ扱いにし、対象ディレクトリ・クォートした変数参照・複合コマンドを理由に止めない
 
 Date: 2026-11-01
 
@@ -44,14 +44,14 @@ ADR 0003 の決定のうち、本 ADR の Decision で変えたもの以外は�
   - ダブルクォートした参照 (`"$R"`、`"${R}"`) は値によらず 1 語のままである。zsh の配列でも、`"$a"` は要素を空白で繋いだ 1 語になる。空なら `-C ""` になり、git はカレントディレクトリとして扱う。
   - Claude Code の Bash tool はユーザの `$SHELL` (本環境では zsh) で実行する。
 - `git -C <dir>` は `<dir>` のリポジトリの `.git/config` と `.git/hooks` を読み込む。ADR 0003 はこれを理由に hook allow を同一リポジトリに限っていた (ADR 0003 の Option D を却下した理由)。
-- 一度は、代入 (`R=/x; git -C $R ...`) とクォートしない `$R` も hook allow の対象にした。そのために、代入の位置と値の条件、代入できる変数名の制限、特殊な変数の列挙、`CLAUDE_ENV_FILE` の読み込み、語が消えた形の allow 照合を足した。しかしレビューのたびに新しい抜け道が見つかり、収束しなかった。見つかった抜け道は、zsh の配列と修飾子、代入しても値の入らない変数、PreToolUse hook には渡らない `CLAUDE_ENV_FILE` などである。またユーザは auto mode で使っており、hook allow の経路 (`default` / `acceptEdits` でだけ効く) は普段使われない。ユーザの本来の要望は「`-C $R` を理由に hook が ask しない」ことで、これは deny / ask の判定の側で満たせる。
+- 一度は、代入 (`R=/x; git -C $R ...`) とクォートしない `$R` も hook allow の対象にした。そのために、代入の位置と値の条件、代入できる変数名の制限、特殊な変数の列挙、`CLAUDE_ENV_FILE` の読み込み、語が消えた形の allow 照合を足した。しかしレビューのたびに新しい抜け道が見つかり、収束しなかった。見つかった抜け道は、zsh の配列と修飾子、代入しても値の入らない変数、PreToolUse hook には渡らない `CLAUDE_ENV_FILE` などである。またユーザは auto mode で使っており、hook allow の経路 (`default` / `acceptEdits` でだけ効く) は普段使われない。ユーザの本来の要望は「`-C $R` を理由に hook が ask しない」ことで、これは deny / ask の判定の側で扱う。ただし Decision のとおり、満たすのはダブルクォートした `"$R"` の場合だけである。クォートしない `$R` は展開後の語数を静的に決められないので引き続き ask になり、上の例もそのままでは ask のままである。
 
 ## Decision
 
 - `-C` の対象ディレクトリは判定に使わない。`isSameGitRepository` とその条件を hook allow から外し、関数とテストを削除する (呼び出し元は `evaluator.ts` だけだった)。`git-repository.ts` のリポジトリ解決は、`localSettingsRootsOf` (本体が `.claude/settings.local.json` を読むルートの特定) のために残す。境界のテストは `localSettingsRootsOf` に対するものに移す。
 - `-C` の引数の変数参照の扱いを次のように決める (`rule-matcher.ts` の `EXACT_VARIABLE_DIR`)。
   - ダブルクォートした `"$NAME"` / `"${NAME}"` は、値がどうであれ 1 語のままである。そのため、リテラルの dir と同じく正規化する。対象は、語全体がちょうどこの形で前後に何も付かないものだけである。正規化した `git <sub> ...` で deny / ask / allow を照合し、`-C` があることだけを理由とした ask は出さない。
-  - クォートしない `$NAME` / `${NAME}` は、正規化した形 (`git <sub> ...`) と、値が空で語が消えた形 (`git -C <次の語> ...`) の両方で deny を照合したうえで、ask にする。代入の有無や名前によらない。`git -C $R push --force` は deny になり、`git -C $R diff --stat` や `R=/x; git -C $R diff --stat` は ask になる。外の環境の変数を使うときも、同じコマンドで代入した変数を使うときも、`git -C "$R" diff --stat` とクォートすれば ask にならない。
+  - クォートしない `$NAME` / `${NAME}` は、正規化した形 (`git <sub> ...`) と、値が空で語が消えた形 (`git -C <次の語> ...`) の両方で deny を照合したうえで、ask にする。代入の有無や名前、サブコマンドの有無 (`git -C $a`) にもよらない。`git -C $R push --force` は deny になり、`git -C $R diff --stat` や `R=/x; git -C $R diff --stat` は ask になる。外の環境の変数を使うときも、同じコマンドで代入した変数を使うときも、`git -C "$R" diff --stat` とクォートすれば ask にならない。
   - それ以外の形も従来どおり ask にする。zsh の修飾子 (`$R:e`、`$R:t`)、添字 (`$R[1]`)、連結 (`$R/sub`、`"${R}/sub"`)、既定値付き (`${R:-x}`)、特殊パラメータ (`$1`、`$@`) などが該当する。
   - クォートしない参照を ask にする理由は、展開後の語数を静的に決められないことである。bash は値を IFS で単語分割し、zsh は配列の参照を要素ごとに別の語にする。値が空なら語ごと消える。同じコマンドの中には、配列を作る構文 (`typeset -T`、`zstyle -a`、`${(A)name::=...}`、`set --`、tied 配列) を書ける。名前を組み立てる展開 (`R''R`、`AB{C,}`、glob) も、語分割を変える設定 (`IFS`、`setopt shwordsplit`、`printf -vIFS`) も書ける。条件付きで正規化する規則を 3 回作り直したが、そのたびにレビューで新しい抜け道が見つかり、収束しなかった (Option D)。
 - 複合コマンドは (a) を採る。ただし shell-parser の分解結果は使わず、生コマンド全体に正の文法を当てる (`evaluator.ts` の `hookAllowSegments`)。次を全て満たすときだけ hook allow を返す。
@@ -89,7 +89,7 @@ ADR 0003 の決定のうち、本 ADR の Decision で変えたもの以外は�
   - permission mode が `default` / `acceptEdits` のときだけ allow を返す。
   - hook allow の根拠をユーザ設定の allow に限る。
   - 本体の読む deny / ask を hook で読み切れない構成では、hook allow しない。`CLAUDE_PROJECT_DIR` が無い、`CLAUDE_CONFIG_DIR` がある、managed settings を解釈できない、などの構成である。
-- Codex から起動されたときは、`-C` の引数の変数参照で ask を返していたものが pass-through (無出力) になる。deny は従来どおり返す。
+- Codex から起動されたときも、変数参照の扱いは同じである。ダブルクォートした `"$R"` は、他の deny / ask に当たらなければ pass-through (無出力) になる。クォートしない `$R` / `${R}` は、deny を照合したうえで ask を出力する。deny は従来どおり返す。
 
 ## Consequences
 

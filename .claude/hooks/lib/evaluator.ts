@@ -1,5 +1,7 @@
 import {
+  COMMAND_PREFIXES,
   matchCommand,
+  SHELL_KEYWORD_PREFIXES,
   SIDE_EFFECT_FREE_GIT_GLOBAL_OPTS,
   VARIABLE_REFERENCE_SOURCE,
 } from "./rule-matcher.ts";
@@ -90,6 +92,9 @@ const LIST_GRAMMAR = new RegExp(`^${SEGMENT}(?:${SEPARATOR}${SEGMENT})*$`);
  *   コマンドがずれる (`command rm ...`、`nice rm ...`)
  */
 const NON_ALLOWABLE_COMMANDS: ReadonlySet<string> = new Set([
+  // rule-matcher.ts が deny 照合の前に剥がす予約語とラッパー (片方にだけ足してずれないよう共有する)
+  ...SHELL_KEYWORD_PREFIXES,
+  ...COMMAND_PREFIXES,
   // 予約語
   "if", "then", "else", "elif", "fi", "case", "esac", "for", "select", "while", "until", "do", "done",
   "function", "time", "coproc", "repeat", "foreach", "end", "nocorrect", "noglob",
@@ -140,14 +145,14 @@ function rulesForHookAllow(rules: readonly Rule[]): readonly Rule[] {
     if (rule.readByClaudeCode !== true) return false;
     if (SUBCOMMAND_ANCHORED_GIT_PATTERN.test(rule.pattern)) return true;
     const name = COMMAND_ANCHORED_PATTERN.exec(rule.pattern)?.[1];
-    return name !== undefined && name !== "git" && isAllowableCommandName(name);
+    return name !== undefined && isAllowableCommandName(name);
   });
 }
 
+/** hook allow の根拠にしてよい git 以外のコマンド名か */
 function isAllowableCommandName(name: string): boolean {
-  return !NON_ALLOWABLE_COMMANDS.has(name);
+  return name !== "git" && !NON_ALLOWABLE_COMMANDS.has(name);
 }
-
 
 /**
  * 生コマンド全体を hook allow してよいか (evaluateCommand の hookApproved)。
@@ -190,7 +195,7 @@ function hookAllowSegments(command: string, rules: readonly Rule[]): boolean {
       continue;
     }
     const name = SIMPLE_COMMAND_GRAMMAR.exec(text)?.[1];
-    if (name === undefined || name === "git" || !isAllowableCommandName(name) || !positivelyAllowed(text)) {
+    if (name === undefined || !isAllowableCommandName(name) || !positivelyAllowed(text)) {
       return false;
     }
   }

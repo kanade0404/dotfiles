@@ -69,8 +69,10 @@ export function patternToRegex(pattern: string): RegExp {
   return new RegExp(`^${regexStr}$`, "s");
 }
 
-const SHELL_KEYWORD_PREFIXES = ["then", "else", "elif", "do"] as const;
-const COMMAND_PREFIXES = [
+/** deny 照合の前に剥がす予約語 (evaluator.ts の NON_ALLOWABLE_COMMANDS も含める) */
+export const SHELL_KEYWORD_PREFIXES = ["then", "else", "elif", "do"] as const;
+/** deny 照合の前に剥がすラッパー (evaluator.ts の NON_ALLOWABLE_COMMANDS も含める) */
+export const COMMAND_PREFIXES = [
   "env",
   "command",
   "exec",
@@ -1194,9 +1196,16 @@ function analyzeGitC(command: string, stripped: string): GitCAnalysis {
   if (hasGitRedirectEnv(command)) {
     return { kind: "ask", reason: "-C と環境変数によるリポジトリ付け替えを併用している" };
   }
-  if (i >= spans.length) return { kind: "none" };
-  const normalized = `git ${stripped.slice(spans[i].start)}`;
   const dirVariable = dirVariableOf(dirs[0]);
+  if (i >= spans.length) {
+    // サブコマンドが無い形でも、クォートしない参照は展開後の語数を静的に決められないので ask にする
+    // (zsh で a が配列なら `git -C $a` は `git -C x push --force origin main` として実行されうる)
+    if (dirVariable !== undefined && !dirVariable.quoted) {
+      return { kind: "ask", reason: "クォートしない変数参照は展開後の語数を静的に決められない" };
+    }
+    return { kind: "none" };
+  }
+  const normalized = `git ${stripped.slice(spans[i].start)}`;
   if (dirVariable === undefined || dirVariable.quoted || dirSpan === null) return { kind: "normalized", normalized };
   const vanishingDirCommand = `${stripped.slice(0, dirSpan.start)}${stripped.slice(dirSpan.end).trimStart()}`;
   return { kind: "normalized", normalized, vanishingDirCommand };
