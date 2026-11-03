@@ -1172,7 +1172,7 @@ function analyzeGitC(command: string, stripped: string): GitCAnalysis {
   const dirVariable = dirVariableOf(dirs[0]);
   if (i >= spans.length) {
     if (dirVariable !== undefined && !dirVariable.quoted) {
-      return { kind: "ask", reason: "クォートしない変数参照は展開後の語数が決まらない。\"$R\" とクォートすれば確認しない" };
+      return { kind: "ask", reason: "クォートしない変数参照は展開後の語数が決まらない。\"$R\" とクォートすれば、この理由では確認しない" };
     }
     return { kind: "none" };
   }
@@ -1237,7 +1237,7 @@ export function matchCommand(
   if (gitC.kind === "normalized" && gitC.vanishingDirCommand !== undefined) {
     const vanished = matchCommand(gitC.vanishingDirCommand, rules);
     if (vanished?.decision === "deny") return { decision: "deny", command, pattern: vanished.pattern };
-    return { decision: "ask", command, pattern: "git -C (クォートしない変数参照は展開後の語数が決まらない。\"$R\" とクォートすれば確認しない)" };
+    return { decision: "ask", command, pattern: "git -C (クォートしない変数参照は展開後の語数が決まらない。\"$R\" とクォートすれば、この理由では確認しない)" };
   }
 
   // `git -C` 形だが正規化できない (展開を含む dir / 付け替えの併用等)

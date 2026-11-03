@@ -305,6 +305,9 @@ describe("evaluateCommand - git -C の hook allow (hookApproved)", () => {
       'git -C "$R" diff --stat',
       'git -C "${R}" status',
       'git -C "$R" status && git -C "${S}" diff',
+      'git -C "$R" commit -m "fix bug"',
+      'git -C "$R" log --grep "x"',
+      "git -C . commit -m 'docs: add -a option'",
     ])("%j は hookApproved", (command) => {
       expect(evaluate(command)).toEqual(hookApproved);
     });

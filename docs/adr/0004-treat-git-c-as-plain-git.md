@@ -73,7 +73,7 @@ ADR 0003 の決定のうち、本 ADR の Decision で変えたもの以外は�
   - 改行、末尾や途中の `&`、`|&`、ヒアドキュメント、リダイレクト、括弧、`-C` 以外の位置の展開も文法外で、pass-through にする。word の字句は区切りの文字 (`;` `&` `|`) を含まないので、文法に一致した文字列は区切りの位置でそのまま分割でき、トークナイザを通さない。
   - `git -C` のセグメントが 1 つ以上ある。`-C` の無いコマンドだけなら従来どおり本体が判定する。
   - 全セグメントが allow ルールに肯定的に一致し、deny / ask に当たらない。どのルールにも一致しない (null) セグメントが 1 つでもあれば allow しない。
-    - `git -C` のセグメントは、`matchCommand` が正規化した `git <sub> ...` で deny > ask > allow の順に照合する。allow の結果だけで、deny / ask に当たらないことも分かる。
+    - `git -C` のセグメントは、`matchCommand` が正規化した `git <sub> ...` で deny > ask > allow の順に照合する。deny と機密パスの照合はクォートの中を消してから行うので、空白も `$` も含まない語はクォートを外した形でも照合する (`head '.env'` を見落とさないため)。
     - `-C` の無いセグメントと git 以外のセグメントでは、`matchCommand` は allow を ask より先に見る。その結果だけでは、allow と ask の両方に当たるセグメントを見落とす。例は、allow と ask の両方に `Bash(git push *)` がある状態の `git push origin main` である。`matchCommand` の順序は pass-through の UX のために変えず、`hookAllowSegments` が deny / ask のルールだけで改めて照合する。
     - `-C` の無い git は global option を付けない形 (`git <sub> ...`) だけを文法に入れる。allow ルールは生のセグメントで照合し、`Bash(git log *)` は `git --no-pager log` に一致しないためである。
   - 照合に使う allow は、ユーザ設定 `~/.claude/settings.json` 由来 (`readByClaudeCode`) で、次のどちらかに当たるものに限る (`rulesForHookAllow`)。deny / ask は ADR 0003 と同じく出自を問わず全て使う。

@@ -117,21 +117,22 @@ function hookAllowSegments(command: string, rules: readonly Rule[]): boolean {
   const blockingRules = rules.filter((rule) => rule.category !== "allow");
   const positiveRules = allowRules.filter((rule) => rule.category === "allow");
   const positivelyAllowed = (text: string) => positiveRules.some((rule) => rule.regex.test(text));
-  // deny と機密パスの照合はクォートの中を消してから行うので、クォートを外した形でも照合する。
-  // 文法上クォートの中はリテラルなので、外しても意味は変わらない (`"$R"` は ask になるので外さない)
-  const blocked = (text: string) =>
-    matchCommand(text, blockingRules) !== null ||
-    matchCommand(text.replace(/(["'])([^"'$]*)\1/g, "$2"), blockingRules) !== null;
+  // deny と機密パスの照合はクォートの中を消してから行うので (`head '.env'` が見えない)、空白も `$` も
+  // 含まない語はクォートを外した形でも照合する。空白を含む語は外すと語が分かれ、意味が変わるので外さない
+  const blockedUnquoted = (text: string) => {
+    const unquoted = text.replace(/(?<=^| )(["'])([^"'$ ]*)\1(?= |$)/g, "$2");
+    return unquoted !== text && matchCommand(unquoted, blockingRules) !== null;
+  };
   let hasGitC = false;
 
   for (const text of segments) {
     if (GIT_C_GRAMMAR.test(text)) {
       const result = matchCommand(text, allowRules);
-      if (result?.decision !== "allow" || result.gitCNormalized !== true || blocked(text)) return false;
+      if (result?.decision !== "allow" || result.gitCNormalized !== true || blockedUnquoted(text)) return false;
       hasGitC = true;
       continue;
     }
-    if (blocked(text)) return false;
+    if (matchCommand(text, blockingRules) !== null || blockedUnquoted(text)) return false;
     if (PLAIN_GIT_GRAMMAR.test(text)) {
       if (!positivelyAllowed(text)) return false;
       continue;
