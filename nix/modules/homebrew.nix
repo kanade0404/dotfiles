@@ -25,9 +25,10 @@
     taps = [
       { name = "ariga/tap"; trusted = true; }
       # Herdr UI (herdr-gpui) の作者 Fabien Penso の個人 tap。herdr 本体 (herdrdev) とは
-      # 無関係の第三者だが、この tap が macOS 向けの唯一の公式配布経路で、アプリ自身の
-      # updater も `brew upgrade --cask` を叩く前提になっている。アプリを入れる時点で
-      # 同じ作者のコードを実行するので、tap を trusted にしても信頼する相手は増えない。
+      # 無関係の第三者。macOS 向けには GitHub Releases の DMG もあるが、Homebrew で
+      # 管理する公式経路はこの tap で、Homebrew 管理下ではアプリ自身の updater も
+      # `brew upgrade --cask` を叩く。DMG でも tap でも同じ作者のコードを実行するので、
+      # tap を trusted にしても信頼する相手は増えない。
       # 作者を信頼できなくなったら tap ごと外す (cask の vendoring では解決しない)。
       { name = "penso/tap"; trusted = true; }
     ];
