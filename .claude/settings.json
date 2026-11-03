@@ -209,6 +209,7 @@
       "Bash(gh auth token)",
       "Bash(gh auth git-credential *)",
       "Bash(gh auth git-credential)",
+      "Bash(git credential *)",
       "Bash(gh auth status --show-token*)",
       "Bash(gh auth status -t *)",
       "Bash(gh auth status * --show-token*)",
