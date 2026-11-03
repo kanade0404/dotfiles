@@ -47,6 +47,7 @@
         init.defaultBranch = "master";
         web.browser = "google-chrome";
         credential.helper = "osxkeychain";
+        credential."https://github.com".helper = [ "" "!${pkgs.gh}/bin/gh auth git-credential" ];
         push.default = "simple";
         merge = {
           tool = "kdiff3";
