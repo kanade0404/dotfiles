@@ -24,6 +24,7 @@
 
     taps = [
       { name = "ariga/tap"; trusted = true; }
+      { name = "penso/tap"; trusted = true; }
     ];
 
     # Formulae that stay in Homebrew (not available or problematic in nixpkgs)
@@ -51,6 +52,7 @@
       "notion"
       "obsidian"
       "orbstack"
+      "penso/tap/herdr-gpui" # Native GUI client for the herdr daemon
       "postman"
       "raycast"
       "secretive"
