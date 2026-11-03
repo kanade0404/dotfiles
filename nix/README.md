@@ -165,7 +165,7 @@ casks = [
 ];
 ```
 
-Homebrew 5.1+ (`HOMEBREW_REQUIRE_TAP_TRUST`) は、非公式 tap の formula / cask を読み込む前に信頼を要求する。未信頼だと `darwin-rebuild switch` が `Refusing to load ... from untrusted tap` で失敗する。`trusted = true` は Brewfile の `trusted: true` として出力され、`brew bundle` が trust に登録する。`bootstrap.sh` も、`trusted = true` の tap と完全修飾名の brews / casks を事前に `brew trust` する。
+Homebrew 5.1+ (`HOMEBREW_REQUIRE_TAP_TRUST`) は、非公式 tap の formula / cask を読み込む前に信頼を要求する。未信頼だと `darwin-rebuild switch` が `Refusing to load ... from untrusted tap` で失敗する。`trusted = true` は Brewfile の `trusted: true` として出力され、`brew bundle` が trust に登録する。nix-darwin は brews / casks の `trusted` を既定で true にするので、`"新しい/tap/アプリ"` と文字列で書いても、その formula / cask は信頼される (上の例の `trusted = true` は意図を明示するためのもの)。逆に、信頼せずに置くことはできないので、信頼できない tap の formula / cask は書かない。taps の `trusted` は既定で false。`bootstrap.sh` も、`trusted = true` の tap と完全修飾名の brews / casks を事前に `brew trust` する。
 
 第三者の tap は、tap 全体ではなく使う formula / cask 単位で信頼する。tap 全体を信頼するのは `{ name = "..."; trusted = true; }` だが、tap に後から追加されるものまで信頼対象になる (`ariga/tap` はこの方針より前からの設定)。宣言から `trusted` を外しても trust.json からは消えないので、取り消すには `brew untrust --tap <tap>` などを手で実行する。
 

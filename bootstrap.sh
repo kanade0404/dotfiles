@@ -48,11 +48,12 @@ eval "$(/opt/homebrew/bin/brew shellenv)"
 if brew help trust >/dev/null 2>&1; then
   log "サードパーティ tap / formula / cask を信頼登録"
   # shellcheck disable=SC2016 # ${flag} などは Nix の補間でシェル展開しない
-  trust_targets=$(nix eval --raw \
+  # flakes の有効化 (下の experimental features 節) より前に走るので、ここで明示的に付ける。
+  trust_targets=$(nix --extra-experimental-features 'nix-command flakes' eval --raw \
     "$DOTFILES_DIR/nix#darwinConfigurations.$FLAKE_ATTR.config.homebrew" \
     --apply 'hb: let
-        qualified = e: builtins.length (builtins.split "/" e.name) == 5; # "a/b/c" -> 2 区切り
-        pick = flag: es: map (e: "${flag} ${e.name}") (builtins.filter (e: e.trusted) es);
+        qualified = e: builtins.match "[^/]+/[^/]+/[^/]+" e.name != null; # user/repo/name
+        pick = flag: es: map (e: "${flag} ${e.name}") (builtins.filter (e: e.trusted or false) es);
       in builtins.concatStringsSep "\n" (
         pick "--tap" hb.taps
         ++ pick "--formula" (builtins.filter qualified hb.brews)
