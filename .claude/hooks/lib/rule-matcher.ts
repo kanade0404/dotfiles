@@ -1159,6 +1159,7 @@ function analyzeGitC(command: string, stripped: string): GitCAnalysis {
     stripped.slice(0, spans[varIndex].start) +
     (varIndex + 1 < spans.length ? stripped.slice(spans[varIndex + 1].start) : "");
   const wordless = analyzeGitC(command, dropped);
+  if (wordless.kind === "ask" && wordless.reason === "-C の引数にシェル展開を含む") return wordless;
   const probes = [normalized, dropped];
   if (wordless.kind === "normalized") probes.push(wordless.normalized);
   if (wordless.kind === "varDir") probes.push(...wordless.probes);
