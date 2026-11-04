@@ -394,7 +394,9 @@ type DangerousGitFlagRule = {
 //    deny ルールの形に無い破壊的サブコマンド/フラグや、`-C` で付け替えた時だけ危険な
 //    操作 (dangerousWhenRedirected) を deny に昇格させる。
 // 3. 機密ファイルパス (checkSensitiveFilePaths) を deny に昇格させる。
-// 4. 正規化できない形 (展開を含む dir / 複数 -C / -C 以外の global option との併用等) は ask。
+// 4. 正規化できない形 (単純な変数参照以外の展開を含む dir / 複数 -C / -C 以外の global option
+//    との併用等) は ask。dir が単純な変数参照のときは ask にせず、1・2・3・5 を
+//    `-C <dir>` を取り除いた形と変数が空で語が消えた形にも適用し、6 の allow はしない。
 // 5. ask — 正規化した候補も含めて非 -C ask ルールに一致すれば ask (allow より先)。
 // 6. allow — 正規化した候補が非 -C allow ルールに一致すれば allow (gitCNormalized)。
 // settings.json には `-C` 版ルールを置かない (中間ワイルドカードは hook でも本体でも
@@ -1044,11 +1046,13 @@ function normalizeCommandName(command: string): string {
  * - `none`: `git -C` 形ではない (または -C の後にサブコマンドが無い) ので通常判定
  * - `ask`: `git -C` 形だが安全に正規化できない
  * - `normalized`: `-C <dir>` と副作用の無い global option を取り除いた `git <sub> ...`
+ * - `varDir`: `-C` の引数が単純な変数参照。`probes` は取り除いた形と変数が空で語が消えた形
  */
 type GitCAnalysis =
   | { readonly kind: "none" }
   | { readonly kind: "ask"; readonly reason: string }
-  | { readonly kind: "normalized"; readonly normalized: string };
+  | { readonly kind: "normalized"; readonly normalized: string }
+  | { readonly kind: "varDir"; readonly probes: readonly string[] };
 
 /**
  * `-C` の引数に含まれるとシェル展開になる文字。展開後の語数が変わると実サブコマンドの
@@ -1064,6 +1068,8 @@ type GitCAnalysis =
  */
 const SHELL_EXPANSION_IN_WORD = /`|\$(?!')|[*?[{]/;
 
+const SIMPLE_VARIABLE_WORD = /^(?:\$[A-Za-z_]\w*|\$\{[A-Za-z_]\w*\}|"\$[A-Za-z_]\w*"|"\$\{[A-Za-z_]\w*\}")$/;
+
 /**
  * analyzeGitC が値トークンを 1 つ読み飛ばす global option。findGitSubcommand と同じ
  * GIT_TWO_TOKEN_GLOBAL_OPTS に加え、git が `--opt <value>` 形も受け付ける
@@ -1074,6 +1080,16 @@ const SHELL_EXPANSION_IN_WORD = /`|\$(?!')|[*?[{]/;
 const GIT_C_VALUE_GLOBAL_OPTS: ReadonlySet<string> = new Set([
   ...GIT_TWO_TOKEN_GLOBAL_OPTS, "--attr-source", "--config-env",
 ]);
+
+const GIT_EXTRA_GLOBAL_OPTS: ReadonlySet<string> = new Set([
+  "--exec-path", "--html-path", "--man-path", "--info-path", "--no-advice", "--no-lazy-fetch",
+  "--super-prefix", "--list-cmds", "--shallow-file", "--no-literal-pathspecs", "-v", "--version", "-h", "--help",
+]);
+
+function isGitGlobalOption(word: string): boolean {
+  const name = word.startsWith("--") && word.includes("=") ? word.slice(0, word.indexOf("=")) : word;
+  return GIT_SINGLE_GLOBAL_OPTS.has(name) || GIT_C_VALUE_GLOBAL_OPTS.has(name) || GIT_EXTRA_GLOBAL_OPTS.has(name);
+}
 
 /** 空白区切りの生トークン (クォート / エスケープ / `$(...)` を跨ぐ) の範囲を返す */
 function rawTokenSpans(input: string): { start: number; end: number }[] {
@@ -1101,7 +1117,8 @@ function rawTokenSpans(input: string): { start: number; end: number }[] {
  *
  * 正規化するのは「`-C` が 1 つだけ・その引数がリテラル・他の global option は
  * SIDE_EFFECT_FREE_GIT_GLOBAL_OPTS だけ・env による付け替えが無い」場合に限る。
- * それ以外 (複数 `-C` / `--git-dir` / `--work-tree` / `-c` / 展開を含む dir 等) は
+ * 引数が単純な変数参照のときは varDir を返す (allow はしない)。
+ * それ以外 (複数 `-C` / `--git-dir` / `--work-tree` / `-c` / 単純な変数参照以外の展開を含む dir 等) は
  * 正規化結果が実際の実行と一致する保証が無いので ask にする。
  * 戻り値の `normalized` は元のクォートを保った生文字列 (非 -C コマンドと同じ条件で
  * ルール照合するため)。
@@ -1112,12 +1129,14 @@ function analyzeGitC(command: string, stripped: string): GitCAnalysis {
   if (spans.length === 0 || commandBaseName(raw(0)) !== "git") return { kind: "none" };
 
   const dirs: string[] = [];
+  const dirSpans: number[] = [];
   let otherOption: string | null = null;
   let i = 1;
   while (i < spans.length) {
     const word = normalizeWord(raw(i));
     if (word === "-C" && i + 1 < spans.length) {
       dirs.push(raw(i + 1));
+      dirSpans.push(i + 1);
       i += 2;
       continue;
     }
@@ -1130,7 +1149,8 @@ function analyzeGitC(command: string, stripped: string): GitCAnalysis {
   }
   if (dirs.length === 0) return { kind: "none" };
 
-  if (dirs.some((dir) => SHELL_EXPANSION_IN_WORD.test(dir))) {
+  const expanding = dirs.filter((dir) => SHELL_EXPANSION_IN_WORD.test(dir));
+  if (expanding.some((dir) => !SIMPLE_VARIABLE_WORD.test(dir))) {
     return { kind: "ask", reason: "-C の引数にシェル展開を含む" };
   }
   if (dirs.length > 1) return { kind: "ask", reason: "-C を複数指定している" };
@@ -1141,7 +1161,22 @@ function analyzeGitC(command: string, stripped: string): GitCAnalysis {
     return { kind: "ask", reason: "-C と環境変数によるリポジトリ付け替えを併用している" };
   }
   if (i >= spans.length) return { kind: "none" };
-  return { kind: "normalized", normalized: `git ${stripped.slice(spans[i].start)}` };
+  const normalized = `git ${stripped.slice(spans[i].start)}`;
+  if (expanding.length === 0) return { kind: "normalized", normalized };
+
+  const varIndex = dirSpans[0];
+  const dropped =
+    stripped.slice(0, spans[varIndex].start) +
+    (varIndex + 1 < spans.length ? stripped.slice(spans[varIndex + 1].start) : "");
+  const wordless = analyzeGitC(command, dropped);
+  const afterDir = varIndex + 2 < spans.length ? normalizeWord(raw(varIndex + 2)) : "";
+  const invalidInGit =
+    afterDir.startsWith("-") && !SHELL_EXPANSION_IN_WORD.test(afterDir) && !isGitGlobalOption(afterDir);
+  if (wordless.kind === "ask" && !invalidInGit) return wordless;
+  const probes = [normalized, dropped];
+  if (wordless.kind === "normalized") probes.push(wordless.normalized);
+  if (wordless.kind === "varDir") probes.push(...wordless.probes);
+  return { kind: "varDir", probes };
 }
 
 /**
@@ -1169,7 +1204,9 @@ export function matchCommand(
 
   // `git -C <dir> <sub> ...` は `git <sub> ...` に正規化した候補でも deny を照合する
   const gitC = analyzeGitC(command, stripped);
-  const denyCandidates = gitC.kind === "normalized" ? [...candidates, gitC.normalized] : candidates;
+  const probes = gitC.kind === "varDir" ? gitC.probes : [];
+  const denyCandidates =
+    gitC.kind === "normalized" ? [...candidates, gitC.normalized] : [...candidates, ...probes];
 
   // クォート内を除去した候補も用意（コミットメッセージ等の文字列リテラル内の
   // 機密パス名がワイルドカードパターンに誤マッチしないため）
@@ -1184,20 +1221,29 @@ export function matchCommand(
   }
 
   // 危険 git フラグの位置非依存チェック
-  if (checkDangerousGitFlags(command)) {
+  if ([command, ...probes].some(checkDangerousGitFlags)) {
     return { decision: "deny", command, pattern: "dangerous-git-flags" };
   }
 
   // 機密ファイルパスは allow ルールの有無に関わらず deny に昇格。
   // evaluator が未定義コマンドを pass-through (allow) するようになったため、
   // ここで早期チェックしないと機密パス操作が hook をすり抜ける。
-  if (checkSensitiveFilePaths(command)) {
+  if ([command, ...probes].some(checkSensitiveFilePaths)) {
     return { decision: "deny", command, pattern: "sensitive-file-path" };
   }
 
   // `git -C` 形だが正規化できない (展開を含む dir / 付け替えの併用等)
   if (gitC.kind === "ask") {
     return { decision: "ask", command, pattern: `git -C (${gitC.reason})` };
+  }
+
+  if (gitC.kind === "varDir") {
+    for (const rule of rules) {
+      if (rule.category !== "ask") continue;
+      if ([...candidates, ...probes].some((cmd) => rule.regex.test(cmd))) {
+        return { decision: "ask", command, pattern: rule.pattern };
+      }
+    }
   }
 
   // 正規化した `git <sub> ...` が非 -C allow ルールにサブコマンド位置で一致した。

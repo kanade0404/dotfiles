@@ -412,6 +412,33 @@ describe("evaluateCommand - git -C の hook allow (hookApproved)", () => {
     });
   });
 
+  test.each([
+    "git -C $R diff --stat",
+    "git -C ${R} diff --stat",
+    'git -C "$R" log',
+    'git -C "${R}" status',
+    "R=sub; git -C $R diff --stat",
+    "R=sub git -C $R status",
+  ])("-C の引数が変数の %j は ask でも hookApproved でもなく pass-through", (command) => {
+    expect(evaluate(command)).toEqual(passThrough);
+  });
+
+  test.each([
+    "git -C $R push --force",
+    'git -C "$R" reset --hard',
+    "R=/x; git -C $R reset --hard",
+    "git -C $R x push --force",
+  ])("-C の引数が変数の %j は deny", (command) => {
+    expect(evaluate(command).decision).toBe("deny");
+  });
+
+  test.each(["git -C $(pwd) status", "git -C $R:e status", "git -C ${R:-.} status"])(
+    "-C の引数が単純な変数でない %j は ask",
+    (command) => {
+      expect(evaluate(command).decision).toBe("ask");
+    },
+  );
+
   test("シングルクォート内の $ (リテラル) も文法外として扱う", () => {
     expect(evaluate("git -C sub log '$x'")).not.toEqual(hookApproved);
   });
