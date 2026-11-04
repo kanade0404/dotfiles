@@ -1081,9 +1081,14 @@ const GIT_C_VALUE_GLOBAL_OPTS: ReadonlySet<string> = new Set([
   ...GIT_TWO_TOKEN_GLOBAL_OPTS, "--attr-source", "--config-env",
 ]);
 
+const GIT_EXTRA_GLOBAL_OPTS: ReadonlySet<string> = new Set([
+  "--exec-path", "--html-path", "--man-path", "--info-path", "--no-advice", "--no-lazy-fetch",
+  "--super-prefix", "--list-cmds", "-v", "--version", "-h", "--help",
+]);
+
 function isGitGlobalOption(word: string): boolean {
   const name = word.startsWith("--") && word.includes("=") ? word.slice(0, word.indexOf("=")) : word;
-  return GIT_SINGLE_GLOBAL_OPTS.has(name) || GIT_C_VALUE_GLOBAL_OPTS.has(name);
+  return GIT_SINGLE_GLOBAL_OPTS.has(name) || GIT_C_VALUE_GLOBAL_OPTS.has(name) || GIT_EXTRA_GLOBAL_OPTS.has(name);
 }
 
 /** 空白区切りの生トークン (クォート / エスケープ / `$(...)` を跨ぐ) の範囲を返す */
@@ -1165,7 +1170,8 @@ function analyzeGitC(command: string, stripped: string): GitCAnalysis {
     (varIndex + 1 < spans.length ? stripped.slice(spans[varIndex + 1].start) : "");
   const wordless = analyzeGitC(command, dropped);
   const afterDir = varIndex + 2 < spans.length ? normalizeWord(raw(varIndex + 2)) : "";
-  const invalidInGit = afterDir.startsWith("-") && !isGitGlobalOption(afterDir);
+  const invalidInGit =
+    afterDir.startsWith("-") && !SHELL_EXPANSION_IN_WORD.test(afterDir) && !isGitGlobalOption(afterDir);
   if (wordless.kind === "ask" && !invalidInGit) return wordless;
   const probes = [normalized, dropped];
   if (wordless.kind === "normalized") probes.push(wordless.normalized);

@@ -1305,6 +1305,8 @@ describe("統合テスト: settings.json ルールでの判定", () => {
       "git -C $R . -c x=y status",
       "git -C $R . --git-dir=/x log",
       "git -C $R x --namespace ns push origin",
+      "git -C $R x --exec-path=/tmp/e frob",
+      "git -C $R x -{-exec-path=/tmp/e,y} frob",
       "git -C $R -C /x status",
       "git -C $R -c x=y status",
       "git -C $R --namespace ns status",
