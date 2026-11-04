@@ -1081,6 +1081,11 @@ const GIT_C_VALUE_GLOBAL_OPTS: ReadonlySet<string> = new Set([
   ...GIT_TWO_TOKEN_GLOBAL_OPTS, "--attr-source", "--config-env",
 ]);
 
+function isGitGlobalOption(word: string): boolean {
+  const name = word.startsWith("--") && word.includes("=") ? word.slice(0, word.indexOf("=")) : word;
+  return GIT_SINGLE_GLOBAL_OPTS.has(name) || GIT_C_VALUE_GLOBAL_OPTS.has(name);
+}
+
 /** 空白区切りの生トークン (クォート / エスケープ / `$(...)` を跨ぐ) の範囲を返す */
 function rawTokenSpans(input: string): { start: number; end: number }[] {
   const spans: { start: number; end: number }[] = [];
@@ -1155,15 +1160,13 @@ function analyzeGitC(command: string, stripped: string): GitCAnalysis {
   if (expanding.length === 0) return { kind: "normalized", normalized };
 
   const varIndex = dirSpans[0];
-  const next = varIndex + 1 < spans.length ? raw(varIndex + 1) : "";
-  if (SHELL_EXPANSION_IN_WORD.test(next) && !SIMPLE_VARIABLE_WORD.test(next)) {
-    return { kind: "ask", reason: "-C の引数にシェル展開を含む" };
-  }
   const dropped =
     stripped.slice(0, spans[varIndex].start) +
     (varIndex + 1 < spans.length ? stripped.slice(spans[varIndex + 1].start) : "");
   const wordless = analyzeGitC(command, dropped);
-  if (wordless.kind === "ask" && wordless.reason === "-C の引数にシェル展開を含む") return wordless;
+  const afterDir = varIndex + 2 < spans.length ? normalizeWord(raw(varIndex + 2)) : "";
+  const invalidInGit = afterDir.startsWith("-") && !isGitGlobalOption(afterDir);
+  if (wordless.kind === "ask" && !invalidInGit) return wordless;
   const probes = [normalized, dropped];
   if (wordless.kind === "normalized") probes.push(wordless.normalized);
   if (wordless.kind === "varDir") probes.push(...wordless.probes);

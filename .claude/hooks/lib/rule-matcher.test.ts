@@ -1232,6 +1232,7 @@ describe("統合テスト: settings.json ルールでの判定", () => {
   describe("git -C: 引数が単純な変数参照のときは deny だけ照合する", () => {
     test.each([
       "git -C $R diff --stat",
+      "git -C $R log --oneline",
       "git -C ${R} diff --stat",
       'git -C "$R" log',
       'git -C "${R}" log',
@@ -1300,6 +1301,10 @@ describe("統合テスト: settings.json ルールでの判定", () => {
       "git -C $R $(echo x) status",
       "git -C $R `pwd` status",
       "git -C $R $S $(echo .) reset --hard",
+      "git -C $R . -C . reset --soft HEAD~1",
+      "git -C $R . -c x=y status",
+      "git -C $R . --git-dir=/x log",
+      "git -C $R x --namespace ns push origin",
       "git -C $R -C /x status",
       "git -C $R -c x=y status",
       "git -C $R --namespace ns status",
