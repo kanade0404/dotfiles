@@ -394,7 +394,9 @@ type DangerousGitFlagRule = {
 //    deny ルールの形に無い破壊的サブコマンド/フラグや、`-C` で付け替えた時だけ危険な
 //    操作 (dangerousWhenRedirected) を deny に昇格させる。
 // 3. 機密ファイルパス (checkSensitiveFilePaths) を deny に昇格させる。
-// 4. 正規化できない形 (展開を含む dir / 複数 -C / -C 以外の global option との併用等) は ask。
+// 4. 正規化できない形 (単純な変数参照以外の展開を含む dir / 複数 -C / -C 以外の global option
+//    との併用等) は ask。dir が単純な変数参照のときは ask にせず、1・2・3・5 を
+//    `-C <dir>` を取り除いた形と変数が空で語が消えた形にも適用し、6 の allow はしない。
 // 5. ask — 正規化した候補も含めて非 -C ask ルールに一致すれば ask (allow より先)。
 // 6. allow — 正規化した候補が非 -C allow ルールに一致すれば allow (gitCNormalized)。
 // settings.json には `-C` 版ルールを置かない (中間ワイルドカードは hook でも本体でも
@@ -1044,6 +1046,7 @@ function normalizeCommandName(command: string): string {
  * - `none`: `git -C` 形ではない (または -C の後にサブコマンドが無い) ので通常判定
  * - `ask`: `git -C` 形だが安全に正規化できない
  * - `normalized`: `-C <dir>` と副作用の無い global option を取り除いた `git <sub> ...`
+ * - `varDir`: `-C` の引数が単純な変数参照。`probes` は取り除いた形と変数が空で語が消えた形
  */
 type GitCAnalysis =
   | { readonly kind: "none" }
@@ -1104,7 +1107,8 @@ function rawTokenSpans(input: string): { start: number; end: number }[] {
  *
  * 正規化するのは「`-C` が 1 つだけ・その引数がリテラル・他の global option は
  * SIDE_EFFECT_FREE_GIT_GLOBAL_OPTS だけ・env による付け替えが無い」場合に限る。
- * それ以外 (複数 `-C` / `--git-dir` / `--work-tree` / `-c` / 展開を含む dir 等) は
+ * 引数が単純な変数参照のときは varDir を返す (allow はしない)。
+ * それ以外 (複数 `-C` / `--git-dir` / `--work-tree` / `-c` / 単純な変数参照以外の展開を含む dir 等) は
  * 正規化結果が実際の実行と一致する保証が無いので ask にする。
  * 戻り値の `normalized` は元のクォートを保った生文字列 (非 -C コマンドと同じ条件で
  * ルール照合するため)。
