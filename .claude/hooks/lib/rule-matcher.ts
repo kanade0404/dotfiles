@@ -1083,7 +1083,7 @@ const GIT_C_VALUE_GLOBAL_OPTS: ReadonlySet<string> = new Set([
 
 const GIT_EXTRA_GLOBAL_OPTS: ReadonlySet<string> = new Set([
   "--exec-path", "--html-path", "--man-path", "--info-path", "--no-advice", "--no-lazy-fetch",
-  "--super-prefix", "--list-cmds", "-v", "--version", "-h", "--help",
+  "--super-prefix", "--list-cmds", "--shallow-file", "--no-literal-pathspecs", "-v", "--version", "-h", "--help",
 ]);
 
 function isGitGlobalOption(word: string): boolean {
