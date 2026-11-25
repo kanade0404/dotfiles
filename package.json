@@ -13,7 +13,7 @@
   "peerDependencies": {
     "typescript": "7.0.2"
   },
-  "//": "GHSA-238p-pmpm-9mq7: micromark-extension-math が katex ^0.16.0 固定のため override",
+  "//": "GHSA-238p-pmpm-9mq7: micromark-extension-math (3.1.0 時点) が katex ^0.16.0 固定で、修正版は 0.18.2 のみのため override。micromark-extension-math が katex >=0.18.2 を許容したら削除する",
   "overrides": {
     "katex": "0.18.2"
   }
